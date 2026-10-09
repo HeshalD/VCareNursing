@@ -12,6 +12,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { CATEGORY_CONFIG, categoryBadge, relatedTo, flowAmountClass, flowSign } from '../../../constants/transactionCategories';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -678,6 +679,7 @@ const Financials = () => {
                       <td className="px-4 py-3 whitespace-nowrap">{categoryBadge(tx.category)}</td>
                       <td className={`px-4 py-3 font-semibold tabular-nums whitespace-nowrap ${flowAmountClass(tx.category, tx.transaction_type)}`}>
                         {flowSign(tx.category, tx.transaction_type)}{fmt(tx.amount)}
+                        <EditedAmountBadge record={tx} className="ml-1.5" />
                       </td>
                       <td className="px-4 py-3 text-slate-600 capitalize">
                         {tx.payment_method?.replace(/_/g, ' ') || '—'}

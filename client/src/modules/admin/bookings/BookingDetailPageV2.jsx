@@ -11,6 +11,9 @@ import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import CareTimeline from './CareTimeline';
 import MarkAbsentModal from './MarkAbsentModal';
+import BackdatedSwapPayCalendar from './BackdatedSwapPayCalendar';
+import ResumePastDaysCalendar from './ResumePastDaysCalendar';
+import { backdatedOldAmount, backdatedNewAmount } from './backdatedSwapPay';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import BookingSwitcherSidebar from './BookingSwitcherSidebar';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
@@ -20,6 +23,7 @@ import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '..
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -268,6 +272,7 @@ const STATUS_META = {
   pending_termination: { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
   pending:             { bg: '#f8fafc', col: '#64748b', dot: '#94a3b8' },
   paused:              { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
+  scheduled:           { bg: '#eff6ff', col: '#1e40af', dot: '#60a5fa' },
 };
 
 // ─── small atoms ────────────────────────────────────────────────────────────
@@ -442,6 +447,21 @@ const BookingDetailPageV2 = () => {
   const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm
   const [swapModalNewRate, setSwapModalNewRate]         = useState(''); // what the incoming staff is PAID per day/shift (step 3), prefilled from the outgoing staff's rate
   const [swapModalNewInTime, setSwapModalNewInTime]   = useState(''); // HH:mm — incoming staff's in time on swapModalStartDate (optional)
+  // Backdated whole-booking swap only (step 4): who is paid for each day the cron
+  // already settled — { [dateISO]: { oldPay, oldAmount, newPay, newAmount } }.
+  const [swapModalPastPay, setSwapModalPastPay]       = useState({});
+  // Backdated whole-booking swap only: the outgoing staff has usually already left,
+  // so their departure is logged with the swap and their assignment closes on that
+  // day. '' date means "the swap date". Time reuses swapModalOldOutTime.
+  const [swapModalOldLeft, setSwapModalOldLeft]       = useState(true);
+  const [swapModalOldOutDate, setSwapModalOldOutDate] = useState('');
+  // Whole-booking swap only: is the outgoing staff member going on leave (true), or
+  // leaving for another reason (false)? null = the admin hasn't answered yet.
+  // The leave starts the day they are relieved; '' start date means "the swap date".
+  const [swapModalOnLeave, setSwapModalOnLeave]         = useState(null);
+  const [swapModalLeaveStart, setSwapModalLeaveStart]   = useState('');
+  const [swapModalLeaveEnd, setSwapModalLeaveEnd]       = useState('');
+  const [swapModalLeaveOutTime, setSwapModalLeaveOutTime] = useState(''); // HH:mm on the leave's start date
   // Sharing a candidate's profile with the client happens straight from the staff
   // picker — it's a "show the client who's available" step, independent of whether
   // this staff member ends up being the one assigned.
@@ -530,6 +550,13 @@ const BookingDetailPageV2 = () => {
     daily_rate: '', ot_rate: '', notes: '', salesperson_id: '',
   });
   const [resumeShiftSlots, setResumeShiftSlots] = useState([]);
+  // LIVE_IN only: the same modal resumes the booking itself (resumeWithStaff) —
+  // the booking stays PAUSED until a staff member and start date are confirmed.
+  // A past start adds a 'past' step deciding pay/invoice per day; see
+  // ResumePastDaysCalendar. { [dateISO]: { pay, amount, invoice, invoiceAmount } }.
+  const [resumeWithStaffMode, setResumeWithStaffMode] = useState(false);
+  const [resumeStep, setResumeStep]                   = useState('details');
+  const [resumePastPay, setResumePastPay]             = useState({});
 
   // shift patterns + per-shift assignment (SHIFT_BASED only)
   const [shiftPattern, setShiftPattern]               = useState(null); // { active, scheduled }
@@ -784,9 +811,10 @@ const BookingDetailPageV2 = () => {
       service_dates, target, invoice_amount, salary_amount, reason,
     });
     await Promise.all([fetchDetail(), fetchDailyRecords()]);
-    const skipped = res?.data?.skipped?.length || 0;
-    if (skipped > 0) {
-      window.alert(`${res.data.applied.length} day(s) corrected. ${skipped} skipped — they weren't in a settled state.`);
+    const skipped = res?.data?.skipped || [];
+    if (skipped.length > 0) {
+      const reasons = skipped.map(s => `• ${s.service_date} (${s.target_type.toLowerCase()}): ${s.why}`).join('\n');
+      window.alert(`${res.data.applied.length} day(s) corrected. ${skipped.length} skipped:\n${reasons}`);
     }
   };
 
@@ -1391,7 +1419,7 @@ const BookingDetailPageV2 = () => {
         // yet) gets its own "Log out & close assignment" row regardless of any
         // time already logged — don't let a record short-circuit that flow.
         const { onlyStart, onlyEnd, sameDay } = liveInBoundary(a, dateISO);
-        const isSwapOutgoingOpenCandidate = isLiveIn && !a.shift_slot_id && !a.service_end_date && !onlyStart && !onlyEnd && !sameDay;
+        const isSwapOutgoingOpenCandidate = !onlyStart && !onlyEnd && !sameDay && isSwapOutgoingOn(a, assignments);
         // Skip when the day was already confirmed: a LIVE_IN boundary day stays PENDING
         // after confirm (pay settled at assignment end), and re-seeding it would
         // resurrect the "Review & Confirm Day" form for a day that's already done.
@@ -1567,6 +1595,18 @@ const BookingDetailPageV2 = () => {
     }));
 
     return { staff, invoices };
+  };
+
+  // The outgoing half of a still-open LIVE_IN swap on a given day: open-ended, and
+  // some other assignment on that same day started AFTER it (its replacement). The
+  // replacement itself is never outgoing — which matters once a swap is backdated,
+  // because then the replacement's start date is no longer "the day being viewed"
+  // and both open assignments would otherwise look identical.
+  const isSwapOutgoingOn = (assignment, dayAssignments) => {
+    if (!isLiveIn || assignment.shift_slot_id || assignment.service_end_date) return false;
+    const start = toLocalDateStr(assignment.service_start_date);
+    return dayAssignments.some(o => o.assignment_id !== assignment.assignment_id && !o.shift_slot_id
+      && toLocalDateStr(o.service_start_date) > start);
   };
 
   // LIVE_IN staff stay with the patient continuously until the booking ends (or they're
@@ -1808,7 +1848,7 @@ const BookingDetailPageV2 = () => {
       apiClient.setToken(adminToken);
       const payload = { new_amount: parseFloat(correctionAmount), reason: correctionReason.trim() };
       if (correctionTarget.kind === 'INVOICE') {
-        await apiClient.correctInvoiceAmount(bookingId, correctionTarget.dateISO, payload);
+        await apiClient.correctInvoiceAmount(bookingId, correctionTarget.dateISO, { ...payload, daily_invoice_id: correctionTarget.id });
       } else {
         await apiClient.correctSalaryAmount(bookingId, correctionTarget.id, payload);
       }
@@ -1988,8 +2028,14 @@ const BookingDetailPageV2 = () => {
     }
   };
 
+  // A mid-swap LIVE_IN booking has two open assignments; the nightly auto-invoice can't
+  // split that day between them, so Auto stays blocked until one assignment is settled.
+  const autoBlockedByTwoStaff = isLiveIn && invoicingMode !== 'AUTO' && activeAssignments.length >= 2;
+  const AUTO_BLOCKED_REASON = 'There are 2 active staff members on this booking. Settle one assignment to switch to Auto.';
+
   const toggleInvoicingMode = async () => {
     const next = invoicingMode === 'AUTO' ? 'MANUAL' : 'AUTO';
+    if (next === 'AUTO' && autoBlockedByTwoStaff) { setError(AUTO_BLOCKED_REASON); return; }
     try {
       setInvoicingModeSaving(true); setError('');
       apiClient.setToken(adminToken);
@@ -2052,7 +2098,7 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalNewRate(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalNewRate(''); setSwapModalPastPay({}); setSwapModalOldLeft(true); setSwapModalOldOutDate(''); setSwapModalOnLeave(null); setSwapModalLeaveStart(''); setSwapModalLeaveEnd(''); setSwapModalLeaveOutTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
   // WhatsApp one candidate's profile to this booking's client, straight from the picker.
   // Deliberately independent of the swap itself: the admin can send several candidates
@@ -2087,6 +2133,48 @@ const BookingDetailPageV2 = () => {
     setSwapModalStep(3);
   };
 
+  // A whole-booking swap dated in the past reaches back over days the nightly cron
+  // has already paid the outgoing staff for. Those days — from the swap date up to
+  // the last one the cron settled — are what step 4's calendar asks about. Empty
+  // when nothing was paid yet, in which case there's no step 4 at all.
+  const isBackdatedWholeSwap = !swapModalSlotId && !swapModalIsAssign && Boolean(swapModalStartDate) && swapModalStartDate < todayISO();
+  // Step 2 can't move on until a departure the admin says happened has a time.
+  const swapOldLeftIncomplete = isBackdatedWholeSwap && swapModalOnLeave !== true && swapModalOldLeft && !swapModalOldOutTime;
+  // Sending the outgoing staff member on leave is a whole-booking swap option, and
+  // logging a leave needs its own permission.
+  const swapLeaveApplies = !swapModalSlotId && !swapModalIsAssign && hasPermission('STAFF_LEAVE_CREATE');
+  const swapLeaveStartDate = swapModalLeaveStart || swapModalStartDate;
+  const swapLeaveIncomplete = swapLeaveApplies && (
+    swapModalOnLeave === null
+    || (swapModalOnLeave === true && (!swapModalLeaveEnd || !swapModalLeaveOutTime || swapModalLeaveEnd < swapLeaveStartDate || swapLeaveStartDate < swapModalStartDate))
+  );
+  const backdatedSwapDays = (() => {
+    if (!isBackdatedWholeSwap) return [];
+    const oldId = normCurrentStaff?.profileId;
+    if (!oldId) return [];
+    const oldRows = attendanceRecords.filter(r =>
+      !r.shift_slot_id && r.staff_profile_id === oldId
+      && r.service_date >= swapModalStartDate && r.service_date <= todayISO()
+    );
+    const paidDates = oldRows.filter(r => r.salary_status === 'PAID').map(r => r.service_date).sort();
+    if (paidDates.length === 0) return [];
+    const days = [];
+    for (let d = new Date(`${swapModalStartDate}T00:00:00`); toLocalDateStr(d) <= paidDates[paidDates.length - 1]; d.setDate(d.getDate() + 1)) {
+      const dateISO = toLocalDateStr(d);
+      days.push({ dateISO, oldRecord: oldRows.find(r => r.service_date === dateISO) || null });
+    }
+    return days;
+  })();
+  const goToSwapPastPayStep = () => {
+    // Default to the usual reason for a late-logged swap: the replacement did
+    // these days, so the outgoing staff's auto-pay is taken back.
+    setSwapModalPastPay(Object.fromEntries(backdatedSwapDays.map(d => [d.dateISO, {
+      oldPay: false, oldAmount: '', newPay: true, newAmount: '',
+    }])));
+    setSwapModalError('');
+    setSwapModalStep(4);
+  };
+
   const confirmSwap = async () => {
     if (!swapModalSelectedStaff || (!swapModalSlotId && !swapModalReason.trim())) return;
     try {
@@ -2106,16 +2194,45 @@ const BookingDetailPageV2 = () => {
         // no out-time is captured here at all. See bookingController.swapStaff's
         // header comment for why, and openCloseAssignment below for how it's closed
         // later once they've actually left.
+        // Step 4's per-day decisions, only when that step was shown. Amounts go
+        // up only when the admin overrode them — blank means the server uses the
+        // already-paid figure (outgoing) or the new assignment's rate (incoming).
+        const pastDays = backdatedSwapDays.filter(d => swapModalPastPay[d.dateISO]);
+        const backdatedPay = swapModalStep === 4 && pastDays.length > 0 ? {
+          old_staff_days: pastDays.filter(d => d.oldRecord?.salary_status === 'PAID').map(d => {
+            const dec = swapModalPastPay[d.dateISO];
+            return { attendance_id: d.oldRecord.attendance_id, pay: Boolean(dec.oldPay), amount: dec.oldPay && dec.oldAmount !== '' ? Number(dec.oldAmount) : undefined };
+          }),
+          new_staff_days: pastDays.map(d => {
+            const dec = swapModalPastPay[d.dateISO];
+            return { service_date: d.dateISO, pay: Boolean(dec.newPay), amount: dec.newPay && dec.newAmount !== '' ? Number(dec.newAmount) : undefined };
+          }),
+        } : undefined;
+        // Backdated + already left: close the outgoing side in the same request.
+        // Sent as a real instant — the server runs in UTC (see submitCloseAssignment).
+        const oldOutTime = swapModalOnLeave !== true && isBackdatedWholeSwap && swapModalOldLeft && swapModalOldOutTime
+          ? new Date(`${swapModalOldOutDate || swapModalStartDate}T${swapModalOldOutTime}`).toISOString()
+          : undefined;
+        // Going on leave: relieved on the leave's start date with the log-out time
+        // entered for that day (same instant convention as above).
+        const oldStaffLeave = swapLeaveApplies && swapModalOnLeave === true ? {
+          start_date: swapLeaveStartDate,
+          end_date: swapModalLeaveEnd,
+          out_time: new Date(`${swapLeaveStartDate}T${swapModalLeaveOutTime}`).toISOString(),
+        } : undefined;
         response = await apiClient.swapBookingStaff(bookingId, {
           new_staff_id: swapModalSelectedStaff.staff_profile_id,
           swap_reason: swapModalReason.trim(),
           new_staff_start_date: swapModalStartDate,
           new_staff_in_time: newInTime,
           new_staff_daily_rate: newPayRate,
+          backdated_pay: backdatedPay,
+          old_staff_out_time: oldOutTime,
+          old_staff_leave: oldStaffLeave,
         });
       }
       closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
-      if (response?.scheduled || response?.data?.invoicing_mode === 'MANUAL') {
+      if (response?.scheduled || response?.data?.invoicing_mode === 'MANUAL' || response?.data?.leave) {
         window.alert(response.message || 'Change scheduled for the future date.');
       }
     } catch (err) { setSwapModalError(err?.message || 'Failed to update staff assignment'); }
@@ -2292,7 +2409,8 @@ const BookingDetailPageV2 = () => {
         ...p,
         [row.id]: { date: closeAssignmentDate, in_time: '', out_time: closeAssignmentTime, autoFilled: false },
       }));
-      await fetchDetail(); await fetchDailyRecords();
+      // Logging out the last staff member pauses the booking — pull the new pause too.
+      await fetchDetail(); await fetchDailyRecords(); await fetchBookingPauses();
     } catch (err) { setCloseAssignmentError(err?.message || 'Failed to close this assignment'); }
     finally { setCloseAssignmentBusy(false); }
   };
@@ -2557,8 +2675,9 @@ const BookingDetailPageV2 = () => {
       return (field === 'start_time' || field === 'duration_hours') ? cascadeShiftStartTimes(updated, idx) : updated;
     });
 
-  const openResumeAssignModal = async (prefillShiftSlots, prefillStaff) => {
+  const openResumeAssignModal = async (prefillShiftSlots, prefillStaff, { resumeMode = false } = {}) => {
     setResumeAssignError(''); setResumeAssignLoading(true); setShowResumeAssignModal(true);
+    setResumeWithStaffMode(resumeMode); setResumeStep('details'); setResumePastPay({});
     setResumeAssignForm({
       staff_profile_id: prefillStaff?.staff_profile_id || '',
       service_start_date: toDateInput(new Date()),
@@ -2583,9 +2702,69 @@ const BookingDetailPageV2 = () => {
       setResumeAssignLoading(false);
     }
   };
-  const closeResumeAssignModal = () => { setShowResumeAssignModal(false); setResumeAssignError(''); };
+  const closeResumeAssignModal = () => { setShowResumeAssignModal(false); setResumeAssignError(''); setResumeWithStaffMode(false); setResumeStep('details'); setResumePastPay({}); };
+
+  // LIVE_IN resume: the days from a past start date up to yesterday, which the
+  // nightly run skipped because the booking was paused. Empty for today/future.
+  const resumePausedFrom = (bookingPauses.find(p => !p.resumed_at)?.paused_date || '').slice(0, 10) || null;
+  const resumePastDays = (() => {
+    const start = resumeAssignForm.service_start_date;
+    if (!resumeWithStaffMode || !start || start >= todayISO()) return [];
+    const out = [];
+    for (let d = new Date(`${start}T00:00:00`); toLocalDateStr(d) < todayISO(); d.setDate(d.getDate() + 1)) out.push(toLocalDateStr(d));
+    return out;
+  })();
+
+  const submitResumeWithStaff = async () => {
+    const f = resumeAssignForm;
+    if (!f.staff_profile_id) { setResumeAssignError('Select a staff member'); return; }
+    if (!f.service_start_date) { setResumeAssignError('Pick the date they start'); return; }
+    if (resumePausedFrom && f.service_start_date < resumePausedFrom) {
+      setResumeAssignError(`The booking was paused on ${formatDate(resumePausedFrom)} — they can't start before that.`);
+      return;
+    }
+    if (resumePastDays.length > 0 && resumeStep === 'details') {
+      setResumePastPay(Object.fromEntries(resumePastDays.map(d => [d, { pay: true, amount: '', invoice: true, invoiceAmount: '' }])));
+      setResumeAssignError('');
+      setResumeStep('past');
+      return;
+    }
+
+    setResumeAssignSubmitting(true); setResumeAssignError('');
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.resumeBookingWithStaff(bookingId, {
+        staff_profile_id: f.staff_profile_id,
+        service_start_date: f.service_start_date,
+        service_start_time: f.service_start_time || null,
+        daily_rate: f.daily_rate ? parseFloat(f.daily_rate) : null,
+        ot_rate: f.ot_rate ? parseFloat(f.ot_rate) : null,
+        notes: f.notes || null,
+        // Blank amounts go up as undefined: the server then uses the staff
+        // member's rate / the booking's client rate.
+        past_days: resumePastDays.length > 0 ? resumePastDays.map(d => {
+          const dec = resumePastPay[d] || {};
+          return {
+            service_date: d,
+            pay: Boolean(dec.pay),
+            amount: dec.pay && dec.amount !== '' ? Number(dec.amount) : undefined,
+            invoice: Boolean(dec.invoice),
+            invoice_amount: dec.invoice && dec.invoiceAmount !== '' ? Number(dec.invoiceAmount) : undefined,
+          };
+        }) : undefined,
+      });
+      closeResumeAssignModal();
+      await Promise.all([fetchDetail(), fetchBookingPauses(), fetchDailyRecords(), fetchScheduledActions()]);
+      if (res?.data?.status === 'SCHEDULED') window.alert(res.message);
+    } catch (err) {
+      setResumeAssignError(err?.message || 'Failed to resume the booking');
+    } finally {
+      setResumeAssignSubmitting(false);
+    }
+  };
 
   const handleResumeAssignSubmit = async () => {
+    if (resumeWithStaffMode) { await submitResumeWithStaff(); return; }
     if (!resumeAssignForm.service_start_date) { setResumeAssignError('Service start date is required'); return; }
     if (isShiftBased && resumeShiftSlots.some((s) => !s.staff_profile_id || !s.start_time || !s.duration_hours)) {
       setResumeAssignError('Every shift needs a start time, duration, and assigned staff member');
@@ -2642,6 +2821,15 @@ const BookingDetailPageV2 = () => {
 
   const handleResume = async () => {
     if (!bookingId) return;
+    // LIVE_IN: nothing is resumed until a staff member and start date are picked —
+    // the modal itself does the resume (see submitResumeWithStaff), so the booking
+    // is never ACTIVE with nobody on it.
+    if (isLiveIn) {
+      const prev = [...staffHistory].sort((a, b) => new Date(b.service_start_date) - new Date(a.service_start_date))[0] || null;
+      await openResumeAssignModal(null, prev, { resumeMode: true });
+      setResumeAssignForm(f => ({ ...f, service_start_date: todayISO() }));
+      return;
+    }
     if (!window.confirm('Resume this booking? You\'ll then confirm staffing for the resumed period.')) return;
     try {
       setResumeBusy(true); setResumeError('');
@@ -2760,13 +2948,22 @@ const BookingDetailPageV2 = () => {
   const bookingStatus     = (bookingSummary.status || '').toLowerCase();
   const isTerminated      = bookingStatus === 'terminated';
   const isPaused          = bookingStatus === 'paused';
+  // A LIVE_IN booking's only staff member can be logged out on any day too —
+  // closeStaffAssignment then pauses the booking from that day.
+  const canLogOutLastStaff = isLiveIn && ['active', 'overdue'].includes(bookingStatus);
+  // Resumed onto a staff member whose start date is still ahead — no billing or
+  // pay until their ASSIGNMENT_START flips the booking ACTIVE (see resumeWithStaff).
+  const isScheduledStart  = bookingStatus === 'scheduled';
+  const scheduledStartRow = isScheduledStart
+    ? [...staffHistory].filter(r => (r.status || '').toLowerCase() === 'scheduled').sort((a, b) => new Date(a.service_start_date) - new Date(b.service_start_date))[0] || null
+    : null;
   const canPause          = !isTerminated && !isPaused && ['LIVE_IN', 'SHIFT_BASED'].includes(bookingSummary.service_model) && ['active', 'overdue'].includes(bookingStatus);
   const openPause         = bookingPauses.find(p => !p.resumed_at) || null;
   // OVERDUE bookings are still running — display as Active with a separate
   // overdue-balance flag rather than a distinct lifecycle status.
   const isOverdueBalance  = bookingStatus === 'overdue';
   const sm                = STATUS_META[isOverdueBalance ? 'active' : bookingStatus] || STATUS_META.pending;
-  const statusLabel       = isOverdueBalance ? 'Active' : (bookingSummary.status || 'Unknown');
+  const statusLabel       = isOverdueBalance ? 'Active' : isScheduledStart ? 'Scheduled to start' : (bookingSummary.status || 'Unknown');
   const scheduledCompletion   = bookingScheduledActions.find(sa => sa.action_type === 'COMPLETION');
   const scheduledTermination  = bookingScheduledActions.find(sa => sa.action_type === 'TERMINATION');
   const scheduledFinalization = scheduledCompletion || scheduledTermination || null;
@@ -2949,7 +3146,7 @@ const BookingDetailPageV2 = () => {
               <button onClick={fetchDetail} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' }}>
                 <RefreshCw style={{ width: 14, height: 14 }} /> Refresh
               </button>
-              {!isTerminated && !isPaused && !normCurrentStaff && (
+              {!isTerminated && !isPaused && !isScheduledStart && !normCurrentStaff && (
                 <button type="button" onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#2563eb', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
                 >
@@ -3191,12 +3388,16 @@ const BookingDetailPageV2 = () => {
                           ? 'Billed automatically every night at 23:59. Staff salary is always automatic for LIVE_IN bookings.'
                           : 'Confirm each day\'s client charge from the care timeline below. Staff salary stays automatic either way.'}
                       </div>
+                      {autoBlockedByTwoStaff && (
+                        <div style={{ fontSize: 12.5, color: '#b45309', marginTop: 4, fontWeight: 600 }}>{AUTO_BLOCKED_REASON}</div>
+                      )}
                     </div>
                   </div>
                   <button
                     onClick={toggleInvoicingMode}
-                    disabled={invoicingModeSaving}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: invoicingModeSaving ? 'wait' : 'pointer', opacity: invoicingModeSaving ? 0.6 : 1, flexShrink: 0 }}
+                    disabled={invoicingModeSaving || autoBlockedByTwoStaff}
+                    title={autoBlockedByTwoStaff ? AUTO_BLOCKED_REASON : undefined}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: invoicingModeSaving ? 'wait' : autoBlockedByTwoStaff ? 'not-allowed' : 'pointer', opacity: (invoicingModeSaving || autoBlockedByTwoStaff) ? 0.6 : 1, flexShrink: 0 }}
                   >
                     {invoicingModeSaving ? 'Saving…' : invoicingMode === 'AUTO' ? 'Switch to Manual' : 'Switch to Auto'}
                   </button>
@@ -3325,6 +3526,8 @@ const BookingDetailPageV2 = () => {
                     staffAssignments={staffHistory}
                     serviceModel={bookingSummary.service_model}
                     shiftSlots={shiftSlots}
+                    repeatDays={bookingSummary.repeat_days || null}
+                    plannedShifts={isShiftBased ? (shiftBank?.paid ?? null) : null}
                     scheduledActions={bookingScheduledActions}
                     terminationRequests={terminationReqs}
                     shiftPatternScheduled={shiftPattern?.scheduled || null}
@@ -3831,6 +4034,17 @@ const BookingDetailPageV2 = () => {
             const thCls = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9ca3af' };
             const tdCls = { padding: '10px', fontSize: 12.5, color: '#374151', verticalAlign: 'top' };
             const ongoingCount = allocationHistoryWithTimeStatus.filter(r => r.isOngoing && !r.shiftSlotId).length;
+            // Only the outgoing side of an open swap can be logged out: an ongoing row
+            // whose replacement (another ongoing row) started after it. Returns that
+            // replacement's start date — the likeliest day they left, so the close
+            // modal opens on it instead of today.
+            const replacementStartFor = (row) => {
+              const start = toLocalDateStr(row.startDate);
+              const later = allocationHistoryWithTimeStatus
+                .filter(r => r.id !== row.id && r.isOngoing && !r.shiftSlotId && toLocalDateStr(r.startDate) > start)
+                .map(r => toLocalDateStr(r.startDate)).sort();
+              return later[0] || null;
+            };
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <Card>
@@ -3913,10 +4127,10 @@ const BookingDetailPageV2 = () => {
                                   <button onClick={() => openEditTimes(row)} style={{ fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}>
                                     {row.needsTimeAction ? 'Enter times' : 'Edit times'}
                                   </button>
-                                  {row.isOngoing && !row.shiftSlotId && ongoingCount > 1 && (
+                                  {row.isOngoing && !row.shiftSlotId && (ongoingCount > 1 ? replacementStartFor(row) : canLogOutLastStaff) && toLocalDateStr(row.startDate) <= todayISO() && (
                                     <button
-                                      onClick={() => openCloseAssignment(row)}
-                                      title="They've actually left — log their out-time and end this assignment"
+                                      onClick={() => openCloseAssignment(row, replacementStartFor(row))}
+                                      title={ongoingCount > 1 ? "They've actually left — log their out-time and end this assignment" : 'Log their out-time on any day — with nobody left on the booking, it is paused from that day'}
                                       style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}
                                     >
                                       Log out &amp; close
@@ -4473,9 +4687,11 @@ const BookingDetailPageV2 = () => {
                                     </td>
                                     <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, color: isInvoice ? '#b45309' : '#9ca3af' }}>
                                       {isInvoice ? `Rs.${parseFloat(row.amount_invoiced).toLocaleString()}` : '—'}
+                                      {isInvoice && <EditedAmountBadge record={row} className="ml-1" />}
                                     </td>
                                     <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, color: !isInvoice ? '#16a34a' : '#9ca3af' }}>
                                       {!isInvoice ? `Rs.${parseFloat(row.amount_paid).toLocaleString()}` : '—'}
+                                      {!isInvoice && <EditedAmountBadge record={row} className="ml-1" />}
                                     </td>
                                     <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, fontWeight: 600, color: parseFloat(row.balance) > 0 ? '#dc2626' : '#16a34a' }}>
                                       Rs.{Math.abs(parseFloat(row.balance)).toLocaleString()}
@@ -4513,6 +4729,19 @@ const BookingDetailPageV2 = () => {
                     >
                       {resumeBusy ? <Loader2 style={{ width: 14, height: 14 }} className="animate-spin" /> : <Play style={{ width: 14, height: 14 }} />} Resume Booking
                     </button>
+                  </div>
+                </Card>
+              ) : isScheduledStart ? (
+                <Card>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 16px', textAlign: 'center' }}>
+                    <CalendarDays style={{ width: 32, height: 32, color: '#93C5FD', marginBottom: 12 }} />
+                    <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: '#2A2722' }}>Scheduled to start</p>
+                    <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>
+                      {scheduledStartRow
+                        ? `${scheduledStartRow.full_name || scheduledStartRow.staff_name || 'The staff member'} starts on ${formatDate(scheduledStartRow.service_start_date)}`
+                        : 'Waiting for the next staff member to start'}
+                    </p>
+                    <p style={{ margin: '10px 0 0', fontSize: 11.5, color: '#3B82F6' }}>Nothing is invoiced or paid until then. The booking becomes Active by itself on that day.</p>
                   </div>
                 </Card>
               ) : isTerminated ? (
@@ -4747,9 +4976,13 @@ const BookingDetailPageV2 = () => {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-start justify-between p-6 border-b border-[#ECE7DF] shrink-0">
               <div>
-                <h2 className="text-lg font-bold text-[#2A2722]">Assign Staff for Resumed Period</h2>
+                <h2 className="text-lg font-bold text-[#2A2722]">{resumeWithStaffMode ? (resumeStep === 'past' ? 'Pay & invoice the past days' : 'Resume Booking') : 'Assign Staff for Resumed Period'}</h2>
                 <p className="text-xs text-[#9A9488] mt-1">
-                  {isShiftBased ? 'Pre-filled with the shift pattern and staff from before the pause — still fully editable.' : 'Pre-filled with whoever was assigned before the pause — still fully editable.'}
+                  {resumeWithStaffMode
+                    ? (resumeStep === 'past'
+                      ? `The booking was paused, so nothing was paid or invoiced for ${formatDate(resumePastDays[0])} – ${formatDate(resumePastDays[resumePastDays.length - 1])}. Decide each day.`
+                      : `Paused${resumePausedFrom ? ` since ${formatDate(resumePausedFrom)}` : ''}. Pick who takes over and the day they start — today, an earlier day, or a later one.`)
+                    : isShiftBased ? 'Pre-filled with the shift pattern and staff from before the pause — still fully editable.' : 'Pre-filled with whoever was assigned before the pause — still fully editable.'}
                 </p>
               </div>
               <button onClick={closeResumeAssignModal} className="p-1.5 rounded-lg hover:bg-[#F6F3EC] transition ml-4 shrink-0"><XCircle className="h-5 w-5 text-[#A39D91]" /></button>
@@ -4758,12 +4991,61 @@ const BookingDetailPageV2 = () => {
             <div className="p-6 space-y-4 overflow-y-auto">
               {resumeAssignLoading ? (
                 <div className="flex items-center justify-center py-10 text-[#9A9488]"><Loader2 className="h-5 w-5 animate-spin" /></div>
+              ) : resumeWithStaffMode && resumeStep === 'past' ? (
+                <>
+                  <ResumePastDaysCalendar
+                    days={resumePastDays}
+                    decisions={resumePastPay}
+                    onChange={setResumePastPay}
+                    staffName={resumeAssignStaff.find(s => s.staff_profile_id === resumeAssignForm.staff_profile_id)?.staff_name || 'Staff member'}
+                    staffRate={resumeAssignForm.daily_rate ? Number(resumeAssignForm.daily_rate) : null}
+                    clientRate={dailyRate ? Number(dailyRate) : null}
+                  />
+                  {resumeAssignError && (
+                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{resumeAssignError}</div>
+                  )}
+                </>
               ) : (
                 <>
+                  {resumeWithStaffMode && (() => {
+                    // Today / an earlier day / a later day — an earlier day can't go
+                    // back past the day the booking was paused.
+                    const today = todayISO();
+                    const shift = (n) => { const d = new Date(`${today}T00:00:00`); d.setDate(d.getDate() + n); return toLocalDateStr(d); };
+                    const start = resumeAssignForm.service_start_date;
+                    const mode = !start ? null : start < today ? 'past' : start > today ? 'future' : 'today';
+                    const canGoBack = !resumePausedFrom || resumePausedFrom < today;
+                    const opts = [
+                      { key: 'today', label: 'Today', date: today },
+                      { key: 'past', label: 'A previous day', date: resumePausedFrom && shift(-1) < resumePausedFrom ? resumePausedFrom : shift(-1), disabled: !canGoBack },
+                      { key: 'future', label: 'A future day', date: shift(1) },
+                    ];
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-[#7A756A]">When does the new staff member start?</p>
+                        <div className="flex flex-wrap gap-2">
+                          {opts.map(o => (
+                            <button key={o.key} type="button" disabled={o.disabled}
+                              onClick={() => { if (mode !== o.key) setResumeAssignForm(f => ({ ...f, service_start_date: o.date })); }}
+                              title={o.disabled ? 'The booking was only paused today' : undefined}
+                              className={`px-3 py-1 rounded-full text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed ${mode === o.key ? 'bg-[#137A6B] text-white' : 'bg-[#F6F3EC] text-[#5A554B] hover:bg-[#ECE7DF]'}`}>
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                        {mode === 'past' && (
+                          <p className="text-xs text-[#7A756A]">Backdated — next you'll decide the staff pay and client invoice for {resumePastDays.length} day{resumePastDays.length === 1 ? '' : 's'} before today.</p>
+                        )}
+                        {mode === 'future' && (
+                          <p className="text-xs text-[#1D4ED8]">The booking will show as <span className="font-semibold">Scheduled to start</span>. Nothing is invoiced or paid until {formatDate(start)}, and it becomes Active by itself that day.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Service Start Date</label>
-                      <DateInput value={resumeAssignForm.service_start_date} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_date: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                      <DateInput value={resumeAssignForm.service_start_date} min={resumeWithStaffMode ? (resumePausedFrom || undefined) : undefined} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_date: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
                     </div>
                     {!isShiftBased && (
                       <div>
@@ -4873,10 +5155,19 @@ const BookingDetailPageV2 = () => {
             </div>
 
             <div className="flex items-center justify-end gap-2 p-6 border-t border-[#ECE7DF] shrink-0">
+              {resumeWithStaffMode && resumeStep === 'past' ? (
+                <button onClick={() => setResumeStep('details')} disabled={resumeAssignSubmitting} className="mr-auto text-sm font-semibold text-[#7A756A] hover:text-[#2A2722] transition disabled:opacity-40">← Back</button>
+              ) : null}
               <button onClick={closeResumeAssignModal} disabled={resumeAssignSubmitting} className="text-sm font-semibold text-[#7A756A] hover:text-[#2A2722] transition disabled:opacity-40">Cancel</button>
               <button onClick={handleResumeAssignSubmit} disabled={resumeAssignSubmitting || resumeAssignLoading} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-[#137A6B] hover:bg-[#0f5e53] rounded-xl transition disabled:opacity-60">
-                {resumeAssignSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
-                {resumeAssignSubmitting ? 'Assigning…' : (isShiftBased ? 'Create Shift Pattern & Assign Staff' : 'Assign Staff Member')}
+                {resumeAssignSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : resumeWithStaffMode ? <Play className="h-4 w-4" /> : <Users className="h-4 w-4" />}
+                {resumeAssignSubmitting
+                  ? (resumeWithStaffMode ? 'Resuming…' : 'Assigning…')
+                  : resumeWithStaffMode
+                    ? (resumeStep === 'details' && resumePastDays.length > 0
+                      ? 'Next: Past days →'
+                      : resumeAssignForm.service_start_date > todayISO() ? 'Schedule Start' : 'Resume Booking')
+                    : (isShiftBased ? 'Create Shift Pattern & Assign Staff' : 'Assign Staff Member')}
               </button>
             </div>
           </div>
@@ -5112,8 +5403,10 @@ const BookingDetailPageV2 = () => {
                 <p className="text-sm text-slate-500 mt-0.5">
                   {swapModalStep === 1
                     ? 'Select a replacement from available staff'
+                    : swapModalStep === 4
+                      ? 'Step 4 of 4 — decide who is paid for the days already calculated'
                     : swapModalStep === 3
-                      ? `Step 3 of 3 — set what ${swapModalSelectedStaff?.full_name} will be paid`
+                      ? `Step 3 of ${backdatedSwapDays.length > 0 ? 4 : 3} — set what ${swapModalSelectedStaff?.full_name} will be paid`
                     : swapModalSlotId
                       ? (swapModalIsAssign ? `Assign ${swapModalSelectedStaff?.full_name} to this shift` : `Confirm: current staff → ${swapModalSelectedStaff?.full_name}`)
                       : `Confirm: ${normCurrentStaff?.name || 'Current staff'} → ${swapModalSelectedStaff?.full_name}`}
@@ -5262,6 +5555,28 @@ const BookingDetailPageV2 = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Service start date' : 'New staff start date'} <span className="text-rose-500">*</span></label>
+                    {(() => {
+                      // Explicit "this already happened" entry point for a swap that
+                      // nobody logged on the day — picks yesterday as a starting point.
+                      const today = todayISO();
+                      const shift = (n) => { const d = new Date(`${today}T00:00:00`); d.setDate(d.getDate() + n); return toLocalDateStr(d); };
+                      const mode = swapModalStartDate < today ? 'past' : swapModalStartDate > today ? 'future' : 'today';
+                      const opts = [
+                        { key: 'today', label: 'Today', date: today },
+                        { key: 'past', label: 'A previous day', date: shift(-1) },
+                        { key: 'future', label: 'A future day', date: shift(1) },
+                      ];
+                      return (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {opts.map(o => (
+                            <button key={o.key} type="button" onClick={() => { if (mode !== o.key) setSwapModalStartDate(o.date); }}
+                              className={`px-3 py-1 rounded-full text-xs font-medium transition ${mode === o.key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <DateInput value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     {swapModalStartDate > toDateInput(new Date()) && (
                       <p className="text-xs text-amber-600 mt-1.5">
@@ -5271,13 +5586,92 @@ const BookingDetailPageV2 = () => {
                     {swapModalStartDate < todayISO() && (
                       <p className="text-xs text-slate-500 mt-1.5">
                         Backdated entry — this will be recorded as already having happened.
+                        {backdatedSwapDays.length > 0 && (
+                          <span className="block mt-1 font-medium text-amber-700">
+                            {normCurrentStaff?.name || 'The current staff member'} has already been paid for {backdatedSwapDays.filter(d => d.oldRecord?.salary_status === 'PAID').length} day(s) since {formatDate(swapModalStartDate)} — you'll decide who gets paid for those days in step 4.
+                          </span>
+                        )}
                       </p>
                     )}
                   </div>
                   {/* LIVE_IN whole-booking swap: both staff are active from the start date
                       above until the outgoing staff's out-time is explicitly logged — no
                       date is picked for that up front, it happens whenever it happens. */}
-                  {!swapModalIsAssign && !swapModalSlotId && (
+                  {/* Backdated: the handover is in the past, so the outgoing staff's
+                      departure is usually known too — log it here and their assignment
+                      closes on that day instead of staying open into today. */}
+                  {swapLeaveApplies && (
+                    <div className="rounded-xl border border-slate-200 p-3.5 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Is {normCurrentStaff?.name || 'the current staff member'} going on leave? <span className="text-rose-500">*</span></p>
+                      <div className="flex flex-wrap gap-2">
+                        {[{ v: true, label: 'Yes — going on leave' }, { v: false, label: 'No — something else' }].map(o => (
+                          <button key={String(o.v)} type="button" onClick={() => setSwapModalOnLeave(o.v)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition ${swapModalOnLeave === o.v ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                      {swapModalOnLeave === true && (
+                        <>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Leave starts <span className="text-rose-500">*</span></label>
+                              <DateInput value={swapLeaveStartDate} min={swapModalStartDate} onChange={e => setSwapModalLeaveStart(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Leave ends <span className="text-rose-500">*</span></label>
+                              <DateInput value={swapModalLeaveEnd} min={swapLeaveStartDate} onChange={e => setSwapModalLeaveEnd(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Log-out time on {formatDate(swapLeaveStartDate)} <span className="text-rose-500">*</span></label>
+                            <TimeInput value={swapModalLeaveOutTime} onChange={e => setSwapModalLeaveOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                          </div>
+                          {swapLeaveStartDate < swapModalStartDate && <p className="text-xs text-rose-600">The leave can't start before {swapModalSelectedStaff.full_name} takes over ({formatDate(swapModalStartDate)}).</p>}
+                          {swapModalLeaveEnd && swapModalLeaveEnd < swapLeaveStartDate && <p className="text-xs text-rose-600">The leave can't end before it starts.</p>}
+                          <p className="text-xs text-slate-500">
+                            {normCurrentStaff?.name || 'They'} {swapLeaveStartDate > todayISO() ? 'stay on the booking until then, and are' : 'are'} relieved from this booking on {formatDate(swapLeaveStartDate)} at the log-out time above, and a leave is logged for them from {formatDate(swapLeaveStartDate)}{swapModalLeaveEnd ? ` to ${formatDate(swapModalLeaveEnd)}` : ''} as an approved leave. The reason for the swap below is used as the leave reason. Their pay for that day is settled afterwards from the Staff &amp; Swaps tab, as for any log-out.
+                          </p>
+                        </>
+                      )}
+                      {swapModalOnLeave === false && (
+                        <p className="text-xs text-slate-500">No leave is logged. {normCurrentStaff?.name || 'They'} leave{normCurrentStaff?.name ? 's' : ''} the booking as usual — see below.</p>
+                      )}
+                    </div>
+                  )}
+                  {isBackdatedWholeSwap && swapModalOnLeave !== true && (
+                    <div className="rounded-xl border border-slate-200 p-3.5 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Has {normCurrentStaff?.name || 'the current staff member'} already left?</p>
+                      <div className="flex flex-wrap gap-2">
+                        {[{ v: true, label: 'Yes — log when they left' }, { v: false, label: 'No — still on the booking' }].map(o => (
+                          <button key={String(o.v)} type="button" onClick={() => setSwapModalOldLeft(o.v)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition ${swapModalOldLeft === o.v ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                      {swapModalOldLeft ? (
+                        <>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Left on</label>
+                              <DateInput value={swapModalOldOutDate || swapModalStartDate} min={swapModalStartDate} max={todayISO()} onChange={e => setSwapModalOldOutDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time <span className="text-rose-500">*</span></label>
+                              <TimeInput value={swapModalOldOutTime} onChange={e => setSwapModalOldOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Their assignment ends on {formatDate(swapModalOldOutDate || swapModalStartDate)}, and from then on only {swapModalSelectedStaff.full_name} is on duty. Invoicing isn't switched to manual, because the two never overlap from today onwards.
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-slate-500">They stay on the booking alongside {swapModalSelectedStaff.full_name} until you log their out-time. Invoicing switches to manual until then.</p>
+                      )}
+                    </div>
+                  )}
+                  {!swapModalIsAssign && !swapModalSlotId && swapModalOnLeave !== true && !(isBackdatedWholeSwap && swapModalOldLeft) && (
                     <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
                       {normCurrentStaff?.name || 'The current staff member'} and {swapModalSelectedStaff.full_name} will both show as on duty from {formatDate(swapModalStartDate)} onward.
                       {' '}{normCurrentStaff?.name || 'They'} stay{normCurrentStaff?.name ? 's' : ''} on the booking until their out-time is logged from the Staff &amp; Swaps tab — there's no need to know that date now.
@@ -5306,7 +5700,7 @@ const BookingDetailPageV2 = () => {
                 </div>
                 <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
                   <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
-                  <button onClick={goToSwapPayStep} disabled={(!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  <button onClick={goToSwapPayStep} disabled={(!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate || swapOldLeftIncomplete || swapLeaveIncomplete} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                     Next: Staff pay →
                   </button>
                 </div>
@@ -5340,9 +5734,53 @@ const BookingDetailPageV2 = () => {
                   </div>
                   <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
                     <button onClick={() => setSwapModalStep(2)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
-                    <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                    {backdatedSwapDays.length > 0 ? (
+                      <button onClick={goToSwapPastPayStep} disabled={(!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                        Next: Pay for past days →
+                      </button>
+                    ) : (
+                      <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                        {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
+                        {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
+                      </button>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+
+            {swapModalStep === 4 && swapModalSelectedStaff && (() => {
+              const oldName = normCurrentStaff?.name || 'Outgoing staff';
+              const newRate = swapModalNewRate !== '' ? Number(swapModalNewRate) : null;
+              const badAmount = backdatedSwapDays.find(d => {
+                const dec = swapModalPastPay[d.dateISO] || {};
+                return (dec.oldPay && d.oldRecord?.salary_status === 'PAID' && !(backdatedOldAmount(d, dec) > 0))
+                  || (dec.newPay && !(backdatedNewAmount(dec, newRate) > 0));
+              });
+              return (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                      The nightly run already paid {oldName} for days on or after {formatDate(swapModalStartDate)}, before this swap was recorded.
+                      Use the calendar to choose who should be paid for each day. <span className="font-semibold">Old</span> means {oldName} and <span className="font-semibold">New</span> means {swapModalSelectedStaff.full_name}.
+                      Turning off a day {oldName} was paid for reverses that payment.
+                    </div>
+                    <BackdatedSwapPayCalendar
+                      days={backdatedSwapDays}
+                      decisions={swapModalPastPay}
+                      onChange={setSwapModalPastPay}
+                      oldName={oldName}
+                      newName={swapModalSelectedStaff.full_name}
+                      newRate={newRate}
+                    />
+                    {badAmount && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">Enter a positive amount for {formatDate(badAmount.dateISO)}, or mark that day as not paid.</div>}
+                    {swapModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{swapModalError}</div>}
+                  </div>
+                  <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
+                    <button onClick={() => setSwapModalStep(3)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
+                    <button onClick={confirmSwap} disabled={swapModalSubmitting || Boolean(badAmount) || !swapModalReason.trim()} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                       {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
-                      {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
+                      {swapModalSubmitting ? 'Saving…' : 'Confirm Swap & Pay'}
                     </button>
                   </div>
                 </>
@@ -5408,6 +5846,24 @@ const BookingDetailPageV2 = () => {
         const days = onPayStep ? buildSettlementDays(closeAssignmentRow, closeAssignmentDate, closeAssignmentTime) : [];
         const DAY_LABEL = { FIRST: 'First day', LAST: 'Last day', ONLY: 'Their only day' };
         const outstanding = days.filter(d => !d.alreadyDecided);
+        // Logging out the last staff member pauses the booking from that day, and
+        // money already moved for the days after it is undone on save (see
+        // closeStaffAssignment / reverseDaysAfterAssignmentEnd on the server).
+        const isLastStaff = !isSettleOnly && canLogOutLastStaff && !staffHistory.some(r =>
+          (r.status || '').toLowerCase() === 'active' && !r.shift_slot_id && (r.assignment_id || r.id) !== closeAssignmentRow.id);
+        const outDate = closeAssignmentDate;
+        const salaryAfter = isSettleOnly || !outDate ? [] : attendanceRecords.filter(r =>
+          r.assignment_id === closeAssignmentRow.id && r.service_date?.slice(0, 10) > outDate && r.salary_status === 'PAID');
+        const invoicesAfter = !isLastStaff || !outDate ? [] : dailyInvoiceRecords.filter(r =>
+          r.service_date?.slice(0, 10) > outDate && r.status === 'INVOICED');
+        const sumOf = (rows, key) => rows.reduce((s, r) => s + Number(r[key] || 0), 0);
+        const afterEffects = (salaryAfter.length > 0 || invoicesAfter.length > 0 || isLastStaff) && (
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1">
+            {isLastStaff && <p><span className="font-semibold">Nobody else is on this booking.</span> It will be paused from {formatDate(outDate)}, so there is no invoicing or staff pay until you resume it.</p>}
+            {salaryAfter.length > 0 && <p>{closeAssignmentRow.name} was already paid for {salaryAfter.length} day{salaryAfter.length === 1 ? '' : 's'} after {formatDate(outDate)}. That {formatMoney(sumOf(salaryAfter, 'salary_amount'))} will be reversed.</p>}
+            {invoicesAfter.length > 0 && <p>The client was invoiced for {invoicesAfter.length} day{invoicesAfter.length === 1 ? '' : 's'} after {formatDate(outDate)}. That {formatMoney(sumOf(invoicesAfter, 'amount'))} will be refunded to their wallet.</p>}
+          </div>
+        );
         return (
         // z-[60] — this can also be opened from a button inside the Day Detail
         // Modal (z-50, rendered later in the DOM), same reasoning as the reschedule
@@ -5430,7 +5886,9 @@ const BookingDetailPageV2 = () => {
                   <p className="text-xs text-slate-500">
                     {isSettleOnly
                       ? `${closeAssignmentRow.name}'s assignment ended on ${formatDate(closeAssignmentRow.effectiveEnd)}. Confirm when they actually left, then decide what they're owed for their first and last day.`
-                      : `${closeAssignmentRow.name} has been on this booking alongside another staff member since ${formatDate(closeAssignmentRow.startDate)}. Logging their out-time ends their assignment — they'll no longer show as on duty after this date.`}
+                      : isLastStaff
+                        ? `${closeAssignmentRow.name} has been on this booking since ${formatDate(closeAssignmentRow.startDate)}. Pick the day and time they left. Their assignment ends then, and the booking is paused from that day.`
+                        : `${closeAssignmentRow.name} has been on this booking alongside another staff member since ${formatDate(closeAssignmentRow.startDate)}. Logging their out-time ends their assignment — they'll no longer show as on duty after this date.`}
                   </p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -5442,6 +5900,7 @@ const BookingDetailPageV2 = () => {
                       <TimeInput value={closeAssignmentTime} onChange={e => setCloseAssignmentTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     </div>
                   </div>
+                  {afterEffects}
                 </>
               ) : (
                 <>
@@ -5522,6 +5981,7 @@ const BookingDetailPageV2 = () => {
                   {outstanding.length === 0 && (
                     <p className="text-xs text-slate-400">Both ends of this assignment have already been settled — there's nothing left to decide.</p>
                   )}
+                  {afterEffects}
                 </>
               )}
               {closeAssignmentError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{closeAssignmentError}</div>}
@@ -5537,7 +5997,7 @@ const BookingDetailPageV2 = () => {
               {onPayStep ? (
                 <button onClick={submitCloseAssignment} disabled={closeAssignmentBusy} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                   {closeAssignmentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {closeAssignmentBusy ? 'Saving…' : isSettleOnly ? 'Confirm pay' : 'Close assignment & pay'}
+                  {closeAssignmentBusy ? 'Saving…' : isSettleOnly ? 'Confirm pay' : isLastStaff ? 'Log out & pause booking' : 'Close assignment & pay'}
                 </button>
               ) : (
                 <button onClick={reviewCloseAssignmentPay} disabled={!closeAssignmentDate || !closeAssignmentTime} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
@@ -6039,6 +6499,38 @@ const BookingDetailPageV2 = () => {
                   </div>
                 )}
 
+                {/* Log the booking's staff member out on THIS day (any day up to today).
+                    Mid-swap days already have their own outgoing row below. With nobody
+                    left on the booking afterwards, it's paused from this day. */}
+                {canLogOutLastStaff && !isConcurrentDay && dayModal.dateISO <= todayISO() && (() => {
+                  const onDuty = dayModal.assignments.filter(a => !a.shift_slot_id && !a.service_end_date
+                    && toLocalDateStr(a.service_start_date) <= dayModal.dateISO);
+                  if (onDuty.length === 0) return null;
+                  return (
+                    <div className="mx-6 mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600 space-y-2">
+                      {onDuty.map(a => {
+                        const staffName = a.full_name || a.staff_name || 'Staff';
+                        return (
+                          <div key={a.assignment_id} className="flex items-center justify-between gap-3 flex-wrap">
+                            <span>
+                              Did <span className="font-semibold text-slate-800">{staffName}</span> leave on {formatDate(dayModal.dateISO)}? Logging them out ends their assignment that day, and the booking is paused from then until you resume it.
+                            </span>
+                            <button
+                              onClick={() => openCloseAssignment({
+                                id: a.assignment_id, name: staffName, startDate: a.service_start_date,
+                                profileId: a.staff_profile_id, dailyRate: a.daily_rate,
+                              }, dayModal.dateISO)}
+                              className="shrink-0 px-3 py-1 text-[11px] font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded transition"
+                            >
+                              Log out on this day
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
                 {/* Shifts moved away from this date, or covered same-day by someone else — explains why fewer/different rows show below */}
                 {shiftReschedules.filter(r => r.original_date?.slice(0, 10) === dayModal.dateISO).map(r => {
                   const isSameDayCover = r.new_date?.slice(0, 10) === r.original_date?.slice(0, 10);
@@ -6099,11 +6591,11 @@ const BookingDetailPageV2 = () => {
                               // gets the flat present/absent/exception mark — boundary days (and every
                               // SHIFT_BASED/VISITING day) still need a real in/out time.
                               const { onlyStart: liveInOnlyStart, onlyEnd: liveInOnlyEnd, sameDay: liveInSameDay, isBoundary: liveInIsBoundary } = liveInBoundary(a, dayModal.dateISO);
-                              // The outgoing half of a still-open swap — started before today, no
-                              // end date yet, and this is the OTHER concurrent assignment (not the
-                              // one whose service_start_date is today). Gets its own row below
-                              // instead of falling into either the flat mark or the normal timed flow.
-                              const isSwapOutgoingOpen = isConcurrentDay && isLiveIn && !a.shift_slot_id && !a.service_end_date && !liveInOnlyStart;
+                              // The outgoing half of a still-open swap — no end date yet and a
+                              // replacement started after it (see isSwapOutgoingOn). Gets its own
+                              // row below instead of falling into either the flat mark or the
+                              // normal timed flow.
+                              const isSwapOutgoingOpen = isConcurrentDay && !liveInOnlyStart && isSwapOutgoingOn(a, dayModal.assignments);
                               // liveInSameDay is excluded too: starting AND ending today leaves
                               // both onlyStart/onlyEnd false, which would otherwise fall through
                               // to the flat mark and leave nowhere to enter either time.
@@ -6174,7 +6666,7 @@ const BookingDetailPageV2 = () => {
                                         {isFlatMarkDay ? null : statusBadge}
                                         {/* Wrong figure on a day that WAS correctly worked — restate it
                                             without cancelling the day (that's Revoke, on the timeline). */}
-                                        {paid && (
+                                        {paid && correctEnabled && (
                                           <button
                                             onClick={() => openCorrection({
                                               kind: 'SALARY', id: record.attendance_id, dateISO: dayModal.dateISO,
@@ -6186,9 +6678,7 @@ const BookingDetailPageV2 = () => {
                                             Correct
                                           </button>
                                         )}
-                                        {record.corrected_at && (
-                                          <span title={`Amount corrected on ${formatDT(record.corrected_at)}`} className="text-[10.5px] text-blue-600 font-medium">corrected</span>
-                                        )}
+                                        <EditedAmountBadge record={record} />
                                         {canCover && (
                                           <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
                                         )}
@@ -6635,7 +7125,7 @@ const BookingDetailPageV2 = () => {
                                         <span className={`w-1.5 h-1.5 rounded-full ${invoiced ? 'bg-green-500' : 'bg-gray-400'}`} />
                                         {invoiced ? 'Invoiced' : 'Skipped'}
                                       </span>
-                                      {invoiced && (
+                                      {invoiced && correctEnabled && (
                                         <button
                                           onClick={() => openCorrection({
                                             kind: 'INVOICE', id: assignmentInvoiceRecord.daily_invoice_id, dateISO: dayModal.dateISO,
@@ -6647,6 +7137,7 @@ const BookingDetailPageV2 = () => {
                                           Correct
                                         </button>
                                       )}
+                                      {invoiced && <EditedAmountBadge record={assignmentInvoiceRecord} />}
                                     </div>
                                   </td>
                                 </tr>
@@ -6770,7 +7261,7 @@ const BookingDetailPageV2 = () => {
                                         {invoiceRecord.status === 'INVOICED' ? 'Invoiced' : invoiceRecord.status === 'REVOKED' ? 'Revoked' : 'Skipped'}
                                       </span>
                                       {/* The day was correctly billable — only the figure was wrong. */}
-                                      {invoiceRecord.status === 'INVOICED' && (
+                                      {invoiceRecord.status === 'INVOICED' && correctEnabled && (
                                         <button
                                           onClick={() => openCorrection({
                                             kind: 'INVOICE', id: invoiceRecord.daily_invoice_id, dateISO: dayModal.dateISO,
@@ -6782,9 +7273,7 @@ const BookingDetailPageV2 = () => {
                                           Correct
                                         </button>
                                       )}
-                                      {invoiceRecord.corrected_at && (
-                                        <span title={`Amount corrected on ${formatDT(invoiceRecord.corrected_at)}`} className="text-[10.5px] text-blue-600 font-medium">corrected</span>
-                                      )}
+                                      <EditedAmountBadge record={invoiceRecord} />
                                     </div>
                                   </td>
                                 </>
@@ -6925,7 +7414,8 @@ const BookingDetailPageV2 = () => {
 
               <div className="px-5 py-4 space-y-4">
                 <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
-                  This day stays {isSalary ? 'paid' : 'invoiced'} — only the difference moves.
+                  This day stays {isSalary ? 'paid' : 'invoiced'} — the original {isSalary ? 'salary' : 'invoice'} entry is updated
+                  to the new amount and marked as edited, with your name, the time and the reason.
                   To cancel the day altogether, use Revoke on the care timeline instead.
                 </div>
 
@@ -6959,7 +7449,7 @@ const BookingDetailPageV2 = () => {
                           : `Rs.${Math.abs(delta).toLocaleString()} will be clawed back from ${correctionTarget.who}'s wallet.`)
                       : (delta > 0
                           ? `The client will be charged an extra Rs.${Math.abs(delta).toLocaleString()}, drawn from their wallet if it holds enough.`
-                          : `Rs.${Math.abs(delta).toLocaleString()} will be credited back against this booking. No money leaves the company — settle any surplus when the booking closes.`)}
+                          : `The client's charge drops by Rs.${Math.abs(delta).toLocaleString()}. No money leaves the company — settle any surplus when the booking closes.`)}
                   </div>
                 )}
                 {delta === 0 && (

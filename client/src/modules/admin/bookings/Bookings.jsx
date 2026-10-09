@@ -18,6 +18,8 @@ const STATUS_TABS = [
   { key: 'ACTIVE',             label: 'Active' },
   { key: 'EXPIRING_SOON',      label: 'Expiring Soon' },
   { key: 'PENDING_TERMINATION', label: 'Pending Termination' },
+  { key: 'PAUSED',             label: 'Paused' },
+  { key: 'SCHEDULED',          label: 'Scheduled to Start' },
   { key: 'TERMINATED',         label: 'Terminated' },
   { key: 'COMPLETED',          label: 'Completed' },
   { key: 'CANCELLED',          label: 'Cancelled' },
@@ -34,6 +36,8 @@ const STATUS_CONFIG = {
   PENDING:             { dot: 'bg-yellow-400', label: 'Pending' },
   ACTIVE:              { dot: 'bg-green-500',  label: 'Active' },
   PENDING_TERMINATION: { dot: 'bg-amber-400',  label: 'Pending Termination' },
+  PAUSED:              { dot: 'bg-amber-500',  label: 'Paused' },
+  SCHEDULED:           { dot: 'bg-blue-400',   label: 'Scheduled to Start' },
   TERMINATED:          { dot: 'bg-red-400',    label: 'Terminated' },
   COMPLETED:           { dot: 'bg-gray-400',   label: 'Completed' },
   CANCELLED:           { dot: 'bg-red-400',    label: 'Cancelled' },
@@ -55,17 +59,24 @@ const formatTime = (t) => {
   return `${h}:${m[2]} ${period}`;
 };
 
-const StatusBadge = ({ status }) => {
+const shortDate = (iso) => (iso ? new Date(`${String(iso).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : null);
+
+const StatusBadge = ({ status, pausedSince, scheduledStart }) => {
   // OVERDUE bookings are still running — display them as Active with a
   // separate "Overdue balance" flag rather than a distinct lifecycle status.
   const isOverdueBalance = status?.toUpperCase() === 'OVERDUE';
   const effectiveStatus = isOverdueBalance ? 'ACTIVE' : status?.toUpperCase();
   const cfg = STATUS_CONFIG[effectiveStatus] || { dot: 'bg-gray-400', label: status || 'Unknown' };
+  // When it started / starts — the one date that matters for these two states.
+  const when = effectiveStatus === 'PAUSED' && pausedSince ? `since ${shortDate(pausedSince)}`
+    : effectiveStatus === 'SCHEDULED' && scheduledStart ? `on ${shortDate(scheduledStart)}`
+    : null;
   return (
     <span className="inline-flex items-center gap-1.5 flex-wrap">
       <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-700">
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
         {cfg.label}
+        {when && <span className="font-normal text-gray-500">{when}</span>}
       </span>
       {isOverdueBalance && (
         <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-inset ring-red-200">
@@ -535,7 +546,7 @@ const Bookings = () => {
 
                           {/* Status */}
                           <td className="px-4 py-3 whitespace-nowrap">
-                            <StatusBadge status={b.status} />
+                            <StatusBadge status={b.status} pausedSince={b.paused_since} scheduledStart={b.scheduled_start_date} />
                           </td>
 
                           {/* Arrow */}
@@ -574,7 +585,7 @@ const Bookings = () => {
                         <span className="font-mono text-sm font-semibold text-slate-800">
                           {b.booking_code || `#${b.booking_id}`}
                         </span>
-                        <StatusBadge status={b.status} />
+                        <StatusBadge status={b.status} pausedSince={b.paused_since} scheduledStart={b.scheduled_start_date} />
                       </div>
                       <div className="flex items-center gap-2.5">
                         <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 ring-1 ring-slate-200">

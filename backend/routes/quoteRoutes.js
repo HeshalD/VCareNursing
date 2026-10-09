@@ -306,6 +306,33 @@ router.post(
 );
 
 /**
+ * @route   GET /api/quotes/:quote_id/invoice-lines
+ * @desc    A service quotation's line items with what has been paid towards
+ *          each — feeds the combined-invoice amount editor
+ * @access  Private (VIEW_INVOICES)
+ */
+router.get(
+    '/:quote_id/invoice-lines',
+    protect,
+    requirePermission('VIEW_INVOICES'),
+    invoiceController.getQuoteInvoiceLines
+);
+
+/**
+ * @route   PATCH /api/quotes/:quote_id/invoice-amounts
+ * @desc    Restate line item amounts on a service quotation; its combined
+ *          invoice and any extra-charge invoices are regenerated and marked edited
+ * @access  Private (INVOICE_EDIT_AMOUNT)
+ * @body    items ([{ line_item_id, new_amount }]), reason
+ */
+router.patch(
+    '/:quote_id/invoice-amounts',
+    protect,
+    requirePermission('INVOICE_EDIT_AMOUNT'),
+    invoiceController.editQuoteInvoiceAmounts
+);
+
+/**
  * @route   GET /api/quotes/:quote_id/payments
  * @desc    Get all payments for a quotation
  * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)

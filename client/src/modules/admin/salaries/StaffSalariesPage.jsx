@@ -10,6 +10,7 @@ import * as XLSX from 'xlsx';
 import AdminLayout from '../components/AdminLayout';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import apiClient from '../../../api/api';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const fmt = (v) => money.format(Number(v || 0));
@@ -190,7 +191,7 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                             <tr key={i} className="bg-slate-50/80">
                               <td colSpan={2} className="pl-10 pr-4 py-2 text-xs text-slate-500 italic">Day {i + 1}</td>
                               <td className="px-4 py-2 text-xs text-slate-600">{fmtDate(entry.date)}</td>
-                              <td colSpan={3} className="px-4 py-2 text-right text-xs font-semibold text-slate-700">{fmt(entry.amount)}</td>
+                              <td colSpan={3} className="px-4 py-2 text-right text-xs font-semibold text-slate-700">{fmt(entry.amount)}<EditedAmountBadge record={entry} className="ml-1.5" /></td>
                               <td colSpan={2}></td>
                             </tr>
                           ))}

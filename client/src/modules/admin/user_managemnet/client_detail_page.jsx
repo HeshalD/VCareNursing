@@ -68,7 +68,13 @@ import AddCareProfileDrawer from './AddCareProfileDrawer';
 import { AddRequestDrawer as AddServiceRequestDrawer } from '../service_requests/proxy_service_request';
 import ClientSwitcherSidebar from './ClientSwitcherSidebar';
 import CitySelect from '../../../components/common/CitySelect';
-import { CombinedPaymentBadge, CombinedStatusFilter, filterCombinedInvoices } from '../invoices/CombinedInvoiceStatus';
+import useInvoicePreview from '../invoices/useInvoicePreview';
+import EditedAmountBadge from '../components/EditedAmountBadge';
+import { PreviewButton } from '../invoices/InvoicePreviewModal';
+import { invoicePreview } from '../invoices/invoicePreviewSources';
+import ClientInvoicesPanel from './ClientInvoicesPanel';
+import useInvoiceAmountEditor from './useInvoiceAmountEditor';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 
 const money = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -152,7 +158,8 @@ const SideNavItem = ({ active, icon: Icon, label, onClick }) => (
   </button>
 );
 
-const StatCard = ({ icon: Icon, label, value, tone = 'slate' }) => {
+// `to` makes the card a link to the page that breaks the figure down entry by entry.
+const StatCard = ({ icon: Icon, label, value, tone = 'slate', to }) => {
   const iconColor = {
     slate:   'text-gray-500',
     blue:    'text-blue-600',
@@ -161,14 +168,15 @@ const StatCard = ({ icon: Icon, label, value, tone = 'slate' }) => {
     rose:    'text-rose-600',
     violet:  'text-violet-600',
   };
-  return (
+  const card = (
     // Own container so the label/value type scales with the card's real width
     // rather than the viewport — the card is nested two sidebars deep, so a
     // viewport breakpoint says nothing about how much room it actually has.
-    <div className="@container min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white p-3 @min-[13rem]:p-4">
+    <div className={`@container min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white p-3 @min-[13rem]:p-4 ${to ? 'transition-colors group-hover:border-blue-300 group-hover:bg-blue-50/30' : ''}`}>
       <div className="flex items-start gap-2 mb-2">
         <Icon className={`mt-px h-4 w-4 shrink-0 ${iconColor[tone] || 'text-gray-500'}`} />
         <p className="min-w-0 text-[11px] font-medium uppercase leading-tight tracking-wider text-gray-400 break-words">{label}</p>
+        {to && <ArrowRight className="ml-auto mt-px h-3.5 w-3.5 shrink-0 text-gray-300 transition-colors group-hover:text-blue-500" />}
       </div>
       <p
         title={typeof value === 'string' || typeof value === 'number' ? String(value) : undefined}
@@ -178,6 +186,11 @@ const StatCard = ({ icon: Icon, label, value, tone = 'slate' }) => {
       </p>
     </div>
   );
+  return to ? (
+    <Link to={to} title="See how this figure is made up" className="group block min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+      {card}
+    </Link>
+  ) : card;
 };
 
 const InfoRow = ({ label, value }) => (
@@ -190,6 +203,7 @@ const InfoRow = ({ label, value }) => (
 const ClientDetailPage = () => {
   const { clientId } = useParams();
   const navigate = useNavigate();
+  const { hasPermission } = useAdminAuth();
 
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -240,10 +254,6 @@ const ClientDetailPage = () => {
 
   const [clientInvoices, setClientInvoices] = useState([]);
   const [invoicesLoading, setInvoicesLoading] = useState(false);
-  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('');
-  const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
-  const [invoiceDateTo, setInvoiceDateTo] = useState('');
-  const [invoiceTypeView, setInvoiceTypeView] = useState('REG_FEE');
   const [quoteTypeView, setQuoteTypeView] = useState('SERVICE');
   const [invoiceActionBusyId, setInvoiceActionBusyId] = useState('');
   const [invoiceActionError, setInvoiceActionError] = useState('');
@@ -255,7 +265,6 @@ const ClientDetailPage = () => {
   const [overdueInvoicesLoading, setOverdueInvoicesLoading] = useState(false);
 
   const [combinedInvoices, setCombinedInvoices] = useState([]);
-  const [combinedFilter, setCombinedFilter] = useState('ALL'); // 'ALL' | 'UNPAID' | 'PAID'
   const [combinedInvoicesLoading, setCombinedInvoicesLoading] = useState(false);
 
   const [productQuotes, setProductQuotes] = useState([]);
@@ -306,6 +315,7 @@ const ClientDetailPage = () => {
   const [bankAccounts, setBankAccounts] = useState([]);
   const [bankAccountsLoading, setBankAccountsLoading] = useState(false);
   const [lastInvoicePdfUrl, setLastInvoicePdfUrl] = useState(null);
+  const [openPreview, previewModal] = useInvoicePreview();
   const [uploadingRegFeeReceipt, setUploadingRegFeeReceipt] = useState(false);
   const regFeeReceiptInputRef = useRef(null);
 
@@ -466,16 +476,12 @@ const ClientDetailPage = () => {
 
   useEffect(() => { setTxPage(1); }, [clientTransactions]);
 
-  const fetchClientInvoices = async ({ status = invoiceStatusFilter, date_from = invoiceDateFrom, date_to = invoiceDateTo } = {}) => {
+  // All of the client's daily care invoices — filtering/grouping happens in ClientInvoicesPanel.
+  const fetchClientInvoices = async () => {
     if (!clientId) return;
     try {
       setInvoicesLoading(true);
-      const filters = {};
-      if (status) filters.status = status;
-      if (date_from) filters.date_from = date_from;
-      if (date_to) filters.date_to = date_to;
-      filters.limit = 200;
-      const res = await apiClient.getClientInvoices(clientId, filters);
+      const res = await apiClient.getClientInvoices(clientId, { limit: 1000 });
       setClientInvoices(Array.isArray(res?.data) ? res.data : []);
     } catch {
       // non-fatal
@@ -928,6 +934,43 @@ const ClientDetailPage = () => {
     }
   };
 
+  // ── Invoice amount edits (Invoices tab) ─────────────────────────────────────
+  // Each invoice type is gated by the permission that owns its money.
+  const canEditCare = hasPermission('BOOKING_CORRECT_AMOUNT');
+  const canEditRegFee = hasPermission('CLIENT_EDIT');
+  const canEditInvoiceAmount = hasPermission('INVOICE_EDIT_AMOUNT');
+  const invoiceEditPermissions = useMemo(() => ({
+    CARE: canEditCare,
+    REG_FEE: canEditRegFee,
+    PRODUCT: canEditInvoiceAmount,
+    EXTRA: canEditInvoiceAmount,
+    COMBINED: canEditInvoiceAmount,
+  }), [canEditCare, canEditRegFee, canEditInvoiceAmount]);
+
+  // An edit can move the client's totals, wallet/ledger and every invoice list.
+  const refreshAfterInvoiceEdit = async () => {
+    fetchClientInvoices();
+    fetchRegFeeInvoices();
+    fetchProductInvoices();
+    fetchCombinedInvoices();
+    fetchOverdueInvoices();
+    // Booking rows carry amount_paid / amount_quotated, and the Quotes tab shows the
+    // quotation's line items — both move with care-day and quotation edits.
+    fetchBookingsPag();
+    if (Object.keys(quoteItemsMap).length > 0) fetchQuoteLineItems();
+    try {
+      const [refreshed, txRefreshed] = await Promise.all([
+        apiClient.getAdminClientDetail(clientId),
+        apiClient.getClientTransactions(clientId),
+      ]);
+      setDetail(refreshed.data || null);
+      setClientTransactions(txRefreshed.data || []);
+    } catch (err) {
+      console.error('Refresh after invoice edit failed:', err);
+    }
+  };
+  const [openInvoiceEdit, invoiceEditModal] = useInvoiceAmountEditor({ clientId, onSaved: refreshAfterInvoiceEdit });
+
   const handleSaveRegFeeAmountEdit = async () => {
     const parsed = parseFloat(regFeeAmountEdit);
     if (!regFeeAmountEdit || isNaN(parsed) || parsed <= 0) {
@@ -1285,15 +1328,25 @@ const ClientDetailPage = () => {
   const overdueDisplayValue = formatMoney(overdueAmount);
   const overdueTone = isOverdue ? 'rose' : 'emerald';
 
+  const breakdownTo = (path) => `/admin/users/${clientId}/${path}`;
+
   const topStats = [
-    { icon: BadgeDollarSign, label: 'Payments Made By Client',         value: formatMoney(paymentSummary.total_paid),               tone: 'emerald' },
-    { icon: Wallet,          label: 'Invoiced Amount', value: formatMoney(statementSummary.total_invoiced),          tone: 'blue' },
-    { icon: ShieldAlert,     label: 'Overdue Amount',                   value: overdueDisplayValue,                                  tone: overdueTone },
+    { icon: BadgeDollarSign, label: 'Payments Made By Client',         value: formatMoney(paymentSummary.total_paid),               tone: 'emerald', to: breakdownTo('payments-made') },
+    { icon: Wallet,          label: 'Invoiced Amount', value: formatMoney(statementSummary.total_invoiced),          tone: 'blue', to: breakdownTo('total-invoiced') },
+    { icon: ShieldAlert,     label: 'Overdue Amount',                   value: overdueDisplayValue,                                  tone: overdueTone, to: breakdownTo('overdue-amount') },
     { icon: CalendarDays,    label: 'Bookings',                         value: bookingSummary.total_bookings || 0,                   tone: 'violet' },
-    { icon: Wallet,          label: 'Wallet Balance',                   value: formatMoney(clientProfile.wallet_balance),            tone: 'amber' },
+    { icon: Wallet,          label: 'Wallet Balance',                   value: formatMoney(clientProfile.wallet_balance),            tone: 'amber', to: breakdownTo('wallet-balance') },
   ];
 
-  const transactionSummary = detail?.transaction_summary || {};
+  // Worked out from the same ledger rows the transactions table lists (the
+  // client-detail payload never carried a transaction_summary), so the card and
+  // the table always agree — including after an amount is edited in place.
+  const transactionSummary = clientTransactions.reduce((acc, t) => {
+    const amt = Number(t.amount || 0);
+    if (t.transaction_type === 'CREDIT') acc.net_balance += amt;
+    else if (t.transaction_type === 'DEBIT') acc.net_balance -= amt;
+    return acc;
+  }, { net_balance: 0 });
 
   const renderSection = () => {
     switch (activeSection) {
@@ -1615,605 +1668,35 @@ const ClientDetailPage = () => {
         );
       }
 
-      case 'invoices': {
-        const INVOICE_STATUS_COLORS = {
-          APPROVED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-          REJECTED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
-          PENDING:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
-        };
-        const hasInvoiceFilter = invoiceStatusFilter || invoiceDateFrom || invoiceDateTo;
-        const REG_FEE_INVOICE_STATUS_COLORS = {
-          SENT: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
-          PAID: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-        };
-        const PRODUCT_INVOICE_STATUS_COLORS = {
-          PENDING: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
-          PAID:    'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-        };
-        const INVOICE_TYPE_TABS = [
-          { id: 'REG_FEE',   label: 'Registration Fee', count: regFeeInvoices.length },
-          { id: 'DAILY',     label: 'Daily Invoices',    count: clientInvoices.length },
-          { id: 'PRODUCT',   label: 'Product Invoices',  count: productInvoices.length },
-          { id: 'LINE_ITEM', label: 'Custom Line Items', count: lineItemInvoices.length },
-          { id: 'COMBINED',  label: 'Combined Invoices', count: combinedInvoices.length },
-          { id: 'OVERDUE',   label: 'Overdue',           count: overdueInvoices.filter((inv) => inv.status === 'OVERDUE').length },
-        ];
-        const invoicesRefreshing = regFeeInvoicesLoading || invoicesLoading || productInvoicesLoading || combinedInvoicesLoading || overdueInvoicesLoading;
-        const OVERDUE_SOURCE_LABELS = { REGISTRATION_FEE: 'Registration Fee' };
-        const OVERDUE_STATUS_COLORS = {
-          OVERDUE:  'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200',
-          RESOLVED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-        };
+      case 'invoices':
         return (
-          <div className="space-y-6">
-            {/* Invoice type toggle */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-1">
-                {INVOICE_TYPE_TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setInvoiceTypeView(tab.id)}
-                    className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      invoiceTypeView === tab.id
-                        ? 'bg-white text-gray-900 shadow-sm ring-1 ring-inset ring-gray-200'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {tab.label}
-                    <span className={`rounded-full px-1.5 text-[10px] ${invoiceTypeView === tab.id ? 'bg-gray-100 text-gray-600' : 'bg-gray-200 text-gray-500'}`}>
-                      {tab.count}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); fetchOverdueInvoices(); }}
-                disabled={invoicesRefreshing}
-                className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
-              >
-                {invoicesRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                Refresh
-              </button>
-            </div>
-
-            {invoiceActionError && (
-              <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {invoiceActionError}
-              </div>
-            )}
-
-            {/* Registration Fee Invoices */}
-            {invoiceTypeView === 'REG_FEE' && (
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Registration Fee Invoices</h3>
-              {regFeeInvoicesLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading registration fee invoicesâ€¦
-                </div>
-              ) : regFeeInvoices.length === 0 ? (
-                <EmptyState title="No registration fee invoices sent yet" />
-              ) : (
-                <div className="overflow-x-auto rounded-md border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Date Sent</th>
-                        <th className="px-4 py-3 text-left">Invoice Code</th>
-                        <th className="px-4 py-3 text-left">Billed To</th>
-                        <th className="px-4 py-3 text-left">Period Covered</th>
-                        <th className="px-4 py-3 text-left">Bank Account</th>
-                        <th className="px-4 py-3 text-left">Status</th>
-                        <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {regFeeInvoices.map((inv) => {
-                        const busy = invoiceActionBusyId === inv.invoice_id;
-                        return (
-                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.created_at)}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
-                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.billed_to_name || '-'}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                            {inv.period_start && inv.period_end
-                              ? `${formatDate(inv.period_start)} – ${formatDate(inv.period_end)}`
-                              : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                            {[inv.bank_account_nickname, inv.bank_name].filter(Boolean).join(' â€” ') || 'â€”'}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${REG_FEE_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
-                              {inv.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1.5">
-                              <a
-                                href={inv.pdf_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                              >
-                                <Download className="h-3.5 w-3.5" /> Download
-                              </a>
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => handleResendRegFeeInvoice(inv.invoice_id)}
-                                title="Resend invoice via WhatsApp"
-                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
-                                Resend
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-            )}
-
-            {/* Daily Invoices */}
-            {invoiceTypeView === 'DAILY' && (
-            <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-gray-700">Daily Invoices</h3>
-            {/* Filters */}
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-[11px] font-medium text-gray-500 mb-1">Status</label>
-                <select
-                  value={invoiceStatusFilter}
-                  onChange={(e) => setInvoiceStatusFilter(e.target.value)}
-                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="">All statuses</option>
-                  <option value="APPROVED">Approved</option>
-                  <option value="REJECTED">Rejected</option>
-                  <option value="PENDING">Pending</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[11px] font-medium text-gray-500 mb-1">From</label>
-                <DateInput
-                  value={invoiceDateFrom}
-                  onChange={(e) => setInvoiceDateFrom(e.target.value)}
-                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-medium text-gray-500 mb-1">To</label>
-                <DateInput
-                  value={invoiceDateTo}
-                  onChange={(e) => setInvoiceDateTo(e.target.value)}
-                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-              <div className="flex items-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => fetchClientInvoices()}
-                  className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-                >
-                  Apply
-                </button>
-                {hasInvoiceFilter && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInvoiceStatusFilter('');
-                      setInvoiceDateFrom('');
-                      setInvoiceDateTo('');
-                      fetchClientInvoices({ status: '', date_from: '', date_to: '' });
-                    }}
-                    className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
-                  >
-                    <X className="h-3.5 w-3.5" /> Clear
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {invoicesLoading ? (
-              <div className="flex items-center gap-2 py-10 text-sm text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading invoicesâ€¦
-              </div>
-            ) : clientInvoices.length === 0 ? (
-              <EmptyState title="No invoices found" />
-            ) : (
-              <div className="overflow-x-auto rounded-md border border-gray-200">
-                <table className="min-w-full divide-y divide-gray-100 text-sm">
-                  <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                    <tr>
-                      <th className="px-4 py-3 text-left">Date</th>
-                      <th className="px-4 py-3 text-left">Billed To</th>
-                      <th className="px-4 py-3 text-left">Booking</th>
-                      <th className="px-4 py-3 text-left">Shift</th>
-                      <th className="px-4 py-3 text-left">Status</th>
-                      <th className="px-4 py-3 text-right">Amount</th>
-                      <th className="px-4 py-3 text-left">Decided By</th>
-                      <th className="px-4 py-3 text-left">Notes</th>
-                      <th className="px-4 py-3 text-left">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {clientInvoices.map((inv) => {
-                      const busy = invoiceActionBusyId === inv.daily_invoice_id;
-                      return (
-                      <tr key={inv.daily_invoice_id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDate(inv.service_date)}</td>
-                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || '-'}</td>
-                        <td className="px-4 py-3">
-                          <button type="button" onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
-                            className="text-blue-600 hover:underline font-medium"
-                          >
-                            {inv.booking_code || inv.booking_id?.slice(0, 8)}
-                          </button>
-                          {inv.service_type && <span className="ml-1.5 text-gray-400 text-xs">({inv.service_type})</span>}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                          {inv.shift_label || (inv.shift_number ? `Shift ${inv.shift_number}` : 'â€”')}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
-                            {inv.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">
-                          {inv.amount != null ? formatMoney(inv.amount) : 'â€”'}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                          {inv.decided_by_name || 'â€”'}
-                          {inv.decided_at && <span className="block text-[11px] text-gray-400">{formatDate(inv.decided_at)}</span>}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 max-w-[180px] truncate">{inv.notes || 'â€”'}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => handleDownloadDailyInvoice(inv)}
-                              title="Download invoice PDF"
-                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => handleResendDailyInvoice(inv)}
-                              title="Resend invoice via WhatsApp"
-                              className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            </div>
-            )}
-
-            {/* Product Invoices */}
-            {invoiceTypeView === 'PRODUCT' && (
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Product Invoices</h3>
-              {productInvoicesLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading product invoicesâ€¦
-                </div>
-              ) : productInvoices.length === 0 ? (
-                <EmptyState title="No product invoices found" />
-              ) : (
-                <div className="overflow-x-auto rounded-md border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Invoice Code</th>
-                        <th className="px-4 py-3 text-left">Billed To</th>
-                        <th className="px-4 py-3 text-left">Item(s)</th>
-                        <th className="px-4 py-3 text-left">Category</th>
-                        <th className="px-4 py-3 text-left">Status</th>
-                        <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Created</th>
-                        <th className="px-4 py-3 text-left">Paid</th>
-                        <th className="px-4 py-3 text-left">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {productInvoices.map((inv) => {
-                        const busy = invoiceActionBusyId === inv.invoice_id;
-                        return (
-                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">
-                            {inv.invoice_code}
-                            {inv.is_duplicate && (
-                              <span
-                                title="This item is also billed on another invoice for the same quotation. It only mirrors that invoice's payment status."
-                                className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-gray-500"
-                              >
-                                Duplicate
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
-                          <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
-                          <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
-                              {inv.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => handleDownloadProductInvoice(inv)}
-                                title="Download invoice PDF"
-                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => handleResendProductInvoice(inv)}
-                                title="Resend invoice via WhatsApp"
-                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="mt-2 text-[11px] text-gray-400">Payments are recorded from the Products page.</p>
-            </div>
-            )}
-
-            {/* Custom line item invoices */}
-            {invoiceTypeView === 'LINE_ITEM' && (
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Custom Line Item Invoices</h3>
-              <p className="mb-3 text-[11px] text-gray-400">
-                Invoices raised for individual quotation line items (custom charges, extras) from the Record Payment form. They are kept apart from product and rental invoices.
-              </p>
-              {productInvoicesLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading line item invoices…
-                </div>
-              ) : lineItemInvoices.length === 0 ? (
-                <EmptyState title="No custom line item invoices found" />
-              ) : (
-                <div className="overflow-x-auto rounded-md border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Invoice Code</th>
-                        <th className="px-4 py-3 text-left">Billed To</th>
-                        <th className="px-4 py-3 text-left">Line Item</th>
-                        <th className="px-4 py-3 text-left">Quotation</th>
-                        <th className="px-4 py-3 text-left">Payment</th>
-                        <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Created</th>
-                        <th className="px-4 py-3 text-left">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {lineItemInvoices.map((inv) => {
-                        const busy = invoiceActionBusyId === inv.invoice_id;
-                        const amount = Number(inv.amount || 0);
-                        const paid = Number(inv.amount_paid || 0);
-                        const balance = Math.max(amount - paid, 0);
-                        const paymentStatus = inv.status === 'PAID' || balance <= 0.01 ? 'PAID' : paid > 0.01 ? 'PARTIAL' : 'PENDING';
-                        return (
-                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
-                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
-                          <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.estimate_number || '—'}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <CombinedPaymentBadge status={paymentStatus} />
-                            {paymentStatus !== 'PAID' && (
-                              <span className="mt-1 block text-[11px] text-gray-400">
-                                {formatMoney(paid)} paid · {formatMoney(balance)} due
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => handleDownloadProductInvoice(inv)}
-                                title="Download invoice PDF"
-                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => handleResendProductInvoice(inv)}
-                                title="Resend invoice via WhatsApp"
-                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="mt-2 text-[11px] text-gray-400">Payments against a custom charge are recorded from the quotation's Record Payment form.</p>
-            </div>
-            )}
-
-            {/* Combined Invoices */}
-            {invoiceTypeView === 'COMBINED' && (
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Combined Invoices</h3>
-              <p className="mb-3 text-[11px] text-gray-400">
-                The merged invoice for a service quotation (registration fee + shift/daily charges, plus any linked product quote). It is created automatically once the quotation is paid in full, or earlier by hand from the Record Payment form, in which case it stays Pending until the balance is cleared.
-              </p>
-              {combinedInvoicesLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading combined invoices…
-                </div>
-              ) : combinedInvoices.length === 0 ? (
-                <EmptyState title="No combined invoices generated yet" />
-              ) : (
-                <>
-                <div className="mb-3">
-                  <CombinedStatusFilter invoices={combinedInvoices} value={combinedFilter} onChange={setCombinedFilter} />
-                </div>
-                {filterCombinedInvoices(combinedInvoices, combinedFilter).length === 0 ? (
-                <EmptyState title={combinedFilter === 'UNPAID' ? 'No combined invoices are waiting for payment' : 'No fully paid combined invoices yet'} />
-                ) : (
-                <div className="overflow-x-auto rounded-md border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Generated</th>
-                        <th className="px-4 py-3 text-left">Invoice Code</th>
-                        <th className="px-4 py-3 text-left">Billed To</th>
-                        <th className="px-4 py-3 text-left">Quotation</th>
-                        <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Payment</th>
-                        <th className="px-4 py-3 text-left">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {filterCombinedInvoices(combinedInvoices, combinedFilter).map((inv) => {
-                        const busy = invoiceActionBusyId === inv.quote_id;
-                        return (
-                        <tr key={inv.quote_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.invoice_generated_at)}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
-                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.billed_to_name || inv.payer_name || '-'}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.estimate_number || '—'}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <CombinedPaymentBadge status={inv.payment_status} />
-                            {inv.payment_status !== 'PAID' && (
-                              <span className="mt-1 block text-[11px] text-gray-400">
-                                {formatMoney(inv.amount_paid)} paid · {formatMoney(inv.balance)} due
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1.5">
-                              <a
-                                href={inv.invoice_pdf_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                              >
-                                <Download className="h-3.5 w-3.5" /> Download
-                              </a>
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => handleResendCombinedInvoice(inv)}
-                                title="Resend invoice via WhatsApp"
-                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
-                                Resend
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                )}
-                </>
-              )}
-            </div>
-            )}
-
-            {/* Overdue Invoices */}
-            {invoiceTypeView === 'OVERDUE' && (
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Overdue Invoices</h3>
-              <p className="mb-3 text-[11px] text-gray-400">
-                Invoices this client has been sent but hasn't paid off yet. A row clears once the underlying invoice is paid or waived.
-              </p>
-              {overdueInvoicesLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading overdue invoices…
-                </div>
-              ) : overdueInvoices.length === 0 ? (
-                <EmptyState title="No overdue invoices" />
-              ) : (
-                <div className="overflow-x-auto rounded-md border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Invoiced On</th>
-                        <th className="px-4 py-3 text-left">Source</th>
-                        <th className="px-4 py-3 text-left">Invoice Code</th>
-                        <th className="px-4 py-3 text-left">Status</th>
-                        <th className="px-4 py-3 text-left">Resolved On</th>
-                        <th className="px-4 py-3 text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {overdueInvoices.map((inv) => (
-                        <tr key={inv.overdue_invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.invoiced_at)}</td>
-                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{OVERDUE_SOURCE_LABELS[inv.source_type] || inv.source_type}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code || '—'}</td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${OVERDUE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
-                              {inv.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.resolved_at ? formatDateTime(inv.resolved_at) : '—'}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-            )}
-          </div>
+          <>
+          {invoiceEditModal}
+          <ClientInvoicesPanel
+            canEdit={invoiceEditPermissions}
+            onEdit={openInvoiceEdit}
+            regFeeInvoices={regFeeInvoices}
+            dailyInvoices={clientInvoices}
+            productInvoices={productInvoices}
+            lineItemInvoices={lineItemInvoices}
+            combinedInvoices={combinedInvoices}
+            overdueInvoices={overdueInvoices}
+            loading={regFeeInvoicesLoading || invoicesLoading || productInvoicesLoading || combinedInvoicesLoading || overdueInvoicesLoading}
+            onRefresh={() => { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); fetchOverdueInvoices(); }}
+            busyId={invoiceActionBusyId}
+            error={invoiceActionError}
+            openPreview={openPreview}
+            actions={{
+              resendRegFee: handleResendRegFeeInvoice,
+              downloadDaily: handleDownloadDailyInvoice,
+              resendDaily: handleResendDailyInvoice,
+              downloadProduct: handleDownloadProductInvoice,
+              resendProduct: handleResendProductInvoice,
+              resendCombined: handleResendCombinedInvoice,
+            }}
+          />
+          </>
         );
-      }
 
       case 'quotes': {
         const PRODUCT_QUOTE_STATUS_COLORS = {
@@ -2333,7 +1816,9 @@ const ClientDetailPage = () => {
               const isBusy = quoteStatusBusy === quote.quote_id;
               const canAction = !hasPaid && !['ACCEPTED', 'REJECTED'].includes(quote.status);
               const quoteItems = quoteItemsMap[quote.quote_id];
-              const combinedTotal = quoteItems ? quoteItems.combined_total : Number(quote.total_amount || 0);
+              // The quotation's own total is read live (it changes when an invoice amount is
+              // edited); only the linked product part comes from the cached line items.
+              const combinedTotal = Number(quote.total_amount || 0) + (quoteItems?.product_total || 0);
               const allItems = quoteItems ? [...quoteItems.line_items, ...quoteItems.product_line_items] : [];
 
               return (
@@ -2575,6 +2060,7 @@ const ClientDetailPage = () => {
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
+                              <PreviewButton onClick={() => openPreview(invoicePreview.product(inv))} className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50" />
                               <button
                                 type="button"
                                 disabled={busy}
@@ -3128,9 +2614,9 @@ const ClientDetailPage = () => {
 
             <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3 @5xl:grid-cols-4 @md:gap-4">
               <StatCard icon={ReceiptText}     label="Transactions"                   value={statementSummary.transaction_count || 0}             tone="slate" />
-              <StatCard icon={Wallet}          label="Payments Made By Client"         value={formatMoney(paymentSummary.total_paid)}              tone="blue" />
-              <StatCard icon={BadgeDollarSign} label="Invoiced Through Daily Invoicing" value={formatMoney(statementSummary.total_invoiced)}        tone="emerald" />
-              <StatCard icon={FileText}        label="Overdue Amount"                  value={overdueDisplayValue}                                  tone={overdueTone} />
+              <StatCard icon={Wallet}          label="Payments Made By Client"         value={formatMoney(paymentSummary.total_paid)}              tone="blue" to={breakdownTo('payments-made')} />
+              <StatCard icon={BadgeDollarSign} label="Invoiced Through Daily Invoicing" value={formatMoney(statementSummary.total_invoiced)}        tone="emerald" to={breakdownTo('total-invoiced')} />
+              <StatCard icon={FileText}        label="Overdue Amount"                  value={overdueDisplayValue}                                  tone={overdueTone} to={breakdownTo('overdue-amount')} />
               <StatCard icon={Activity}        label="Net Transaction Balance"         value={formatMoney(transactionSummary.net_balance)}         tone="violet" />
             </div>
 
@@ -3180,8 +2666,8 @@ const ClientDetailPage = () => {
                                   {transaction.category || transaction.transaction_type || 'Transaction'}
                                 </span>
                               </td>
-                              <td className="px-5 py-3.5 text-right font-semibold text-gray-900 text-[13px]">{formatMoney(isDebit ? transaction.amount : 0)}</td>
-                              <td className="px-5 py-3.5 text-right font-semibold text-emerald-700 text-[13px]">{formatMoney(isCredit ? transaction.amount : 0)}</td>
+                              <td className="px-5 py-3.5 text-right font-semibold text-gray-900 text-[13px]">{formatMoney(isDebit ? transaction.amount : 0)}{isDebit && <EditedAmountBadge record={transaction} className="ml-1.5" />}</td>
+                              <td className="px-5 py-3.5 text-right font-semibold text-emerald-700 text-[13px]">{formatMoney(isCredit ? transaction.amount : 0)}{isCredit && <EditedAmountBadge record={transaction} className="ml-1.5" />}</td>
                               <td className="px-5 py-3.5 text-right font-semibold text-rose-700 text-[13px]">{formatMoney(transaction.amount)}</td>
                             </tr>
                           );
@@ -3231,7 +2717,7 @@ const ClientDetailPage = () => {
       case 'overdue':
         return (
           <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @md:gap-4">
-            <StatCard icon={ShieldAlert}  label="Overdue Amount"       value={overdueDisplayValue}                             tone={overdueTone} />
+            <StatCard icon={ShieldAlert}  label="Overdue Amount"       value={overdueDisplayValue}                             tone={overdueTone} to={breakdownTo('overdue-amount')} />
             <StatCard icon={CalendarDays} label="Overdue Invoices"      value={overdueSummary.total_outstanding_invoices || 0}  tone="amber" />
             <StatCard icon={Activity}     label="Overdue Count"         value={overdueSummary.overdue_payments_count || 0}      tone="slate" />
           </div>
@@ -4402,19 +3888,28 @@ const ClientDetailPage = () => {
               correct at every column count — divide-x only lines up for one row. */}
           <div className="grid grid-cols-2 gap-px bg-gray-100 @xl:grid-cols-3 @4xl:grid-cols-5">
             {[
-              { label: 'Payments Made',    value: formatMoney(paymentSummary.total_paid),        cls: 'text-gray-900' },
-              { label: 'Total Invoiced',   value: formatMoney(statementSummary.total_invoiced),  cls: 'text-gray-900' },
-              { label: 'Overdue Amount',   value: overdueDisplayValue,                           cls: isOverdue ? 'text-red-600' : 'text-gray-900' },
+              { label: 'Payments Made',    value: formatMoney(paymentSummary.total_paid),        cls: 'text-gray-900', to: breakdownTo('payments-made') },
+              { label: 'Total Invoiced',   value: formatMoney(statementSummary.total_invoiced),  cls: 'text-gray-900', to: breakdownTo('total-invoiced') },
+              { label: 'Overdue Amount',   value: overdueDisplayValue,                           cls: isOverdue ? 'text-red-600' : 'text-gray-900', to: breakdownTo('overdue-amount') },
               { label: 'Total Bookings',   value: String(bookingSummary.total_bookings || 0),    cls: 'text-gray-900' },
-              { label: 'Wallet Balance',   value: formatMoney(clientProfile.wallet_balance),     cls: 'text-amber-600' },
-            ].map(({ label, value, cls }) => (
-              <div key={label} className="min-w-0 bg-white px-4 py-3 @xl:px-5">
-                <p className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
-                <p title={value} className={`mt-0.5 break-words text-[13px] font-semibold leading-tight @xl:text-sm ${cls}`}>
-                  {value}
-                </p>
-              </div>
-            ))}
+              { label: 'Wallet Balance',   value: formatMoney(clientProfile.wallet_balance),     cls: 'text-amber-600', to: breakdownTo('wallet-balance') },
+            ].map(({ label, value, cls, to }) => {
+              const body = (
+                <>
+                  <p className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
+                  <p title={value} className={`mt-0.5 break-words text-[13px] font-semibold leading-tight @xl:text-sm ${cls}`}>
+                    {value}
+                  </p>
+                </>
+              );
+              return to ? (
+                <Link key={label} to={to} title="See how this figure is made up" className="min-w-0 bg-white px-4 py-3 transition-colors hover:bg-blue-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 @xl:px-5">
+                  {body}
+                </Link>
+              ) : (
+                <div key={label} className="min-w-0 bg-white px-4 py-3 @xl:px-5">{body}</div>
+              );
+            })}
           </div>
         </div>
 
@@ -4672,6 +4167,7 @@ const ClientDetailPage = () => {
           </div>
         </div>
       )}
+      {previewModal}
     </AdminLayout>
   );
 };

@@ -11,6 +11,7 @@ import apiClient from '../../../api/api';
 import { withHonorific } from '../../../utils/clientName';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import DateInput from '../../../components/common/DateInput';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 10;
@@ -1414,9 +1415,11 @@ const Statements = () => {
                                     </td>
                                     <td className="px-5 py-2 text-right font-medium text-rose-600">
                                       {tx.amount_invoiced ? fmt(tx.amount_invoiced) : '—'}
+                                      {tx.amount_invoiced ? <EditedAmountBadge record={tx} className="ml-1.5" /> : null}
                                     </td>
                                     <td className="px-5 py-2 text-right font-medium text-emerald-600">
                                       {tx.amount_paid ? fmt(tx.amount_paid) : '—'}
+                                      {tx.amount_paid ? <EditedAmountBadge record={tx} className="ml-1.5" /> : null}
                                     </td>
                                     <td className="px-5 py-2 text-right font-medium text-slate-800">
                                       {fmt(tx.balance)}
@@ -1748,9 +1751,11 @@ const Statements = () => {
                                       </td>
                                       <td className="px-5 py-2 text-right font-medium text-rose-600">
                                         {tx.amount_invoiced ? fmt(tx.amount_invoiced) : '—'}
+                                        {tx.amount_invoiced ? <EditedAmountBadge record={tx} className="ml-1.5" /> : null}
                                       </td>
                                       <td className="px-5 py-2 text-right font-medium text-emerald-600">
                                         {tx.amount_paid ? fmt(tx.amount_paid) : '—'}
+                                        {tx.amount_paid ? <EditedAmountBadge record={tx} className="ml-1.5" /> : null}
                                       </td>
                                       <td className="px-5 py-2 text-right font-semibold text-slate-800">
                                         {fmt(tx.balance)}

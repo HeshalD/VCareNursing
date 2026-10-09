@@ -1326,7 +1326,10 @@ async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registratio
 // `allowUnpaid`: an admin can build the invoice document before the quotation is fully
 // paid (the manual "Generate Combined Invoice" action). Automatic generation after each
 // payment keeps waiting for full payment.
-async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false } = {}) {
+// regenerate: rebuild the PDF of an already-issued combined invoice after its
+// quotation was edited (services/invoiceAmountEdits.js) — same invoice number
+// and date, no paid-in-full requirement.
+async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false, regenerate = false } = {}) {
     const existing = await db.query(
         `SELECT q.invoice_code, q.invoice_pdf_url, q.total_amount,
                 s.payer_name, s.payer_mobile
@@ -1338,7 +1341,7 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false } = {
     if (existing.rows.length === 0) return null;
     const row = existing.rows[0];
 
-    if (row.invoice_code && row.invoice_pdf_url) {
+    if (!regenerate && row.invoice_code && row.invoice_pdf_url) {
         // Total may include a linked product quote's items — recompute for
         // the return value without touching the already-generated PDF.
         const productLink = await db.query(
@@ -1393,7 +1396,7 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false } = {
     );
     const totalPaid = parseFloat(paidResult.rows[0].total_paid) || 0;
     const totalDue = parseFloat(data.total_amount) || 0;
-    if (!allowUnpaid && totalPaid < totalDue) return null;
+    if (!allowUnpaid && !regenerate && totalPaid < totalDue) return null;
 
     const productLink = await db.query(
         `SELECT quote_id FROM quotations WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT'`,
@@ -1403,10 +1406,10 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false } = {
         await mergeProductQuoteIntoData(data, productLink.rows[0].quote_id);
     }
 
-    const codeResult = await db.query(
-        `SELECT 'INV-' || LPAD(nextval('invoice_code_seq')::text, 6, '0') AS code`
-    );
-    const invoice_code = codeResult.rows[0].code;
+    const reuseCode = regenerate && row.invoice_code;
+    const invoice_code = reuseCode
+        ? row.invoice_code
+        : (await db.query(`SELECT 'INV-' || LPAD(nextval('invoice_code_seq')::text, 6, '0') AS code`)).rows[0].code;
 
     data.document_label = 'Invoice';
     data.document_number = invoice_code;
@@ -1417,7 +1420,9 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false } = {
     const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
 
     await db.query(
-        `UPDATE quotations SET invoice_code = $1, invoice_pdf_url = $2, invoice_generated_at = NOW() WHERE quote_id = $3`,
+        reuseCode
+            ? `UPDATE quotations SET invoice_code = $1, invoice_pdf_url = $2 WHERE quote_id = $3`
+            : `UPDATE quotations SET invoice_code = $1, invoice_pdf_url = $2, invoice_generated_at = NOW() WHERE quote_id = $3`,
         [invoice_code, pdfUrl, serviceQuoteId]
     );
 
@@ -1507,6 +1512,7 @@ exports.listCombinedInvoices = async (req, res) => {
         const result = await db.query(`
             SELECT q.quote_id, q.estimate_number, q.total_amount, q.invoice_code,
                    q.invoice_pdf_url, q.invoice_generated_at,
+                   q.original_amount, q.edited_at, q.edited_by_name, q.edit_reason, q.edit_count,
                    s.payer_name, s.payer_mobile,
                    CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
                         THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS billed_to_name
@@ -1548,7 +1554,11 @@ exports.listCombinedInvoices = async (req, res) => {
             }
             const balance = Math.max(Math.round((total_amount - amount_paid) * 100) / 100, 0);
             const payment_status = balance <= 0.01 ? 'PAID' : amount_paid > 0.01 ? 'PARTIAL' : 'PENDING';
-            return { ...row, total_amount, amount_paid, balance, payment_status };
+            // original_amount is the service quote's own pre-edit total; add the
+            // linked product part so it compares like-for-like with total_amount.
+            const original_amount = row.original_amount == null ? null
+                : Math.round((parseFloat(row.original_amount) + (total_amount - (parseFloat(row.total_amount) || 0))) * 100) / 100;
+            return { ...row, total_amount, amount_paid, balance, payment_status, original_amount };
         }));
 
         res.status(200).json({ status: 'success', data: rows });

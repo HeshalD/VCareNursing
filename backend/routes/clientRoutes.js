@@ -36,6 +36,7 @@ router.post('/:client_id/verify-reg-fee-payment', protect, requirePermission('CL
 router.post('/:client_id/backdate-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAYMENT'), clientController.backdateRegFeePayment);
 router.post('/:client_id/admin-upload-reg-fee-receipt', protect, requirePermission('CLIENT_RECORD_PAYMENT'), uploadPaymentReceipt, clientController.adminUploadRegFeeReceipt);
 router.get('/:client_id/invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientInvoices);
+router.get('/:client_id/financial-breakdown/:metric', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientFinancialBreakdown);
 // Registration fee invoices — must stay above the generic '/:client_id' catch-all route below.
 router.get('/all-reg-fee-invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getAllRegFeeInvoices);
 router.get('/registration-fees-overview', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getRegistrationFeesOverview);

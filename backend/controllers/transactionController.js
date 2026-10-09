@@ -3,6 +3,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf } = require('../utils/transactionFlow');
 const { generateTransactionsPdf } = require('../utils/transactionsPdf');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { transactionEditColumns } = require('../utils/editedAmount');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE', 'ONLINE_GATEWAY', 'OTHER'];
@@ -39,6 +40,7 @@ const TRANSACTION_SELECT_COLUMNS = `
   t.client_id,
   t.staff_profile_id,
   t.booking_id,
+  ${transactionEditColumns('t')},
   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
   sp.full_name          AS staff_name,
   pp.full_name          AS patient_name,

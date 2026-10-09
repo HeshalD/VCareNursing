@@ -4,9 +4,12 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
+const { bookingChargeSql } = require('../services/clientFinancials');
+const { settleWalletForDeletedTransactions } = require('../services/walletLedger');
+const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew, sendCandidateProfile } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
-const { createServiceInvoice, calculateShiftSlotCharge, checkAndFlagBookingOverdue } = require('../services/billingService');
+const { createServiceInvoice, calculateShiftSlotCharge, checkAndFlagBookingOverdue, reverseStaffSalary, reverseServiceInvoice } = require('../services/billingService');
 const {
     getBookingFinancialTotals,
     getBookingSettlementSnapshot,
@@ -22,19 +25,24 @@ const {
     executeTermination,
     executeCompletion,
     dispatchScheduledAction,
+    endAssignmentAt,
 } = require('../services/scheduledActions');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const {
     applyPartialAttendanceTime,
     settleBoundaryPay,
+    applyBackdatedSwapPay,
     boundaryDatesFor,
     getDeciderName: getAttendanceDeciderName,
 } = require('./dailyAttendanceController')._internal;
+const { userHasPermission } = require('../middleware/authMiddleware');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { closeActivePatternForPause } = require('../services/shiftPatternService');
+const { createApprovedLeave, notifyLeaveApproved, markOnLeaveIfActiveToday, findLeaveConflicts } = require('../services/staffLeaveService');
 const { drawWalletForBooking, getEarmarkedTotal } = require('../services/walletService');
 const { chargeRegistrationFeeForBooking } = require('../services/registrationFeeService');
+const { isServiceDay } = require('../services/repeatDays');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -378,6 +386,69 @@ exports.adminTerminateBooking = async (req, res) => {
 };
 
 /**
+ * Puts a booking into PAUSED inside the caller's transaction, once its staff
+ * assignments have already been closed. Shared by pauseBooking (an explicit pause)
+ * and closeStaffAssignment (logging out the last staff member leaves nobody on the
+ * booking, which pauses it from that day).
+ *
+ * A pre-existing scheduled TERMINATION/COMPLETION was computed assuming continuous
+ * service — the pause invalidates it, so it's always cancelled (otherwise the cron
+ * could fire it mid-pause). With `reschedule_end_date` it's re-enqueued at that date,
+ * carrying over its settlement payload/reason (and service_terminations.end_date,
+ * for a TERMINATION) so it behaves exactly like the original once it fires.
+ */
+const enterPauseInTxn = async (client, {
+    booking_id, paused_date, resume_date = null, reason = null,
+    reschedule_end_date = null, userId = null, userName = null,
+}) => {
+    const openFinalizationRes = await client.query(
+        `SELECT * FROM scheduled_actions
+         WHERE booking_id = $1 AND action_type IN ('TERMINATION', 'COMPLETION') AND status = 'SCHEDULED'
+         FOR UPDATE`,
+        [booking_id]
+    );
+    const openFinalization = openFinalizationRes.rows[0] || null;
+
+    if (openFinalization) {
+        await client.query(`UPDATE scheduled_actions SET status = 'CANCELLED' WHERE action_id = $1`, [openFinalization.action_id]);
+
+        if (reschedule_end_date) {
+            if (openFinalization.action_type === 'TERMINATION' && openFinalization.termination_id) {
+                await client.query(
+                    `UPDATE service_terminations SET end_date = $1 WHERE termination_id = $2`,
+                    [reschedule_end_date, openFinalization.termination_id]
+                );
+            }
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: openFinalization.action_type,
+                effective_date: reschedule_end_date,
+                payload: openFinalization.payload || {},
+                reason: openFinalization.reason || null,
+                termination_id: openFinalization.termination_id || null,
+                created_by: userId,
+            });
+        }
+    }
+
+    // assigned_staff_id is a denormalized pointer to whoever's currently on the booking
+    // (getAdminBookingDetail's current_staff reads it directly, not the live assignment
+    // row) — must be cleared here or the UI keeps showing the just-freed staff member as
+    // "current staff" after resume, hiding the Assign Staff button that's supposed to
+    // reappear once there's genuinely no one assigned.
+    await client.query(`UPDATE bookings SET status = 'PAUSED', assigned_staff_id = NULL WHERE booking_id = $1`, [booking_id]);
+
+    const pauseRes = await client.query(
+        `INSERT INTO booking_pauses (booking_id, paused_date, resume_date, reason, paused_by, paused_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [booking_id, paused_date, resume_date || null, reason || null, userId, userName]
+    );
+
+    return { pause: pauseRes.rows[0], openFinalization };
+};
+
+/**
  * @route   POST /api/bookings/:booking_id/pause
  * @desc    Client wants a temporary break in service (LIVE_IN/SHIFT_BASED only).
  *          Closes the current staff assignment(s)/shift pattern as of today (freeing
@@ -454,56 +525,17 @@ exports.pauseBooking = async (req, res) => {
             );
         }
 
-        // A pre-existing scheduled TERMINATION/COMPLETION was computed assuming
-        // continuous service — the pause invalidates it, so cancel it unconditionally
-        // (otherwise the cron could fire it mid-pause). If the admin gave a fixed
-        // resume date and asked to reschedule, re-enqueue it at the new date, carrying
-        // over its settlement payload/reason (and service_terminations.end_date, for
-        // a TERMINATION) so it behaves exactly like the original once it fires.
-        const openFinalizationRes = await client.query(
-            `SELECT * FROM scheduled_actions
-             WHERE booking_id = $1 AND action_type IN ('TERMINATION', 'COMPLETION') AND status = 'SCHEDULED'
-             FOR UPDATE`,
-            [booking_id]
-        );
-        const openFinalization = openFinalizationRes.rows[0] || null;
-
-        if (openFinalization) {
-            await client.query(`UPDATE scheduled_actions SET status = 'CANCELLED' WHERE action_id = $1`, [openFinalization.action_id]);
-
-            if (resume_date && end_date_action === 'RESCHEDULE' && new_end_date) {
-                if (openFinalization.action_type === 'TERMINATION' && openFinalization.termination_id) {
-                    await client.query(
-                        `UPDATE service_terminations SET end_date = $1 WHERE termination_id = $2`,
-                        [new_end_date, openFinalization.termination_id]
-                    );
-                }
-                await enqueueScheduledAction(client, {
-                    booking_id,
-                    action_type: openFinalization.action_type,
-                    effective_date: new_end_date,
-                    payload: openFinalization.payload || {},
-                    reason: openFinalization.reason || null,
-                    termination_id: openFinalization.termination_id || null,
-                    created_by: req.user?.user_id || null,
-                });
-            }
-        }
-
-        // assigned_staff_id is a denormalized pointer to whoever's currently on the booking
-        // (getAdminBookingDetail's current_staff reads it directly, not the live assignment
-        // row) — must be cleared here or the UI keeps showing the just-freed staff member as
-        // "current staff" after resume, hiding the Assign Staff button that's supposed to
-        // reappear once there's genuinely no one assigned.
-        await client.query(`UPDATE bookings SET status = 'PAUSED', assigned_staff_id = NULL WHERE booking_id = $1`, [booking_id]);
-
         const pausedByName = await getActorName(req.user?.user_id);
-        const pauseRes = await client.query(
-            `INSERT INTO booking_pauses (booking_id, paused_date, resume_date, reason, paused_by, paused_by_name)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING *`,
-            [booking_id, businessDate, resume_date || null, reason || null, req.user?.user_id || null, pausedByName]
-        );
+        const { pause, openFinalization } = await enterPauseInTxn(client, {
+            booking_id,
+            paused_date: businessDate,
+            resume_date,
+            reason,
+            reschedule_end_date: (resume_date && end_date_action === 'RESCHEDULE' && new_end_date) ? new_end_date : null,
+            userId: req.user?.user_id || null,
+            userName: pausedByName,
+        });
+        const pauseRes = { rows: [pause] };
 
         await client.query('COMMIT');
 
@@ -600,6 +632,279 @@ exports.resumeBooking = async (req, res) => {
         await client.query('ROLLBACK');
         console.error('Resume booking error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to resume booking' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/resume-with-staff
+ * @desc    LIVE_IN only. Resumes a PAUSED booking directly onto a staff member, in
+ *          one transaction, so a booking is never ACTIVE with nobody on it:
+ *          - start date today        → assignment ACTIVE, booking ACTIVE.
+ *          - start date in the past  → same, plus the admin's per-day decisions for
+ *            the days from the start date up to yesterday, which the cron never
+ *            processed because the booking was paused: staff pay (PAID/SKIPPED,
+ *            optional amount) and the client's day invoice (INVOICED/SKIPPED).
+ *            Today onward is left to the nightly run as usual.
+ *          - start date in the future → assignment SCHEDULED and booking SCHEDULED
+ *            ("scheduled to start"): the cron neither bills nor pays it, and the
+ *            ASSIGNMENT_START action flips it ACTIVE and closes the pause on the day.
+ * @body    staff_profile_id, service_start_date (YYYY-MM-DD), service_start_time?,
+ *          daily_rate? (staff pay), ot_rate?, notes?,
+ *          past_days?: [{ service_date, pay, amount?, invoice, invoice_amount? }]
+ * @access  Private (BOOKING_RESUME; + ATTENDANCE_CONFIRM_SALARY / BOOKING_CONFIRM_DAILY_INVOICE for past days)
+ */
+exports.resumeWithStaff = async (req, res) => {
+    const { booking_id } = req.params;
+    const { staff_profile_id, service_start_date, service_start_time, daily_rate, ot_rate, notes } = req.body || {};
+    const pastDays = Array.isArray(req.body?.past_days) ? req.body.past_days : [];
+
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    if (!staff_profile_id || !ISO.test(service_start_date || '')) {
+        return res.status(400).json({ status: 'error', message: 'staff_profile_id and service_start_date (YYYY-MM-DD) are required' });
+    }
+    const needed = [
+        pastDays.some(d => d?.pay === true || d?.pay === false) && 'ATTENDANCE_CONFIRM_SALARY',
+        pastDays.some(d => d?.invoice === true || d?.invoice === false) && 'BOOKING_CONFIRM_DAILY_INVOICE',
+    ].filter(Boolean);
+    for (const permissionKey of needed) {
+        if (!(await userHasPermission(req.user, permissionKey))) {
+            return res.status(403).json({ status: 'error', message: `You need the ${permissionKey} permission to decide the past days.` });
+        }
+    }
+
+    const fail = (statusCode, message) => { const err = new Error(message); err.statusCode = statusCode; return err; };
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT b.booking_id, b.status, b.service_model, b.request_id, b.client_id, b.ot_rate,
+                    COALESCE(q.daily_rate, b.daily_rate) AS quote_daily_rate,
+                    COALESCE(cp.wallet_balance, 0) AS wallet_balance
+             FROM bookings b
+             LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+             LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+             LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+             WHERE b.booking_id = $1
+             FOR UPDATE OF b`,
+            [booking_id]
+        );
+        const booking = bookingRes.rows[0];
+        if (!booking) throw fail(404, 'Booking not found');
+        if (booking.status !== 'PAUSED') throw fail(400, 'Booking is not paused');
+        if (booking.service_model !== 'LIVE_IN') throw fail(400, 'Resuming onto a staff member here is for LIVE_IN bookings — use Resume for other types');
+        // Same rule as assignStaffToBooking: a quoted booking needs money in the
+        // client's wallet before staff go on it (admin-direct bookings are deferred).
+        if (booking.request_id && Number(booking.wallet_balance) <= 0) throw fail(400, 'Cannot assign staff without payment. Record payment first.');
+
+        const businessDate = await getBusinessDate(client);
+        const pauseRes = await client.query(
+            `SELECT pause_id, paused_date::text AS paused_date FROM booking_pauses
+             WHERE booking_id = $1 AND resumed_at IS NULL ORDER BY paused_at DESC LIMIT 1 FOR UPDATE`,
+            [booking_id]
+        );
+        const pause = pauseRes.rows[0] || null;
+        if (pause && service_start_date < pause.paused_date) {
+            throw fail(400, `The booking was paused on ${pause.paused_date} — the new staff member can't start before that.`);
+        }
+
+        const staffRes = await client.query(
+            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status, u.mobile_number
+             FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id
+             WHERE sp.staff_profile_id = $1 FOR UPDATE OF sp`,
+            [staff_profile_id]
+        );
+        const staff = staffRes.rows[0];
+        if (!staff) throw fail(404, 'Staff member not found');
+        if (staff.current_status !== 'AVAILABLE') {
+            // Same lagging-status leniency as assignStaffToBooking: only a genuine
+            // date-overlapping assignment elsewhere blocks.
+            const conflictRes = await client.query(
+                `SELECT 1
+                 FROM booking_staff_assignments bsa
+                 LEFT JOIN LATERAL (
+                     SELECT effective_date FROM scheduled_actions
+                     WHERE booking_id = bsa.booking_id AND action_type IN ('TERMINATION', 'COMPLETION') AND status = 'SCHEDULED'
+                     ORDER BY effective_date ASC LIMIT 1
+                 ) sa ON bsa.service_end_date IS NULL
+                 WHERE bsa.staff_profile_id = $1 AND bsa.booking_id != $2
+                   AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   AND bsa.service_start_date <= $3::date
+                   AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                        OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+                 LIMIT 1`,
+                [staff_profile_id, booking_id, service_start_date]
+            );
+            if (conflictRes.rows.length > 0) throw fail(400, `${staff.full_name} is not available (status: ${staff.current_status})`);
+        }
+        const dupRes = await client.query(
+            `SELECT 1 FROM booking_staff_assignments
+             WHERE booking_id = $1 AND staff_profile_id = $2 AND status IN ('ACTIVE', 'SCHEDULED') LIMIT 1`,
+            [booking_id, staff_profile_id]
+        );
+        if (dupRes.rows.length > 0) throw fail(400, `${staff.full_name} already has an active or scheduled assignment on this booking.`);
+
+        const staffDailyRate = Number(daily_rate) > 0 ? Number(daily_rate) : Number(booking.quote_daily_rate);
+        if (!(staffDailyRate > 0)) throw fail(400, 'Enter a daily pay rate for the staff member.');
+        const otRate = ot_rate !== undefined && ot_rate !== null && ot_rate !== '' ? Number(ot_rate) : Number(booking.ot_rate || 500);
+
+        const isFuture = isFutureDate(service_start_date, businessDate);
+        if (isFuture && pastDays.length > 0) throw fail(400, 'Past-day decisions only apply to a start date in the past.');
+
+        const assignmentRes = await client.query(
+            `INSERT INTO booking_staff_assignments
+                (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
+                 service_start_date, service_start_time, assigned_hours, service_end_date, status, notes)
+             VALUES ($1, $2, NOW(), $3, $4, $5, $6, 24, NULL, $7, $8)
+             RETURNING assignment_id`,
+            [booking_id, staff_profile_id, req.user.user_id, staffDailyRate, service_start_date,
+             service_start_time || null, isFuture ? 'SCHEDULED' : 'ACTIVE', notes || null]
+        );
+        const assignmentId = assignmentRes.rows[0].assignment_id;
+        await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [staff_profile_id]);
+
+        const resumedByName = await getActorName(req.user?.user_id);
+        let pastResult = null;
+
+        if (isFuture) {
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: 'ASSIGNMENT_START',
+                effective_date: service_start_date,
+                payload: { assignment_id: assignmentId, staff_profile_id, ot_rate: otRate },
+                created_by: req.user.user_id,
+            });
+            await client.query(`UPDATE bookings SET status = 'SCHEDULED' WHERE booking_id = $1`, [booking_id]);
+            // The pause stays open until the start actually happens (closed by
+            // executeAssignmentStart); record the planned date on it meanwhile.
+            if (pause) await client.query(`UPDATE booking_pauses SET resume_date = $2 WHERE pause_id = $1`, [pause.pause_id, service_start_date]);
+        } else {
+            await client.query(
+                `UPDATE bookings SET status = 'ACTIVE', assigned_staff_id = $2, ot_rate = $3 WHERE booking_id = $1`,
+                [booking_id, staff_profile_id, otRate]
+            );
+            if (pause) {
+                await client.query(
+                    `UPDATE booking_pauses
+                     SET resumed_date = $2, resumed_by = $3, resumed_by_name = $4, resumed_at = NOW()
+                     WHERE pause_id = $1`,
+                    [pause.pause_id, service_start_date, req.user?.user_id || null, resumedByName]
+                );
+            }
+
+            if (pastDays.length > 0) {
+                const yesterday = (await client.query(`SELECT ($1::date - 1)::text AS d`, [businessDate])).rows[0].d;
+                const deciderName = await getAttendanceDeciderName(req.user?.user_id);
+                const seen = new Set();
+                for (const d of pastDays) {
+                    const date = String(d?.service_date || '').slice(0, 10);
+                    if (!ISO.test(date) || date < service_start_date || date > yesterday) {
+                        throw fail(400, `${date || 'A day'} is outside the past days being resumed (${service_start_date} to ${yesterday}).`);
+                    }
+                    if (seen.has(date)) throw fail(400, `${date} was sent twice`);
+                    seen.add(date);
+                }
+
+                const pay = await applyBackdatedSwapPay(client, {
+                    booking_id, outgoing_staff_id: null, new_assignment_id: assignmentId,
+                    swap_date: service_start_date, business_date: yesterday,
+                    newStaffDays: pastDays.filter(d => typeof d.pay === 'boolean')
+                        .map(d => ({ service_date: d.service_date, pay: d.pay, amount: d.amount })),
+                    reason: notes || null, deciderUserId: req.user.user_id, deciderName,
+                    label: 'Resumed after pause',
+                });
+
+                const invoices = [];
+                for (const d of pastDays.filter(x => typeof x.invoice === 'boolean')) {
+                    // A day the pause itself refunded/skipped (the log-out was dated
+                    // before this resume) goes back to PENDING so it can be decided
+                    // again. The refund transaction stays in the ledger and is named in
+                    // the row's notes; rows revoked by hand for other reasons are not
+                    // touched and still block, as before.
+                    await client.query(
+                        `UPDATE booking_daily_invoices
+                         SET notes = CONCAT_WS(' | ', NULLIF(notes, ''),
+                                 'Refunded when the booking was paused' || COALESCE(' (reversal ' || reversal_transaction_id::text || ')', '') || '; decided again on resume'),
+                             status = 'PENDING', reversal_transaction_id = NULL, revoked_at = NULL,
+                             revoked_by_user_id = NULL, revoked_by_name = NULL, revoke_reason = NULL,
+                             settlement_action = NULL, updated_at = NOW()
+                         WHERE booking_id = $1 AND service_date = $2
+                           AND shift_slot_id IS NULL AND assignment_id IS NULL AND reschedule_id IS NULL
+                           AND ((status = 'REVOKED' AND revoke_reason LIKE 'Booking paused from %')
+                             OR (status = 'SKIPPED' AND notes LIKE 'Booking paused from %'))`,
+                        [booking_id, d.service_date]
+                    );
+                    const { finalAmount } = await applyInvoiceDecision(client, {
+                        booking_id, service_date: d.service_date, approve: d.invoice,
+                        amount: d.invoice ? d.invoice_amount : undefined,
+                        deciderUserId: req.user.user_id, deciderName,
+                    });
+                    invoices.push({ service_date: d.service_date, action: d.invoice ? 'INVOICED' : 'SKIPPED', amount: finalAmount });
+                }
+                pastResult = { staff_pay: pay.new_staff, invoices };
+            }
+        }
+
+        await client.query('COMMIT');
+
+        try {
+            await logActivity({
+                actorUserId: req.user?.user_id,
+                actorName: resumedByName,
+                actorRole: extractActorRole(req.user?.role),
+                actionType: 'BOOKING_RESUMED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: {
+                    booking_id, staff_profile_id, staff_name: staff.full_name,
+                    service_start_date, scheduled: isFuture, past_days: pastResult,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (resumeWithStaff):', logErr.message);
+        }
+
+        // Fire-and-forget: tell the staff member about the assignment.
+        if (staff.mobile_number) {
+            (async () => {
+                try {
+                    const infoRes = await db.query(
+                        `SELECT COALESCE(p.full_name, 'the patient') AS patient_name,
+                                COALESCE(sr.location_address, cp.primary_address, 'the client location') AS location,
+                                COALESCE(p.medical_condition, 'None specified') AS conditions
+                         FROM bookings b
+                         LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+                         LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                         LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+                         WHERE b.booking_id = $1`,
+                        [booking_id]
+                    );
+                    const info = infoRes.rows[0] || {};
+                    const startStr = new Date(`${service_start_date}T00:00:00`).toLocaleDateString('en-GB');
+                    await Promise.allSettled([
+                        sendStaffNewAssignment(staff.mobile_number, staff.full_name, info.patient_name, info.location, info.conditions, startStr),
+                        sendSms(staff.mobile_number, `VCare: Hi ${staff.full_name}, you have an assignment for ${info.patient_name} at ${info.location} from ${startStr}. Please contact the VCare office for full details.`),
+                    ]);
+                } catch (e) {
+                    console.error('[resumeWithStaff] notification error:', e.message);
+                }
+            })();
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: isFuture
+                ? `${staff.full_name} is booked to start on ${service_start_date}. The booking is scheduled to start then — nothing is billed or paid until that day.`
+                : `Booking resumed with ${staff.full_name} from ${service_start_date}.`,
+            data: { booking_id, assignment_id: assignmentId, status: isFuture ? 'SCHEDULED' : 'ACTIVE', past_days: pastResult },
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        console.error('resumeWithStaff error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to resume the booking' });
     } finally {
         client.release();
     }
@@ -1078,6 +1383,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.invoicing_mode,
             b.is_hospitalized,
             b.hospital_name,
+            b.repeat_days,
             c.client_profile_id,
             c.client_code,
             NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
@@ -1297,6 +1603,8 @@ exports.getAdminBookingDetail = async (req, res) => {
                     invoicing_mode: booking.invoicing_mode,
                     is_hospitalized: booking.is_hospitalized,
                     hospital_name: booking.hospital_name,
+                    // LIVE_IN weekly repeat days (0 = Sun … 6 = Sat); null = every day.
+                    repeat_days: booking.repeat_days,
                     quote_id: booking.quote_id,
                     estimate_number: booking.estimate_number,
                     quote_daily_rate: booking.quote_daily_rate,
@@ -1609,12 +1917,14 @@ exports.getBookingDailyInvoices = async (req, res) => {
                 bdi.notes, bdi.created_at, bdi.updated_at, bdi.shift_slot_id, bdi.assignment_id,
                 bdi.revoke_reason, bdi.revoked_by_name, bdi.revoked_at, bdi.settlement_action,
                 bdi.corrected_at,
+                ${dayCorrectionColumns('corr')},
                 ss.shift_number, ss.label as shift_label,
                 sp.full_name as assignment_staff_name
              FROM booking_daily_invoices bdi
              LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
              LEFT JOIN booking_staff_assignments bsa ON bdi.assignment_id = bsa.assignment_id
              LEFT JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+             ${dayCorrectionJoin('bdi.daily_invoice_id', 'daily_invoice_id', 'corr')}
              WHERE bdi.booking_id = $1
              ORDER BY bdi.service_date DESC`,
             [booking_id]
@@ -1966,7 +2276,7 @@ exports.getShiftSchedule = async (req, res) => {
 
         const patternsRes = await db.query(
             `SELECT p.pattern_id, p.effective_from_date::text, p.effective_to_date::text,
-                    s.shift_slot_id, s.shift_number, s.start_time, s.duration_hours, s.label
+                    s.shift_slot_id, s.shift_number, s.start_time, s.duration_hours, s.label, s.repeat_days
              FROM booking_shift_patterns p
              JOIN booking_shift_slots s ON s.pattern_id = p.pattern_id
              WHERE p.booking_id = $1 AND p.status IN ('ACTIVE', 'SUPERSEDED')
@@ -2051,6 +2361,10 @@ exports.getShiftSchedule = async (req, res) => {
                     p.effective_from_date <= dateStr && (!p.effective_to_date || p.effective_to_date >= dateStr)
                 );
                 if (!active) continue;
+                // A shift set to repeat on specific weekdays simply has no occurrence on
+                // its off days — nothing to confirm, bill or pay. (Makeup occurrences from
+                // reschedules below are explicit dates and can still land on an off day.)
+                if (!isServiceDay(slotMeta.repeat_days, dateStr)) continue;
                 if (movedOrigins.has(`${slotId}__${dateStr}`)) {
                     occurrences.push({
                         shift_slot_id: slotId, shift_number: slotMeta.shift_number, label: slotMeta.label,
@@ -2842,7 +3156,7 @@ exports.getPendingTerminationRequests = async (req, res) => {
                 SELECT
                     booking_id,
                     COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
-                    COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                    COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) AS total_invoiced
                 FROM transactions
                 GROUP BY booking_id
             ) fin ON fin.booking_id = b.booking_id
@@ -2905,7 +3219,7 @@ exports.getTerminationHistory = async (req, res) => {
                 SELECT
                     booking_id,
                     COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
-                    COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                    COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) AS total_invoiced
                 FROM transactions
                 GROUP BY booking_id
             ) fin ON fin.booking_id = b.booking_id
@@ -3479,7 +3793,7 @@ const buildBookingsListSql = (salesFilter) => `
                 SELECT
                     booking_id,
                     COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') != 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
-                    COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                    COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) AS total_invoiced
                 FROM transactions
                 GROUP BY booking_id
             ) bill ON bill.booking_id = b.booking_id
@@ -3569,6 +3883,15 @@ exports.getAllBookings = async (req, res) => {
                      AND bsa.status IN ('ACTIVE', 'SCHEDULED')
                    ORDER BY bsa.service_start_date DESC
                    LIMIT 1) AS service_start_time,
+                (SELECT MIN(bsa.service_start_date)::text
+                   FROM booking_staff_assignments bsa
+                   WHERE bsa.booking_id = base.booking_id
+                     AND bsa.status = 'SCHEDULED') AS scheduled_start_date,
+                (SELECT bp.paused_date::text
+                   FROM booking_pauses bp
+                   WHERE bp.booking_id = base.booking_id AND bp.resumed_at IS NULL
+                   ORDER BY bp.paused_at DESC
+                   LIMIT 1) AS paused_since,
                 (SELECT COALESCE(json_agg(json_build_object(
                             'staff_profile_id', bsa.staff_profile_id,
                             'staff_code', sp.staff_code,
@@ -3596,6 +3919,8 @@ exports.getAllBookings = async (req, res) => {
                 COUNT(*) FILTER (WHERE base.status = 'TERMINATED')::int AS "TERMINATED",
                 COUNT(*) FILTER (WHERE base.status = 'COMPLETED')::int AS "COMPLETED",
                 COUNT(*) FILTER (WHERE base.status = 'CANCELLED')::int AS "CANCELLED",
+                COUNT(*) FILTER (WHERE base.status = 'PAUSED')::int AS "PAUSED",
+                COUNT(*) FILTER (WHERE base.status = 'SCHEDULED')::int AS "SCHEDULED",
                 COUNT(*) FILTER (WHERE base.is_expiring_soon)::int AS "EXPIRING_SOON",
                 COUNT(*) FILTER (WHERE base.service_model = 'SHIFT_BASED')::int AS "SHIFT_BASED",
                 COUNT(*) FILTER (WHERE base.service_model = 'VISITING')::int AS "VISITING",
@@ -3940,6 +4265,10 @@ exports.resolveShiftBookingOverdue = async (req, res) => {
 // (dailyAttendanceController.markAbsent). The booking keeps running; the day
 // they do show up and log an in-time, it's an ordinary worked day again.
 //
+// Exception: a BACKDATED swap can carry old_staff_out_time, the departure that
+// already happened. Then the outgoing assignment is closed in this same request
+// (endAssignmentAt), there is no overlap, and none of the below applies.
+//
 // From the swap date onward, bookings.invoicing_mode is forced to MANUAL — this
 // is a one-way switch the admin has to consciously undo later (see
 // updateInvoicingMode) once the booking is back to a single clean staff member.
@@ -3967,10 +4296,43 @@ exports.swapStaff = async (req, res) => {
         // if omitted, their first day (and every day after, until logged) is just
         // an ordinary un-logged LIVE_IN day, handled by the existing attendance UI.
         new_staff_in_time,
+        // Backdated swaps only: who gets paid for the days between the swap date
+        // and today that the cron already settled — { old_staff_days, new_staff_days }.
+        // See dailyAttendanceController.applyBackdatedSwapPay.
+        backdated_pay,
+        // Backdated swaps only, optional: when the outgoing staff actually left
+        // (full ISO timestamp). When given, their assignment is closed right here
+        // instead of being left open for a later "Log out & close" — the swap
+        // already happened, so there is no overlap still to come.
+        old_staff_out_time,
+        // Optional: the outgoing staff member is going on leave rather than leaving
+        // the booking for good - { start_date, end_date, out_time }. They are relieved
+        // from duty on start_date (their assignment closes with out_time, immediately
+        // when that date has arrived, otherwise via a scheduled STAFF_RELIEVE) and an
+        // admin-approved leave is logged for start_date..end_date, same as the Leave
+        // Requests screen would.
+        old_staff_leave,
     } = req.body;
 
     if (!new_staff_id) {
         return res.status(400).json({ status: 'error', message: 'new_staff_id is required' });
+    }
+
+    const oldStaffDays = Array.isArray(backdated_pay?.old_staff_days) ? backdated_pay.old_staff_days : [];
+    const newStaffDays = Array.isArray(backdated_pay?.new_staff_days) ? backdated_pay.new_staff_days : [];
+    // Same permissions the standalone versions of each money move require.
+    const neededPermissions = [
+        oldStaffDays.some(d => d?.pay === false) && 'ATTENDANCE_MARK_ABSENT',
+        oldStaffDays.some(d => d?.pay === true && d.amount !== undefined && d.amount !== null && d.amount !== '') && 'BOOKING_CORRECT_AMOUNT',
+        newStaffDays.length > 0 && 'ATTENDANCE_CONFIRM_SALARY',
+    ].filter(Boolean);
+    if (old_staff_leave && !(await userHasPermission(req.user, 'STAFF_LEAVE_CREATE'))) {
+        return res.status(403).json({ status: 'error', message: 'You need the STAFF_LEAVE_CREATE permission to send the outgoing staff member on leave.' });
+    }
+    for (const permissionKey of neededPermissions) {
+        if (!(await userHasPermission(req.user, permissionKey))) {
+            return res.status(403).json({ status: 'error', message: `You need the ${permissionKey} permission to decide pay for the backdated days.` });
+        }
     }
 
     const client = await db.pool.connect();
@@ -4118,7 +4480,48 @@ exports.swapStaff = async (req, res) => {
             }
         }
 
+        if (requestedSwapDateStr < businessDate && activeAssignment?.service_start_date
+            && requestedSwapDateStr < toDateStr(activeAssignment.service_start_date)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `The swap date can't be before ${currentStaffName || 'the current staff member'} started (${toDateStr(activeAssignment.service_start_date)}).`
+            });
+        }
+
+        // Outgoing staff going on leave: the leave starts when they are relieved.
+        let leaveInput = null;
+        if (old_staff_leave) {
+            const leaveStart = toDateStr(old_staff_leave.start_date);
+            const leaveEnd = toDateStr(old_staff_leave.end_date);
+            const leaveOutDate = toDateStr(old_staff_leave.out_time);
+            const fail = (message) => Object.assign(new Error(message), { statusCode: 400 });
+            if (!leaveStart || !leaveEnd) throw fail('The leave needs a start date and an end date.');
+            if (leaveEnd < leaveStart) throw fail('Leave end date cannot be before its start date.');
+            if (leaveStart < requestedSwapDateStr) throw fail(`The leave can't start before ${newStaff.full_name} takes over (${requestedSwapDateStr}) - nobody would be on duty.`);
+            if (!old_staff_leave.out_time || !leaveOutDate) throw fail(`Enter the time ${currentStaffName || 'the outgoing staff member'} logs out.`);
+            if (leaveOutDate !== leaveStart) throw fail(`The log-out time must fall on the leave's start date (${leaveStart}).`);
+            if (old_staff_out_time) throw fail('Send either old_staff_out_time or old_staff_leave, not both.');
+            leaveInput = { start_date: leaveStart, end_date: leaveEnd, out_time: old_staff_leave.out_time };
+        }
+        // The open whole-booking assignment that the leave relieves.
+        const openOldAssignment = async () => (await client.query(
+            `SELECT assignment_id, staff_profile_id, service_start_date
+             FROM booking_staff_assignments
+             WHERE booking_id = $1 AND staff_profile_id = $2 AND status = 'ACTIVE'
+               AND service_end_date IS NULL AND shift_slot_id IS NULL
+             ORDER BY service_start_date DESC
+             LIMIT 1
+             FOR UPDATE`,
+            [booking_id, currentStaffId]
+        )).rows[0] || null;
+        const leaveActorName = leaveInput ? await getActorName(req.user.user_id) : null;
+
         if (isFutureDate(requestedSwapDateStr, businessDate)) {
+            if (oldStaffDays.length > 0 || newStaffDays.length > 0 || old_staff_out_time) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: 'Past-day pay decisions only apply to a backdated swap, not a scheduled one.' });
+            }
             const alreadyScheduled = await hasOpenAction(client, booking_id, 'STAFF_SWAP');
             if (alreadyScheduled) {
                 await client.query('ROLLBACK');
@@ -4163,13 +4566,53 @@ exports.swapStaff = async (req, res) => {
                 created_by: req.user.user_id,
             });
 
+            let scheduledLeave = null;
+            if (leaveInput) {
+                const oldAssignment = await openOldAssignment();
+                if (!oldAssignment) throw Object.assign(new Error(`${currentStaffName || 'The outgoing staff member'} has no open assignment on this booking to relieve.`), { statusCode: 400 });
+                if (await hasOpenAction(client, booking_id, 'STAFF_RELIEVE')) throw Object.assign(new Error('A leave relief is already scheduled for this booking.'), { statusCode: 400 });
+                scheduledLeave = await createApprovedLeave(client, {
+                    staff_profile_id: currentStaffId, ...leaveInput, reason: swap_reason || null,
+                    actorUserId: req.user.user_id, actorName: leaveActorName,
+                });
+                await enqueueScheduledAction(client, {
+                    booking_id,
+                    action_type: 'STAFF_RELIEVE',
+                    effective_date: leaveInput.start_date,
+                    payload: {
+                        assignment_id: oldAssignment.assignment_id,
+                        staff_profile_id: currentStaffId,
+                        out_time: new Date(leaveInput.out_time).toISOString(),
+                        leave_id: scheduledLeave.leave.leave_id,
+                        leave_start: leaveInput.start_date,
+                        leave_end: leaveInput.end_date,
+                    },
+                    reason: swap_reason || null,
+                    created_by: req.user.user_id,
+                });
+                scheduledLeave.conflicts = await findLeaveConflicts(client, {
+                    staff_profile_id: currentStaffId, start_date: leaveInput.start_date, end_date: leaveInput.end_date, exclude_booking_id: booking_id,
+                });
+            }
+
             await client.query('COMMIT');
+
+            if (scheduledLeave) {
+                notifyLeaveApproved(scheduledLeave);
+                logActivity({
+                    actorUserId: req.user.user_id, actorName: leaveActorName, actorRole: extractActorRole(req.user.role),
+                    actionType: 'LEAVE_LOGGED_BY_ADMIN', entityType: 'STAFF_LEAVE', entityId: String(scheduledLeave.leave.leave_id),
+                    details: { staff_profile_id: currentStaffId, start_date: leaveInput.start_date, end_date: leaveInput.end_date, days: scheduledLeave.days, reason: swap_reason || null, booking_id, via: 'STAFF_SWAP' },
+                }).catch((e) => console.error('Activity log failed (swap leave):', e.message));
+            }
 
             return res.status(200).json({
                 status: 'success',
                 scheduled: true,
-                message: `Staff swap to ${newStaff.full_name} scheduled for ${requestedSwapDateStr}. ${currentStaffName || 'Current staff'} stays on the booking — nothing closes their assignment until an out-time is logged for them.`,
-                data: { booking_id, new_staff_id, effective_date: requestedSwapDateStr }
+                message: scheduledLeave
+                    ? `Staff swap to ${newStaff.full_name} scheduled for ${requestedSwapDateStr}. ${currentStaffName || 'Current staff'} goes on leave ${leaveInput.start_date} to ${leaveInput.end_date} and is relieved from this booking on ${leaveInput.start_date}.${scheduledLeave.conflicts.length ? ` Heads-up: they are also assigned to ${scheduledLeave.conflicts.length} other booking(s) during that leave.` : ''}`
+                    : `Staff swap to ${newStaff.full_name} scheduled for ${requestedSwapDateStr}. ${currentStaffName || 'Current staff'} stays on the booking — nothing closes their assignment until an out-time is logged for them.`,
+                data: { booking_id, new_staff_id, effective_date: requestedSwapDateStr, leave: scheduledLeave?.leave || null, leave_conflicts: scheduledLeave?.conflicts || [] }
             });
         }
 
@@ -4207,9 +4650,109 @@ exports.swapStaff = async (req, res) => {
             });
         }
 
-        // 5. Point the booking at the incoming staff and force manual invoicing —
-        // see the function header for why this is a one-way switch here.
-        const updateFields = [`assigned_staff_id = $1`, `invoicing_mode = 'MANUAL'`];
+        // 4.5 Backdated swap: re-decide the days the cron already paid the outgoing
+        // staff for, and decide the incoming staff's days, in this same commit.
+        let backdatedPayResult = null;
+        if (oldStaffDays.length > 0 || newStaffDays.length > 0) {
+            backdatedPayResult = await applyBackdatedSwapPay(client, {
+                booking_id,
+                outgoing_staff_id: oldStaffId,
+                new_assignment_id: newAssignmentId,
+                swap_date: requestedSwapDateStr,
+                business_date: businessDate,
+                oldStaffDays,
+                newStaffDays,
+                reason: swap_reason || null,
+                deciderUserId: req.user.user_id,
+                deciderName: await getAttendanceDeciderName(req.user.user_id),
+            });
+        }
+
+        // 4.6 Backdated swap where the outgoing staff's departure is already known:
+        // close their assignment on that day now.
+        let oldStaffClosedOn = null;
+        // A leave that has already started relieves the outgoing staff right now, with
+        // the log-out time entered for its start date.
+        const leaveStartedNow = Boolean(leaveInput) && leaveInput.start_date <= businessDate;
+        const closeOutTime = old_staff_out_time || (leaveStartedNow ? new Date(leaveInput.out_time).toISOString() : null);
+        if (closeOutTime) {
+            const outDateStr = toDateStr(closeOutTime);
+            if (!outDateStr) {
+                const err = new Error('old_staff_out_time is not a valid timestamp');
+                err.statusCode = 400;
+                throw err;
+            }
+            if (outDateStr < requestedSwapDateStr || outDateStr > businessDate) {
+                const err = new Error(`The outgoing staff's out-time must be between the swap date (${requestedSwapDateStr}) and today.`);
+                err.statusCode = 400;
+                throw err;
+            }
+            const oldAssignmentRes = await client.query(
+                `SELECT assignment_id, staff_profile_id, service_start_date
+                 FROM booking_staff_assignments
+                 WHERE booking_id = $1 AND staff_profile_id = $2 AND status = 'ACTIVE'
+                   AND service_end_date IS NULL AND shift_slot_id IS NULL
+                 ORDER BY service_start_date DESC
+                 LIMIT 1
+                 FOR UPDATE`,
+                [booking_id, oldStaffId]
+            );
+            const oldAssignment = oldAssignmentRes.rows[0];
+            if (!oldAssignment) {
+                const err = new Error(`${currentStaffName || 'The outgoing staff member'} has no open assignment on this booking to close.`);
+                err.statusCode = 400;
+                throw err;
+            }
+            oldStaffClosedOn = await endAssignmentAt(client, { booking_id, assignment: oldAssignment, out_time: closeOutTime });
+        }
+
+        // 4.7 Log the leave itself. A leave starting later keeps them on the booking
+        // until then; a scheduled STAFF_RELIEVE closes their assignment that day.
+        let loggedLeave = null;
+        if (leaveInput) {
+            loggedLeave = await createApprovedLeave(client, {
+                staff_profile_id: currentStaffId, ...leaveInput, reason: swap_reason || null,
+                actorUserId: req.user.user_id, actorName: leaveActorName,
+            });
+            if (leaveStartedNow) {
+                await markOnLeaveIfActiveToday(client, currentStaffId, leaveInput.start_date, leaveInput.end_date);
+            } else {
+                const oldAssignment = await openOldAssignment();
+                if (!oldAssignment) throw Object.assign(new Error(`${currentStaffName || 'The outgoing staff member'} has no open assignment on this booking to relieve.`), { statusCode: 400 });
+                if (await hasOpenAction(client, booking_id, 'STAFF_RELIEVE')) throw Object.assign(new Error('A leave relief is already scheduled for this booking.'), { statusCode: 400 });
+                await enqueueScheduledAction(client, {
+                    booking_id,
+                    action_type: 'STAFF_RELIEVE',
+                    effective_date: leaveInput.start_date,
+                    payload: {
+                        assignment_id: oldAssignment.assignment_id,
+                        staff_profile_id: currentStaffId,
+                        out_time: new Date(leaveInput.out_time).toISOString(),
+                        leave_id: loggedLeave.leave.leave_id,
+                        leave_start: leaveInput.start_date,
+                        leave_end: leaveInput.end_date,
+                    },
+                    reason: swap_reason || null,
+                    created_by: req.user.user_id,
+                });
+            }
+            loggedLeave.conflicts = await findLeaveConflicts(client, {
+                staff_profile_id: currentStaffId, start_date: leaveInput.start_date, end_date: leaveInput.end_date, exclude_booking_id: booking_id,
+            });
+        }
+
+        // 5. Point the booking at the incoming staff. Invoicing is forced to manual
+        // while two staff are concurrently on the booking — see the function header
+        // for why. A backdated swap that already closed the outgoing side never
+        // creates that overlap, so it leaves the invoicing mode alone.
+        const stillConcurrentRes = await client.query(
+            `SELECT COUNT(*)::int AS n FROM booking_staff_assignments
+             WHERE booking_id = $1 AND status = 'ACTIVE' AND shift_slot_id IS NULL`,
+            [booking_id]
+        );
+        const forceManual = stillConcurrentRes.rows[0].n > 1;
+        const updateFields = [`assigned_staff_id = $1`];
+        if (forceManual) updateFields.push(`invoicing_mode = 'MANUAL'`);
         const updateValues = [new_staff_id];
         let paramCount = 2;
 
@@ -4234,9 +4777,9 @@ exports.swapStaff = async (req, res) => {
             updateValues
         );
 
-        // The outgoing staff is deliberately NOT freed here — they are still
-        // actively on this booking until their out-time closes the assignment
-        // (see closeStaffAssignment below).
+        // The outgoing staff is NOT freed here unless 4.6 closed their assignment
+        // (endAssignmentAt frees them) — otherwise they are still actively on this
+        // booking until their out-time closes it (see closeStaffAssignment below).
         await client.query(
             `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
             [new_staff_id]
@@ -4262,12 +4805,27 @@ exports.swapStaff = async (req, res) => {
                     new_staff_id: new_staff_id,
                     swap_reason: swap_reason || null,
                     swap_date: requestedSwapDateStr,
-                    invoicing_mode: 'MANUAL',
+                    invoicing_mode: forceManual ? 'MANUAL' : 'UNCHANGED',
+                    old_staff_closed_on: oldStaffClosedOn,
+                    backdated_pay: backdatedPayResult,
+                    old_staff_leave: loggedLeave ? { leave_id: loggedLeave.leave.leave_id, start_date: leaveInput.start_date, end_date: leaveInput.end_date } : null,
                 }
             });
+            if (loggedLeave) {
+                await logActivity({
+                    actorUserId: req.user.user_id,
+                    actorName,
+                    actorRole: extractActorRole(req.user.role),
+                    actionType: 'LEAVE_LOGGED_BY_ADMIN',
+                    entityType: 'STAFF_LEAVE',
+                    entityId: String(loggedLeave.leave.leave_id),
+                    details: { staff_profile_id: currentStaffId, start_date: leaveInput.start_date, end_date: leaveInput.end_date, days: loggedLeave.days, reason: swap_reason || null, booking_id, via: 'STAFF_SWAP' },
+                });
+            }
         } catch (logErr) {
             console.error('Activity log error (non-fatal):', logErr);
         }
+        if (loggedLeave) notifyLeaveApproved(loggedLeave);
 
         // 7. Fire-and-forget notifications
         (async () => {
@@ -4296,8 +4854,9 @@ exports.swapStaff = async (req, res) => {
 
                 // The outgoing staff's assignment has NOT ended — they're still on
                 // duty alongside the incoming staff — so this is a heads-up, not the
-                // "assignment ended" notice.
-                if (oldMobile && currentStaffName) {
+                // "assignment ended" notice. A backdated swap that already closed it
+                // has nothing to ask them to do.
+                if (oldMobile && currentStaffName && !oldStaffClosedOn && !loggedLeave) {
                     notifications.push(
                         sendSms(oldMobile,
                             `VCare: Hi ${currentStaffName}, ${newStaff.full_name} has been assigned to take over ${patientName}'s care. Please log your out-time once your shift ends.`
@@ -4331,13 +4890,21 @@ exports.swapStaff = async (req, res) => {
 
         res.status(200).json({
             status: 'success',
-            message: `Staff swap recorded. ${currentStaffName || 'Current staff'} stays on the booking until their out-time is logged; ${newStaff.full_name} is also now on duty. Invoicing for this booking is now manual until you switch it back.`,
+            message: loggedLeave
+                ? `Staff swap recorded. ${currentStaffName || 'Current staff'} goes on leave ${leaveInput.start_date} to ${leaveInput.end_date} and ${leaveStartedNow ? `was relieved from this booking on ${oldStaffClosedOn}` : `will be relieved from this booking on ${leaveInput.start_date}`}; ${newStaff.full_name} is on duty.${loggedLeave.conflicts.length ? ` Heads-up: they are also assigned to ${loggedLeave.conflicts.length} other booking(s) during that leave.` : ''}${forceManual ? ' Invoicing for this booking is manual until they are relieved and you switch it back.' : ''}`
+            : oldStaffClosedOn
+                ? `Staff swap recorded. ${currentStaffName || 'Current staff'}'s assignment ended on ${oldStaffClosedOn}; ${newStaff.full_name} is now on duty.`
+                : `Staff swap recorded. ${currentStaffName || 'Current staff'} stays on the booking until their out-time is logged; ${newStaff.full_name} is also now on duty. Invoicing for this booking is now manual until you switch it back.`,
             data: {
                 booking_id,
                 old_staff: currentStaffName,
                 new_staff: newStaff.full_name,
                 swap_date: requestedSwapDateStr,
-                invoicing_mode: 'MANUAL',
+                old_staff_closed_on: oldStaffClosedOn,
+                invoicing_mode: forceManual ? 'MANUAL' : undefined,
+                backdated_pay: backdatedPayResult,
+                leave: loggedLeave?.leave || null,
+                leave_conflicts: loggedLeave?.conflicts || [],
             }
         });
 
@@ -4377,13 +4944,101 @@ const settleAssignmentDays = async (client, { booking_id, assignment, settlement
     });
 };
 
+// Undoes money that a late-recorded log-out leaves wrong, for every day AFTER an
+// assignment's new end date (inside the caller's transaction):
+//  - salary the cron already paid this staff member for those days is reversed
+//    (row → REVOKED, original CREDIT kept as audit trail) — they weren't there;
+//  - with reverseInvoices (the log-out emptied the booking, so those days are now
+//    paused), the client's INVOICED days are reversed back to their wallet and any
+//    still-PENDING invoice seeds are marked SKIPPED — a paused booking isn't billed.
+const reverseDaysAfterAssignmentEnd = async (client, {
+    booking_id, client_id, assignment, end_date, reverseInvoices, userId, userName,
+}) => {
+    const reason = `Logged out on ${end_date} — day falls after their assignment ended`;
+    const salaries = [];
+    const invoices = [];
+
+    const paidRes = await client.query(
+        `SELECT attendance_id, service_date::text AS service_date, salary_amount
+         FROM staff_daily_attendance
+         WHERE assignment_id = $1 AND service_date > $2 AND salary_status = 'PAID'
+         ORDER BY service_date
+         FOR UPDATE`,
+        [assignment.assignment_id, end_date]
+    );
+    for (const row of paidRes.rows) {
+        const amount = Number(row.salary_amount || 0);
+        const reversalTransactionId = amount > 0
+            ? await reverseStaffSalary(client, {
+                staff_profile_id: assignment.staff_profile_id, booking_id, amount,
+                notes: `Reversal of ${row.service_date} salary — ${reason}`,
+            })
+            : null;
+        await client.query(
+            `UPDATE staff_daily_attendance
+             SET salary_status = 'REVOKED', reversal_transaction_id = $1, revoked_at = NOW(),
+                 revoked_by_user_id = $2, revoked_by_name = $3, revoke_reason = $4, updated_at = NOW()
+             WHERE attendance_id = $5`,
+            [reversalTransactionId, userId, userName, reason, row.attendance_id]
+        );
+        salaries.push({ service_date: row.service_date, amount });
+    }
+
+    if (reverseInvoices) {
+        const pauseReason = `Booking paused from ${end_date} — no staff on duty`;
+        const invRes = await client.query(
+            `SELECT daily_invoice_id, service_date::text AS service_date, status, amount
+             FROM booking_daily_invoices
+             WHERE booking_id = $1 AND service_date > $2 AND status IN ('INVOICED', 'PENDING')
+             ORDER BY service_date
+             FOR UPDATE`,
+            [booking_id, end_date]
+        );
+        for (const inv of invRes.rows) {
+            if (inv.status === 'PENDING') {
+                await client.query(
+                    `UPDATE booking_daily_invoices
+                     SET status = 'SKIPPED', decided_by_user_id = $1, decided_by_name = $2, decided_at = NOW(), updated_at = NOW(),
+                         notes = $4
+                     WHERE daily_invoice_id = $3`,
+                    [userId, userName, inv.daily_invoice_id, pauseReason]
+                );
+                invoices.push({ service_date: inv.service_date, action: 'SKIPPED' });
+                continue;
+            }
+            const amount = Number(inv.amount || 0);
+            const reversalTransactionId = await reverseServiceInvoice(client, {
+                booking_id, client_id, amount,
+                notes: `Reversal of ${inv.service_date} invoice — ${pauseReason}`,
+                settlementAction: 'WALLET_REFUND',
+            });
+            await client.query(
+                `UPDATE booking_daily_invoices
+                 SET status = 'REVOKED', reversal_transaction_id = $1, revoked_at = NOW(), revoked_by_user_id = $2,
+                     revoked_by_name = $3, revoke_reason = $4, settlement_action = 'WALLET_REFUND', updated_at = NOW()
+                 WHERE daily_invoice_id = $5`,
+                [reversalTransactionId, userId, userName, pauseReason, inv.daily_invoice_id]
+            );
+            invoices.push({ service_date: inv.service_date, action: 'REFUNDED', amount });
+        }
+    }
+
+    return { salaries, invoices };
+};
+
 // PATCH /api/bookings/:booking_id/assignments/:assignment_id/close-out
 // body: { out_time, settlement_days? }
 // Closes an open-ended assignment — the only thing that ever does. Used to end
-// the outgoing staff's side of a swap once they've actually left: sets
-// service_end_date/status, logs the out-time, and frees the staff member
-// (unless they hold another open assignment elsewhere). See swapStaff's header
-// for why an assignment is never closed automatically.
+// the outgoing staff's side of a swap once they've actually left, and to log any
+// staff member out on any day up to today: sets service_end_date/status, logs the
+// out-time, and frees the staff member (unless they hold another open assignment
+// elsewhere). See swapStaff's header for why an assignment is never closed
+// automatically.
+//
+// If that leaves the booking with no ACTIVE staff, the booking is PAUSED from the
+// log-out day (LIVE_IN only) — or shown as SCHEDULED to start when a replacement
+// is already booked for later. Money for days after the log-out day is undone by
+// reverseDaysAfterAssignmentEnd.
 //
 // settlement_days carries the pay decision for this assignment's first and last
 // day, which were deliberately left PENDING for its whole run (see
@@ -4475,16 +5130,33 @@ exports.closeStaffAssignment = async (req, res) => {
             }
         }
 
-        if (otherActiveRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-                status: 'error',
-                message: 'This is the only active staff member on this booking. Swap in a replacement before closing this assignment, or terminate/pause the booking instead.'
-            });
+        // Logging out the LAST staff member leaves nobody on the booking, so the
+        // booking is paused from the log-out day (see below). That is a pause in
+        // its own right, so it needs the pause permission as well.
+        const leavesNoStaff = otherActiveRes.rows.length === 0;
+        const bookingRowRes = await client.query(
+            `SELECT status, service_model, assigned_staff_id, client_id FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+        const bookingRow = bookingRowRes.rows[0];
+        if (leavesNoStaff) {
+            if (bookingRow.service_model !== 'LIVE_IN') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: 'This is the only active staff member on this booking. Swap in a replacement first, or pause the booking instead.' });
+            }
+            if (!['ACTIVE', 'OVERDUE'].includes(bookingRow.status)) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: `This booking is ${bookingRow.status} and can't be paused.` });
+            }
+            if (!(await userHasPermission(req.user, 'BOOKING_PAUSE'))) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ status: 'error', message: 'Logging out the last staff member pauses the booking, which needs the BOOKING_PAUSE permission.' });
+            }
         }
 
         const closeDateStr = toDateStr(out_time);
         const startDateStr = toDateStr(assignment.service_start_date);
+        const businessDate = await getBusinessDate(client);
 
         // Same day is legitimate — a client can reject a staff member on arrival, so
         // they start and leave within hours. Earlier than the start never is.
@@ -4495,22 +5167,64 @@ exports.closeStaffAssignment = async (req, res) => {
                 message: `The out-time can't be before this staff member started (${startDateStr}).`
             });
         }
+        if (closeDateStr > businessDate) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: "An out-time can't be in the future." });
+        }
 
-        await client.query(
-            `UPDATE booking_staff_assignments
-             SET service_end_date = $1, status = 'COMPLETED'
-             WHERE assignment_id = $2`,
-            [closeDateStr, assignment_id]
-        );
+        await endAssignmentAt(client, { booking_id, assignment, out_time });
 
-        await applyPartialAttendanceTime(client, {
-            booking_id, assignment_id,
-            service_date: closeDateStr, out_time,
+        // A log-out recorded after the fact (any earlier day) leaves this staff
+        // member auto-paid for days they were no longer there — and, when it empties
+        // the booking, the client invoiced for days inside what is now a pause.
+        const afterEnd = await reverseDaysAfterAssignmentEnd(client, {
+            booking_id,
+            client_id: bookingRow.client_id,
+            assignment,
+            end_date: closeDateStr,
+            reverseInvoices: leavesNoStaff,
+            userId: req.user?.user_id || null,
+            userName: await getAttendanceDeciderName(req.user?.user_id),
         });
 
-        // Same transaction as the close itself — see the header.
+        let pausedFrom = null;
+        if (leavesNoStaff) {
+            await enterPauseInTxn(client, {
+                booking_id,
+                paused_date: closeDateStr,
+                reason: `No staff on the booking after ${closeDateStr} — last staff member logged out`,
+                userId: req.user?.user_id || null,
+                userName: await getActorName(req.user?.user_id),
+            });
+            pausedFrom = closeDateStr;
+            // A replacement already booked for a future date means the booking is
+            // waiting to restart, not open-endedly paused — show it that way. The
+            // replacement's ASSIGNMENT_START flips it ACTIVE and closes the pause.
+            await client.query(
+                `UPDATE bookings SET status = 'SCHEDULED'
+                 WHERE booking_id = $1 AND EXISTS (
+                     SELECT 1 FROM booking_staff_assignments
+                     WHERE booking_id = $1 AND status = 'SCHEDULED' AND shift_slot_id IS NULL)`,
+                [booking_id]
+            );
+        } else if (bookingRow.assigned_staff_id === assignment.staff_profile_id) {
+            // The "current staff" pointer named the person just logged out — move it
+            // to whoever is still on the booking (latest-started first).
+            await client.query(
+                `UPDATE bookings SET assigned_staff_id = (
+                     SELECT staff_profile_id FROM booking_staff_assignments
+                     WHERE booking_id = $1 AND status = 'ACTIVE' AND shift_slot_id IS NULL
+                     ORDER BY service_start_date DESC LIMIT 1)
+                 WHERE booking_id = $1`,
+                [booking_id]
+            );
+        }
+
+        // Same transaction as the close itself — see the header. An empty list is
+        // what the UI sends when both ends were already decided (e.g. by a
+        // backdated swap), so there's nothing to settle.
         let settled = [];
-        if (settlement_days) {
+        if (Array.isArray(settlement_days) && settlement_days.length > 0) {
             settled = await settleAssignmentDays(client, {
                 booking_id,
                 assignment: { ...assignment, service_end_date: closeDateStr },
@@ -4518,19 +5232,6 @@ exports.closeStaffAssignment = async (req, res) => {
                 user: req.user,
             });
         }
-
-        // Only release them if this was their last open commitment — they may
-        // already hold a different booking's assignment.
-        await client.query(
-            `UPDATE staff_profiles sp
-             SET current_status = 'AVAILABLE'
-             WHERE sp.staff_profile_id = $1
-               AND NOT EXISTS (
-                 SELECT 1 FROM booking_staff_assignments
-                 WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
-               )`,
-            [assignment.staff_profile_id]
-        );
 
         await client.query('COMMIT');
 
@@ -4546,6 +5247,7 @@ exports.closeStaffAssignment = async (req, res) => {
                 details: {
                     booking_id, assignment_id, staff_profile_id: assignment.staff_profile_id,
                     out_time: closeDateStr, settled_days: settled,
+                    reversed_after_end: afterEnd, paused_from: pausedFrom,
                 },
             });
         } catch (logErr) {
@@ -4554,7 +5256,7 @@ exports.closeStaffAssignment = async (req, res) => {
 
         res.status(200).json({
             status: 'success',
-            data: { booking_id, assignment_id, service_end_date: closeDateStr, settled },
+            data: { booking_id, assignment_id, service_end_date: closeDateStr, settled, reversed_after_end: afterEnd, paused_from: pausedFrom },
         });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -5061,7 +5763,7 @@ exports.hardDeleteBooking = async (req, res) => {
         await client.query('BEGIN');
 
         const bookingRes = await client.query(
-            `SELECT booking_id, client_id, service_type, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            `SELECT booking_id, booking_code, client_id, service_type, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
             [booking_id]
         );
         if (bookingRes.rows.length === 0) {
@@ -5135,6 +5837,7 @@ exports.hardDeleteBooking = async (req, res) => {
         //    so transactions for this quote can't go until both are gone.
         const quoteIdsRes = await client.query(`SELECT quote_id FROM quotations WHERE booking_id = $1`, [booking_id]);
         const deletedQuoteIds = [];
+        let walletSettlement = { net: 0, action: 'NONE' };
         for (const { quote_id } of quoteIdsRes.rows) {
             deletedQuoteIds.push(quote_id);
             // Clear the sibling SERVICE/PRODUCT quote's back-pointer without touching the sibling itself.
@@ -5150,6 +5853,23 @@ exports.hardDeleteBooking = async (req, res) => {
         //    delete. Now safe for both booking_id and quote_id scoped rows (deposits/
         //    invoices referencing them are gone); payment_tracking references
         //    transactions too, so this must precede step 9.
+        //    The stored wallet balance is NOT derived from these rows — it only moves
+        //    when money moves — so erasing them without settling would leave the wallet
+        //    holding (or missing) money that no ledger entry explains. Settle first:
+        //    unused prepayment is carried over as an explicit WALLET_ADJUSTMENT credit,
+        //    and money this booking drew from the wallet goes back into it.
+        const doomedTxRes = await client.query(
+            `SELECT category::text AS category, transaction_type, payment_method, amount, notes
+             FROM transactions
+             WHERE client_id = $1 AND (booking_id = $2 OR quote_id = ANY($3::uuid[]))`,
+            [booking.client_id, booking_id, deletedQuoteIds]
+        );
+        walletSettlement = await settleWalletForDeletedTransactions(client, {
+            client_id: booking.client_id,
+            rows: doomedTxRes.rows,
+            bookingCode: booking.booking_code,
+        });
+
         await client.query(`UPDATE transactions SET earmarked_booking_id = NULL WHERE earmarked_booking_id = $1`, [booking_id]);
         await client.query(`DELETE FROM transactions WHERE booking_id = $1`, [booking_id]);
         for (const quote_id of deletedQuoteIds) {
@@ -5191,6 +5911,7 @@ exports.hardDeleteBooking = async (req, res) => {
                     service_type: booking.service_type,
                     status: booking.status,
                     deleted_quote_ids: deletedQuoteIds,
+                    wallet_settlement: walletSettlement,
                 },
             });
         } catch (logErr) {

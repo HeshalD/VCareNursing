@@ -9,6 +9,10 @@ import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import { CombinedPaymentBadge, CombinedStatusFilter, filterCombinedInvoices } from './CombinedInvoiceStatus';
+import EditedAmountBadge from '../components/EditedAmountBadge';
+import { PreviewButton } from './InvoicePreviewModal';
+import useInvoicePreview from './useInvoicePreview';
+import { invoicePreview } from './invoicePreviewSources';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -155,6 +159,7 @@ const linkCls = 'text-blue-600 hover:underline';
 export default function AdminInvoicesPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('pending'); // 'pending' | 'all' | 'reg-fee' | 'products' | 'combined'
+  const [openPreview, previewModal] = useInvoicePreview();
 
   // ── Combined (quotation) invoices state ────────────────────────────────────
   const [combinedInvoices, setCombinedInvoices] = useState([]);
@@ -592,6 +597,7 @@ export default function AdminInvoicesPage() {
                                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
                                   Reject
                                 </button>
+                                <PreviewButton onClick={() => openPreview(invoicePreview.daily(inv))} className={iconBtnCls} />
                                 <button
                                   type="button"
                                   disabled={downloadingId === inv.daily_invoice_id}
@@ -725,6 +731,7 @@ export default function AdminInvoicesPage() {
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">
                             {inv.amount != null ? formatMoney(inv.amount) : '—'}
+                            <EditedAmountBadge record={inv} className="ml-1.5" />
                           </td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                             {inv.decided_by_name || '—'}
@@ -732,6 +739,7 @@ export default function AdminInvoicesPage() {
                           </td>
                           <td className="px-4 py-3 text-slate-500 max-w-[160px] truncate">{inv.notes || '—'}</td>
                           <td className="px-4 py-3 text-right">
+                            <PreviewButton onClick={() => openPreview(invoicePreview.daily(inv))} className={iconBtnCls} />
                             <button
                               type="button"
                               disabled={downloadingId === inv.daily_invoice_id}
@@ -893,6 +901,11 @@ export default function AdminInvoicesPage() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1">
+                                <PreviewButton
+                                  disabled={!row.invoice_pdf_url}
+                                  onClick={() => openPreview(invoicePreview.url(row.invoice_pdf_url, { title: 'Registration fee invoice', subtitle: regFeeDisplayName(row) }))}
+                                  className={iconBtnCls}
+                                />
                                 <a
                                   href={row.invoice_pdf_url || undefined}
                                   target="_blank"
@@ -1094,6 +1107,7 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
                           <td className="px-4 py-3 text-right">
+                            <PreviewButton onClick={() => openPreview(invoicePreview.product(inv))} className={iconBtnCls} />
                             <button
                               type="button"
                               disabled={downloadingProductInvoiceId === inv.invoice_id}
@@ -1186,6 +1200,11 @@ export default function AdminInvoicesPage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-0.5">
+                              <PreviewButton
+                                disabled={!inv.invoice_pdf_url}
+                                onClick={() => openPreview(invoicePreview.url(inv.invoice_pdf_url, { title: 'Combined invoice', subtitle: inv.payer_name || '' }))}
+                                className={iconBtnCls}
+                              />
                               <a href={inv.invoice_pdf_url} target="_blank" rel="noreferrer" title="Download invoice PDF" className={iconBtnCls}>
                                 <Download className="h-3.5 w-3.5" />
                               </a>
@@ -1287,6 +1306,7 @@ export default function AdminInvoicesPage() {
           </>
         )}
       </div>
+      {previewModal}
     </AdminLayout>
   );
 }

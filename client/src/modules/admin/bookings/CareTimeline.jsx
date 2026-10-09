@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock, Undo2, Check, Cross } from 'lucide-react';
+import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock, Undo2, Check, Cross, CalendarOff } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
+import { isRepeatDay, describeRepeatDays } from '../../../utils/repeatDays';
 
 const useIsMobile = (query = '(max-width: 639px)') => {
   const [match, setMatch] = useState(
@@ -90,13 +91,16 @@ const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const CareTimeline = ({
   startDate,
-  plannedDays,
+  plannedDays: plannedDaysProp,
   dailyRate,
   shiftRate = 0,         // SHIFT_BASED: client charge per shift — daily figures derive from this, never dailyRate
   totalPaid,
   staffAssignments = [],
   serviceModel,          // 'LIVE_IN' | 'VISITING' | 'SHIFT_BASED'
-  shiftSlots = [],       // [{ shift_slot_id, shift_number, label, start_time }]
+  shiftSlots = [],       // [{ shift_slot_id, shift_number, label, start_time, repeat_days }]
+  repeatDays = null,     // LIVE_IN bookings.repeat_days — weekdays served (0 = Sun … 6 = Sat); null = every day
+  plannedShifts = null,  // SHIFT_BASED: total shifts the plan covers. Needed when shifts repeat on different
+                         // weekdays — shifts/day then varies, so plannedDays can't be derived by dividing.
   scheduledActions = [], // [{ action_type, effective_date, payload, reason }]
   terminationRequests = [], // [{ requested_end_date, urgency, reason }]
   shiftPatternScheduled = null, // { effective_from_date, shift_count } | null
@@ -261,7 +265,7 @@ const CareTimeline = ({
 
   // Resolves a raw (uncompressed) calendar day-number to whether it falls inside a
   // locked gap, and — if not — its display day-number with prior gaps squeezed out.
-  const resolvePauseDay = (rawDayNum) => {
+  const resolvePauseOnly = (rawDayNum) => {
     let locked = false;
     let compress = 0;
     for (const w of pauseWindows) {
@@ -278,12 +282,12 @@ const CareTimeline = ({
     return { locked, displayDayNum: rawDayNum - compress };
   };
 
-  // Inverse of resolvePauseDay's compression — plannedDays/paidDays are day-COUNTS
+  // Inverse of resolvePauseOnly's compression — plannedDays/paidDays are day-COUNTS
   // (effective/compressed scale, e.g. "9 days of paid service"), but the calendar grid
   // needs a RAW calendar day-number to know how many real dates to render. Without
   // this, a paused booking's grid gets cut short by exactly the length of its pause
   // gap(s) — the last few paid days after resuming never appear.
-  const effectiveCountToRawDay = (target) => {
+  const pauseCountToRawDay = (target) => {
     let raw = target;
     for (const w of pauseWindows) {
       if (w.openEnded) break; // nothing meaningfully "beyond" an open-ended pause
@@ -294,6 +298,94 @@ const CareTimeline = ({
     }
     return raw;
   };
+
+  // ── Weekly repeat days ────────────────────────────────────────────────────
+  // A booking (LIVE_IN, via repeatDays) or individual shifts (SHIFT_BASED, via each
+  // slot's repeat_days) can run only on chosen weekdays. A weekday nothing runs on is
+  // a "day off": like a pause gap it gets no Day number, isn't counted as served, paid
+  // or overdue, and the numbering carries on from the next service day — mirroring the
+  // backend, which never bills, pays or seeds anything for those days.
+  // With no repeat days set, every helper below falls straight through to the
+  // pause-only versions, so ordinary bookings behave exactly as before.
+  const hasRepeatDays = useMemo(() => {
+    const restricts = (days) => Array.isArray(days) && days.length > 0 && days.length < 7;
+    if (serviceModel === 'LIVE_IN') return restricts(repeatDays);
+    if (isShiftBased) return shiftSlots.some((s) => restricts(s.repeat_days));
+    return false;
+  }, [serviceModel, isShiftBased, repeatDays, shiftSlots]);
+
+  const slotRunsOn = (slot, date) =>
+    isRepeatDay(Array.isArray(slot?.repeat_days) ? slot.repeat_days.map(Number) : null, date);
+
+  // Lazily-extended day index: how many off days precede a raw day, and which raw day
+  // is the Nth service day. Pause gaps are excluded here (they're already compressed by
+  // resolvePauseOnly), and an open-ended pause is treated like pauseCountToRawDay does.
+  const serviceCalendar = useMemo(() => {
+    const liveInDays = Array.isArray(repeatDays) ? repeatDays.map(Number) : null;
+    const makeupCount = new Map(); // dateISO -> makeup shifts landing there
+    reschedules.forEach((r) => {
+      const key = r.new_date?.slice(0, 10);
+      if (key) makeupCount.set(key, (makeupCount.get(key) || 0) + 1);
+    });
+    const dateOf = (raw) => { const d = shiftDays(start, raw - 1); d.setHours(12, 0, 0, 0); return d; };
+    const inClosedGap = (raw) => pauseWindows.some((w) =>
+      !w.openEnded && raw >= w.pausedDayNum + 1 && raw <= w.endDayNum - 1);
+    // Shifts actually running on a raw day: natural slots repeating that weekday, or —
+    // on a day none repeat — any makeup shifts moved onto it (which make it a service day).
+    const shiftsOn = (raw) => {
+      if (!start) return 0;
+      const date = dateOf(raw);
+      const natural = shiftSlots.filter((s) => slotRunsOn(s, date)).length;
+      return natural > 0 ? natural : (makeupCount.get(toLocalISO(date)) || 0);
+    };
+    const isOff = (raw) => {
+      if (!hasRepeatDays || !start) return false;
+      if (serviceModel === 'LIVE_IN') return !isRepeatDay(liveInDays, dateOf(raw));
+      if (isShiftBased) return shiftSlots.length > 0 && shiftsOn(raw) === 0;
+      return false;
+    };
+
+    const MAX_RAW = 20000;
+    const offPrefix = [0];
+    const serviceRaws = [];
+    let scanned = 0;
+    const extendTo = (raw) => {
+      while (scanned < Math.min(raw, MAX_RAW)) {
+        scanned++;
+        const gap = inClosedGap(scanned);
+        const off = !gap && isOff(scanned);
+        offPrefix[scanned] = offPrefix[scanned - 1] + (off ? 1 : 0);
+        if (!gap && !off) serviceRaws.push(scanned);
+      }
+    };
+    return {
+      isOff,
+      shiftsOn,
+      offCount: (raw) => {
+        if (raw <= 0) return 0;
+        extendTo(raw);
+        return offPrefix[Math.min(raw, scanned)];
+      },
+      nthRaw: (n) => {
+        if (n <= 0) return n;
+        while (serviceRaws.length < n && scanned < MAX_RAW) extendTo(scanned + 64);
+        return serviceRaws[n - 1] ?? (scanned + (n - serviceRaws.length));
+      },
+    };
+  }, [hasRepeatDays, start, serviceModel, isShiftBased, repeatDays, shiftSlots, reschedules, pauseWindows]);
+
+  // Pause- and day-off-aware versions of the two helpers above — used everywhere below.
+  const resolvePauseDay = (rawDayNum) => {
+    const base = resolvePauseOnly(rawDayNum);
+    if (!hasRepeatDays) return { ...base, off: false };
+    return {
+      locked: base.locked,
+      off: !base.locked && serviceCalendar.isOff(rawDayNum),
+      displayDayNum: base.displayDayNum - serviceCalendar.offCount(rawDayNum),
+    };
+  };
+  const effectiveCountToRawDay = (target) =>
+    hasRepeatDays ? serviceCalendar.nthRaw(target) : pauseCountToRawDay(target);
 
   // ── Day counts ────────────────────────────────────────────────────────────
 
@@ -321,7 +413,15 @@ const CareTimeline = ({
     }
     return resolvePauseDay(rawDayNum).displayDayNum;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, effectiveToday, pauseWindows]);
+  }, [start, effectiveToday, pauseWindows, hasRepeatDays, serviceCalendar]);
+
+  // Today is a weekday the booking doesn't run on — no cell should claim "Today".
+  const todayIsOff = useMemo(() => {
+    if (!hasRepeatDays || !start) return false;
+    const rawToday = Math.floor((effectiveToday - start) / 86400000) + 1;
+    return rawToday >= 1 && resolvePauseDay(rawToday).off;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasRepeatDays, start, effectiveToday, serviceCalendar]);
 
   // SHIFT_BASED bookings are billed per shift, so a "day" of payment covers one
   // full pattern of shifts (shift_rate × shifts/day) — dailyRate plays no part.
@@ -330,9 +430,37 @@ const CareTimeline = ({
   ), [isShiftBased, shiftRate, shiftSlots, dailyRate]);
 
   const paidDays = useMemo(() => {
+    // Shifts repeating on different weekdays: a day is worth however many shifts
+    // actually run on it, so walk the service days spending the paid shifts.
+    if (isShiftBased && hasRepeatDays) {
+      if (!Number(shiftRate) || !shiftSlots.length) return 0;
+      let budget = Math.floor(Number(totalPaid || 0) / Number(shiftRate));
+      let n = 0;
+      while (n < 10000) {
+        const c = serviceCalendar.shiftsOn(serviceCalendar.nthRaw(n + 1));
+        if (c <= 0 || c > budget) break;
+        budget -= c;
+        n++;
+      }
+      return n;
+    }
     if (!effectiveDayRate || effectiveDayRate <= 0) return 0;
     return Math.floor(Number(totalPaid || 0) / effectiveDayRate);
-  }, [totalPaid, effectiveDayRate]);
+  }, [totalPaid, effectiveDayRate, isShiftBased, hasRepeatDays, shiftRate, shiftSlots, serviceCalendar]);
+
+  // Plan length in service days. The parent's figure divides paid shifts by a fixed
+  // shifts/day, which no longer holds once shifts repeat on different weekdays — then
+  // count the service days needed to use up plannedShifts (ceil: a partial last day counts).
+  const plannedDays = useMemo(() => {
+    if (!(isShiftBased && hasRepeatDays) || plannedShifts == null) return plannedDaysProp;
+    let remaining = Number(plannedShifts) || 0;
+    let n = 0;
+    while (remaining > 0 && n < 10000) {
+      remaining -= Math.max(1, serviceCalendar.shiftsOn(serviceCalendar.nthRaw(n + 1)));
+      n++;
+    }
+    return n;
+  }, [isShiftBased, hasRepeatDays, plannedShifts, plannedDaysProp, serviceCalendar]);
 
   // Latest day-number implied by any known future event (a SCHEDULED staff start,
   // an admin-scheduled action, a pending termination request, or a queued shift
@@ -412,7 +540,7 @@ const CareTimeline = ({
     const end = Math.max(schedEnd, rawPlannedDays);
     return end > 0 ? end : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, scheduledEndDate, plannedDays, isShiftBased, pauseWindows]);
+  }, [start, scheduledEndDate, plannedDays, isShiftBased, pauseWindows, serviceCalendar]);
 
   // Future days past the booking's natural end carry no shift occurrences of
   // their own — the grid only reaches them because something explicit (e.g. a
@@ -428,6 +556,16 @@ const CareTimeline = ({
   // so the grid doesn't paint the full pattern there.
   const partialLastDay = useMemo(() => {
     if (!isShiftBased || !shiftRate || !shiftSlots.length || !plannedDays) return null;
+    if (hasRepeatDays) {
+      // Same idea, but a day's full pattern is only the shifts that run that weekday.
+      const totalShifts = plannedShifts != null ? Number(plannedShifts) : Math.floor(Number(totalPaid || 0) / shiftRate);
+      let before = 0;
+      for (let k = 1; k < plannedDays; k++) before += serviceCalendar.shiftsOn(serviceCalendar.nthRaw(k));
+      const lastRaw = serviceCalendar.nthRaw(plannedDays);
+      const remainder = totalShifts - before;
+      if (remainder <= 0 || remainder >= serviceCalendar.shiftsOn(lastRaw)) return null;
+      return { day: lastRaw, count: remainder };
+    }
     const paidShifts = Math.floor(Number(totalPaid || 0) / shiftRate);
     const remainder = paidShifts - (plannedDays - 1) * shiftSlots.length;
     if (remainder <= 0 || remainder >= shiftSlots.length) return null;
@@ -435,7 +573,7 @@ const CareTimeline = ({
     // itself is an effective (pause-compressed) count, same conversion as elsewhere.
     return { day: effectiveCountToRawDay(plannedDays), count: remainder };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isShiftBased, shiftRate, shiftSlots, plannedDays, totalPaid, pauseWindows]);
+  }, [isShiftBased, shiftRate, shiftSlots, plannedDays, totalPaid, pauseWindows, hasRepeatDays, plannedShifts, serviceCalendar]);
 
   // ── Reschedules — moved-away origins + makeup occurrences ────────────────
   const movedOrigins = useMemo(() => {
@@ -627,7 +765,7 @@ const CareTimeline = ({
     }
 
     return map;
-  }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate, pauseWindows]);
+  }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate, pauseWindows, serviceCalendar]);
 
   const getDayMeta = (dateISO, delivered) => {
     if (!delivered) return { salary: null, invoice: null };
@@ -678,6 +816,7 @@ const CareTimeline = ({
     dayDate.setHours(12, 0, 0, 0);
 
     if (!isShiftBased) {
+      if (serviceModel === 'LIVE_IN' && hasRepeatDays && serviceCalendar.isOff(dayNum)) return [];
       // LIVE_IN can have more than one assignment covering the same day — a swap
       // leaves the outgoing staff's assignment open (no service_end_date) until
       // their out-time is logged, so both they and the incoming staff are "in
@@ -747,6 +886,8 @@ const CareTimeline = ({
       if (dayDate >= aStart && (!aEnd || dayDate <= aEnd) && !isReassignmentHandoffDay) {
         const id   = a.staff_profile_id || a.staffId || a.id;
         const slot = shiftSlots.find((s) => s.shift_slot_id === a.shift_slot_id);
+        // Matches bookingController.getShiftSchedule: no occurrence on the shift's off weekdays.
+        if (slot && !slotRunsOn(slot, dayDate)) continue;
         const shiftLabel = slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift');
 
         // This shift's origin occurrence was moved to a different date —
@@ -862,10 +1003,21 @@ const CareTimeline = ({
       const dateISO   = toLocalISO(cellDate);
       const rawDayNum = Math.round((cellDate - start) / 86400000) + 1;
       const inBooking = rawDayNum >= 1 && rawDayNum <= displayDays;
-      const { locked: isPaused, displayDayNum: dayNum } = resolvePauseDay(rawDayNum);
+      const { locked: isPaused, off: isOffDay, displayDayNum: dayNum } = resolvePauseDay(rawDayNum);
 
       if (inBooking && isPaused) {
         cells.push({ type: 'paused', calDay: d, dateISO });
+        continue;
+      }
+
+      // A weekday the booking (or every one of its shifts) doesn't repeat on. Only
+      // within the booking's natural span — past it, the usual "outside" rule applies.
+      if (inBooking && isOffDay && !isBeyondNaturalFuture(rawDayNum)) {
+        cells.push({
+          type: 'off', calDay: d, dateISO,
+          isToday: todayIsOff && dateISO === toLocalISO(effectiveToday),
+          cellEvents: eventsByDate.get(dateISO) || [],
+        });
         continue;
       }
 
@@ -883,7 +1035,7 @@ const CareTimeline = ({
       if (!inBooking || (isBeyondNaturalFuture(rawDayNum) && nurses.length === 0 && cellEvents.length === 0)) {
         cells.push({ type: 'outside', calDay: d, dateISO });
       } else {
-        const isToday   = dayNum === servedDays;
+        const isToday   = dayNum === servedDays && !todayIsOff;
         const delivered = dayNum <= servedDays;
         const isOverrun = hasPlan && dayNum > plannedDays;
         const status    = dayNum <= paidDays ? 'paid' : dayNum <= servedDays ? 'overdue' : 'upcoming';
@@ -909,7 +1061,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges, serviceCalendar, todayIsOff, effectiveToday]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -986,6 +1138,21 @@ const CareTimeline = ({
               : 'Each block is one day of care. Colour shows the assigned nurse; the bar below shows payment.'}
             <span className="sm:hidden"> Tap a day for details.</span>
           </p>
+          {hasRepeatDays && (
+            <p className="text-xs text-[#6F6A60] mt-1.5 flex items-start gap-1.5">
+              <CalendarOff style={{ width: 12, height: 12, marginTop: 2, flexShrink: 0, color: '#9A9488' }} />
+              <span>
+                {isShiftBased
+                  ? shiftSlots
+                      .slice()
+                      .sort((a, b) => (a.shift_number || 0) - (b.shift_number || 0))
+                      .map((sl) => `${sl.label || `Shift ${sl.shift_number}`}: ${describeRepeatDays(Array.isArray(sl.repeat_days) ? sl.repeat_days.map(Number) : null)}`)
+                      .join(' · ')
+                  : `Repeats ${describeRepeatDays(repeatDays.map(Number))}`}
+                {' '}— other days are days off and aren't counted, billed or paid.
+              </span>
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -1170,6 +1337,43 @@ const CareTimeline = ({
                   >
                     <span style={{ fontSize: 10, color: '#A8A199', fontWeight: 500 }}>{cell.calDay}</span>
                     <Lock style={{ width: 10, height: 10, color: '#A8A199' }} />
+                  </div>
+                );
+              }
+
+              if (cell.type === 'off') {
+                const offTitle = isShiftBased
+                  ? "Day off — none of this booking's shifts repeat on this weekday"
+                  : "Day off — this booking doesn't repeat on this weekday";
+                return (
+                  <div
+                    key={`off-${cell.calDay}`}
+                    title={[offTitle, ...cell.cellEvents.map((e) => e.label)].join('\n')}
+                    style={{
+                      aspectRatio: '1/1', borderRadius: 12,
+                      border: cell.isToday ? '2px solid #2A2722' : '1px dashed #DCD6CB',
+                      background: '#F6F4EF',
+                      display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '4px 5px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 10, color: '#A8A199', fontWeight: cell.isToday ? 700 : 500 }}>
+                        {cell.isToday ? 'Today' : cell.calDay}
+                      </span>
+                      <CalendarOff style={{ width: 10, height: 10, color: '#B4AEA3' }} />
+                    </div>
+                    {!isMobile && (
+                      <span style={{ fontSize: 9, fontWeight: 600, color: '#B4AEA3', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                        Day off
+                      </span>
+                    )}
+                    {cell.cellEvents.length > 0 && (
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        {cell.cellEvents.map((e) => (
+                          <span key={`${e.type}-${e.label}`} style={{ width: 6, height: 6, borderRadius: 999, background: e.color }} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               }
@@ -2072,6 +2276,11 @@ const CareTimeline = ({
         <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
           <span className="w-4 h-1.5 rounded-full inline-block" style={{ background: '#D5CFC4' }} />Upcoming
         </div>
+        {hasRepeatDays && (
+          <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+            <span className="w-3 h-3 rounded-sm inline-block" style={{ background: '#F6F4EF', border: '1px dashed #DCD6CB' }} />Day off
+          </div>
+        )}
         {reschedules.length > 0 && (
           <>
             <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">

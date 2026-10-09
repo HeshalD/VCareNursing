@@ -5,6 +5,7 @@ const { createPaymentReceipt } = require('../services/receiptService');
 const { sendSms } = require('../utils/sms');
 const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials } = require('../services/clientBootstrapService');
 const { ensureCombinedInvoice, ensureRegFeeInvoiceRecord } = require('./quoteController');
+const { bookingChargeSql } = require('../services/clientFinancials');
 const { applyInvoicePayment, lineItemDuplicateSql } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
@@ -48,6 +49,63 @@ async function getCustomChargeStatus(executor, quoteId) {
       remaining: Math.max(Math.round((amount - paid) * 100) / 100, 0),
     };
   });
+}
+
+// Drops custom charges the admin removed while allocating a payment (e.g. the client
+// collected the patient themselves, so the transport fee no longer applies). The rows are
+// deleted outright, the same way quoteController.updateQuoteLineItems drops edited-out
+// items, so they fall out of the quote total and every invoice built from it.
+//  - Its own LINE_ITEM invoice is deleted with it. That invoice is only a document — the
+//    money for a custom charge is recorded in quote_line_item_payments, not against the
+//    invoice — so nothing is lost (any invoice_payments rows cascade; their transactions
+//    are kept so the money stays on the books).
+//  - Anything already paid towards it stays paid on the quotation: the payment_tracking
+//    row and the wallet credit are untouched, only the per-charge split
+//    (quote_line_item_payments, ON DELETE CASCADE) goes. With the charge gone that money
+//    simply counts towards the rest of the quotation.
+// Irreversible — the form asks the admin to confirm first. Must run inside the caller's
+// transaction. Returns the removed rows, or throws an error carrying statusCode 400.
+async function removeQuoteCustomCharges(client, quoteId, lineItemIds) {
+  const ids = [...new Set((lineItemIds || []).filter((id) => typeof id === 'string' && uuidRegex.test(id)))];
+  if (ids.length === 0) return [];
+
+  const customStatus = await getCustomChargeStatus(client, quoteId);
+  const removed = [];
+  for (const id of ids) {
+    const item = customStatus.find((c) => c.line_item_id === id);
+    if (!item) throw Object.assign(new Error('Only custom charges on this quotation can be removed'), { statusCode: 400 });
+    removed.push(item);
+  }
+
+  const deletedInvoices = await client.query(
+    `DELETE FROM invoices WHERE line_item_id = ANY($1::uuid[]) RETURNING invoice_id, invoice_code, line_item_id, amount`,
+    [ids]
+  );
+  for (const item of removed) {
+    item.deleted_invoices = deletedInvoices.rows
+      .filter((inv) => inv.line_item_id === item.line_item_id)
+      .map((inv) => ({ invoice_id: inv.invoice_id, invoice_code: inv.invoice_code, amount: parseFloat(inv.amount) || 0 }));
+  }
+  await client.query(`UPDATE deposits SET source_line_item_id = NULL WHERE source_line_item_id = ANY($1::uuid[])`, [ids]);
+
+  await client.query(`DELETE FROM quote_line_items WHERE quote_id = $1 AND line_item_id = ANY($2::uuid[])`, [quoteId, ids]);
+
+  // Re-derive the totals (and the legacy transport_fee column, matched the same way
+  // createModularQuotation sets it) from what is left.
+  await client.query(`
+    UPDATE quotations q
+    SET sub_total = t.total, total_amount = t.total, transport_fee = t.transport, updated_at = CURRENT_TIMESTAMP
+    FROM (
+      SELECT COALESCE(SUM(amount), 0) AS total,
+             COALESCE((SELECT amount FROM quote_line_items
+                       WHERE quote_id = $1 AND LOWER(description) LIKE '%transport%'
+                       ORDER BY sort_order LIMIT 1), 0) AS transport
+      FROM quote_line_items WHERE quote_id = $1
+    ) t
+    WHERE q.quote_id = $1
+  `, [quoteId]);
+
+  return removed;
 }
 
 function extractActorRole(role) {
@@ -607,6 +665,15 @@ const recordAllocatedPayment = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'overflow must be valid JSON' });
     }
 
+    let removedLineItemIds;
+    try {
+      removedLineItemIds = typeof req.body.removed_line_item_ids === 'string'
+        ? JSON.parse(req.body.removed_line_item_ids)
+        : (req.body.removed_line_item_ids || []);
+    } catch {
+      return res.status(400).json({ status: 'error', message: 'removed_line_item_ids must be valid JSON' });
+    }
+
     await client.query('BEGIN');
 
     if (!quote_id || !uuidRegex.test(quote_id)) {
@@ -688,6 +755,15 @@ const recordAllocatedPayment = async (req, res) => {
     }
 
     const quotation = quoteCheck.rows[0];
+
+    // Custom charges the admin removed from the allocation form — taken off the quotation
+    // before anything below works out what is still due.
+    let removedLineItems = [];
+    if (Array.isArray(removedLineItemIds) && removedLineItemIds.length > 0) {
+      removedLineItems = await removeQuoteCustomCharges(client, quote_id, removedLineItemIds);
+      const totalRes = await client.query(`SELECT total_amount FROM quotations WHERE quote_id = $1`, [quote_id]);
+      quotation.total_amount = totalRes.rows[0].total_amount;
+    }
 
     // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
     const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
@@ -969,7 +1045,7 @@ const recordAllocatedPayment = async (req, res) => {
 
         const invoicedRes = await client.query(
           `SELECT COALESCE(SUM(amount), 0) as total_invoiced FROM transactions
-           WHERE booking_id = $1 AND transaction_type = 'DEBIT' AND status = 'COMPLETED'`,
+           WHERE booking_id = $1 AND ${bookingChargeSql()} AND status = 'COMPLETED'`,
           [targetBooking.booking_id]
         );
         const overdueAmount = Math.max(
@@ -1044,7 +1120,16 @@ const recordAllocatedPayment = async (req, res) => {
       }
     })();
 
-    ensureCombinedInvoice(quote_id).catch((e) =>
+    // A combined invoice issued before charges were removed still lists them — rebuild it
+    // (same number) so the removed charges disappear from it too.
+    ;(async () => {
+      let regenerate = false;
+      if (removedLineItems.length > 0) {
+        const inv = await db.query(`SELECT invoice_code FROM quotations WHERE quote_id = $1`, [quote_id]);
+        regenerate = !!inv.rows[0]?.invoice_code;
+      }
+      await ensureCombinedInvoice(quote_id, { regenerate });
+    })().catch((e) =>
       console.error('[Invoice] Generation error (recordAllocatedPayment):', e.message)
     );
 
@@ -1074,6 +1159,13 @@ const recordAllocatedPayment = async (req, res) => {
         payment_id: payment?.payment_id || null,
         product_payments: productPaymentResults,
         overflow: overflowResult,
+        removed_line_items: removedLineItems.map((c) => ({
+          line_item_id: c.line_item_id,
+          description: c.description,
+          amount: c.amount,
+          paid: c.paid,
+          deleted_invoices: c.deleted_invoices,
+        })),
         has_slip: !!paymentSlipUrl,
       },
     });
@@ -2040,7 +2132,7 @@ const walletPayoffBooking = async (req, res) => {
     const invoiceResult = await pgClient.query(
       `SELECT COALESCE(SUM(amount), 0) as total_invoiced
        FROM transactions
-       WHERE booking_id = $1 AND transaction_type = 'DEBIT' AND status = 'COMPLETED'`,
+       WHERE booking_id = $1 AND ${bookingChargeSql()} AND status = 'COMPLETED'`,
       [booking_id]
     );
 
@@ -2228,7 +2320,7 @@ const getClientOverdueBookings = async (req, res) => {
        LEFT JOIN (
          SELECT booking_id, SUM(amount) as total_invoiced
          FROM transactions
-         WHERE transaction_type = 'DEBIT' AND status = 'COMPLETED'
+         WHERE ${bookingChargeSql()} AND status = 'COMPLETED'
          GROUP BY booking_id
        ) inv ON inv.booking_id = b.booking_id
        WHERE b.client_id = $1 AND b.status IN ('ACTIVE', 'OVERDUE')`,

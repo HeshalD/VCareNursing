@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { transactionEditColumns } = require('../utils/editedAmount');
 const { generateStatementPDF } = require('../utils/statement');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { sendClientBookingStatement } = require('../utils/metaWhatsapp');
@@ -56,7 +57,8 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
             notes,
             transaction_type,
             amount,
-            booking_id
+            booking_id,
+            ${transactionEditColumns('')}
         FROM transactions
         WHERE client_id = $1 AND created_at >= $2 AND created_at <= $3
         ORDER BY created_at ASC
@@ -93,7 +95,12 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
             booking_id: t.booking_id || null,
             amount_invoiced: invoiceAmount || 0,
             amount_paid: paymentAmount || 0,
-            balance: runningBalance
+            balance: runningBalance,
+            original_amount: t.original_amount,
+            edited_at: t.edited_at,
+            edited_by_name: t.edited_by_name,
+            edit_reason: t.edit_reason,
+            edit_count: t.edit_count
         };
     });
 
@@ -261,7 +268,8 @@ exports.getClientTransactions = async (req, res) => {
                 verified_by,
                 status,
                 notes,
-                created_at
+                created_at,
+                ${transactionEditColumns('')}
              FROM transactions
              WHERE client_id = $1
              ORDER BY created_at DESC, transaction_id DESC`,

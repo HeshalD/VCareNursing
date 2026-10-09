@@ -485,6 +485,15 @@ const executeAssignmentStart = async (client, payload) => {
              WHERE booking_id = $1`,
             [booking_id, staff_profile_id, ot_rate ?? null, assignmentStartDate]
         );
+        // A paused booking resumed onto a future-dated staff member sits as
+        // SCHEDULED (or PAUSED) with its pause still open until today — this start
+        // is the moment it actually resumes, so close that pause here.
+        await client.query(
+            `UPDATE booking_pauses
+             SET resumed_date = COALESCE(resumed_date, $2::date), resumed_at = COALESCE(resumed_at, NOW())
+             WHERE booking_id = $1 AND resumed_at IS NULL`,
+            [booking_id, assignmentStartDate]
+        );
     }
 
     await client.query(
@@ -586,6 +595,110 @@ const executeShiftReassignment = async (client, payload) => {
     return { result: { booking_id, shift_slot_id, new_staff_id }, notify };
 };
 
+// Ends one assignment inside the caller's transaction: end date + COMPLETED, the
+// out-time on that day, and the staff member freed if this was their last open
+// commitment. Shared by closeStaffAssignment and a backdated swapStaff that already
+// knows when the outgoing staff left.
+//
+// The out-time goes on the end day's attendance row. If that day's pay was already
+// decided (a backdated swap re-decides it in the same request, or the cron paid it
+// before anyone logged the departure), only the clock time is recorded and the pay
+// is left exactly as it stands. Pay is never edited through this.
+const endAssignmentAt = async (client, { booking_id, assignment, out_time }) => {
+    const closeDateStr = toDateStr(out_time);
+
+    await client.query(
+        `UPDATE booking_staff_assignments
+         SET service_end_date = $1, status = 'COMPLETED'
+         WHERE assignment_id = $2`,
+        [closeDateStr, assignment.assignment_id]
+    );
+
+    const decidedRes = await client.query(
+        `SELECT attendance_id FROM staff_daily_attendance
+         WHERE assignment_id = $1 AND service_date = $2 AND shift_slot_id IS NULL
+           AND reschedule_id IS NULL AND salary_status <> 'PENDING'`,
+        [assignment.assignment_id, closeDateStr]
+    );
+    if (decidedRes.rows.length > 0) {
+        await client.query(
+            `UPDATE staff_daily_attendance SET out_time = $1, updated_at = NOW() WHERE attendance_id = $2`,
+            [out_time, decidedRes.rows[0].attendance_id]
+        );
+    } else {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id: assignment.assignment_id,
+            service_date: closeDateStr, out_time,
+        });
+    }
+
+    // Only release them if this was their last open commitment — they may
+    // already hold a different booking's assignment.
+    await client.query(
+        `UPDATE staff_profiles sp
+         SET current_status = 'AVAILABLE'
+         WHERE sp.staff_profile_id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM booking_staff_assignments
+             WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
+           )`,
+        [assignment.staff_profile_id]
+    );
+
+    return closeDateStr;
+};
+
+// ─── STAFF RELIEVE (outgoing staff goes on leave) ──────────────────────────────
+// A staff swap can send the outgoing staff member on leave starting on a FUTURE date.
+// Their assignment must stay open until then, so the swap queues this action for the
+// leave's start date. It closes their assignment with the out-time the admin entered
+// up front — exactly what closeStaffAssignment does by hand — and they then show as
+// ON_LEAVE. If someone already closed the assignment by hand in the meantime there is
+// nothing left to do.
+
+const executeStaffRelieve = async (client, payload) => {
+    const {
+        booking_id, assignment_id, staff_profile_id, out_time,
+        leave_id = null, leave_start, leave_end,
+        actor = SYSTEM_ACTOR,
+    } = payload;
+
+    const aRes = await client.query(
+        `SELECT assignment_id, staff_profile_id, status, service_end_date
+         FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2 FOR UPDATE`,
+        [assignment_id, booking_id]
+    );
+    const assignment = aRes.rows[0];
+    if (!assignment || assignment.status !== 'ACTIVE' || assignment.service_end_date) {
+        return { result: { booking_id, skipped: 'already closed' }, notify: null };
+    }
+
+    const closedOn = await endAssignmentAt(client, { booking_id, assignment, out_time });
+    await client.query(
+        `UPDATE staff_profiles SET current_status = 'ON_LEAVE'
+         WHERE staff_profile_id = $1 AND current_status = 'AVAILABLE'
+           AND $2::date <= CURRENT_DATE AND $3::date >= CURRENT_DATE`,
+        [staff_profile_id, leave_start, leave_end]
+    );
+
+    const notify = async () => {
+        try {
+            await logActivity({
+                actorUserId: actor.user_id,
+                actorName: actor.name,
+                actorRole: actor.role,
+                actionType: 'STAFF_RELIEVED_FOR_LEAVE',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { booking_id, staff_profile_id, assignment_id, closed_on: closedOn, leave_id, leave_start, leave_end },
+            });
+        } catch (e) {
+            console.error('[executeStaffRelieve] notify error:', e.message);
+        }
+    };
+    return { result: { booking_id, staff_profile_id, closed_on: closedOn }, notify };
+};
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
 const dispatchScheduledAction = async (client, action, actor = SYSTEM_ACTOR) => {
@@ -612,6 +725,8 @@ const dispatchScheduledAction = async (client, action, actor = SYSTEM_ACTOR) => 
             });
         case 'STAFF_SWAP':
             return executeStaffSwap(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
+        case 'STAFF_RELIEVE':
+            return executeStaffRelieve(client, { booking_id: action.booking_id, ...payload });
         case 'ASSIGNMENT_START':
             return executeAssignmentStart(client, { booking_id: action.booking_id, ...payload });
         case 'SHIFT_REASSIGNMENT':
@@ -637,6 +752,8 @@ module.exports = {
     executeTermination,
     executeCompletion,
     executeStaffSwap,
+    executeStaffRelieve,
+    endAssignmentAt,
     executeAssignmentStart,
     executeShiftReassignment,
     dispatchScheduledAction,

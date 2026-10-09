@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText, FileStack, FileCheck2 } from 'lucide-react';
+import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText, FileStack, FileCheck2, Trash2, Undo2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
+import Popup from '../../../components/common/Popup';
 
 const paymentMethodOptions = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
@@ -84,6 +85,14 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [bankAccounts, setBankAccounts] = useState([]);
   const [amountReceived, setAmountReceived] = useState('');
   const [allocations, setAllocations] = useState({ reg_fee: '', service: '', products: '' });
+  // Custom charges the admin has taken off the quotation in Step 2 (e.g. the client
+  // collected the patient, so no transport fee). Deleted from the quotation when the
+  // payment is submitted (see paymentTrackingController.removeQuoteCustomCharges), so
+  // they are never charged or invoiced.
+  const [removedItemIds, setRemovedItemIds] = useState([]);
+  // Removing charges deletes them (and their invoices) for good, so the admin confirms
+  // before the payment that carries the removal is submitted.
+  const [confirmRemovalOpen, setConfirmRemovalOpen] = useState(false);
 
   // Overflow — where to route whatever's left once the three buckets above
   // are maxed out (a client overpaying the quotation is allowed; it just
@@ -203,7 +212,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   // registration fee are already excluded from `lineItems` itself, see
   // loadLineItemsForInvoicing).
   const handleCreateAllInvoices = async () => {
-    const uninvoicedIds = lineItems.filter((li) => !li.invoice).map((li) => li.line_item_id);
+    const uninvoicedIds = visibleLineItems.filter((li) => !li.invoice).map((li) => li.line_item_id);
     if (uninvoicedIds.length === 0) return;
     setCreatingAllInvoices(true);
     setError('');
@@ -403,16 +412,39 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   }, [quoteId]);
 
   const regFeeRemaining = regFeeInfo?.remaining || 0;
-  const buckets = useMemo(() => {
+  const removedItemsFor = (removedIds) => customItems.filter((c) => removedIds.includes(c.line_item_id));
+  // Money already paid towards a removed charge stays paid on the quotation (see
+  // paymentTrackingController.removeQuoteCustomCharges), so it now counts towards the
+  // service charges instead — that much less is due on them.
+  const serviceDueFor = (removedIds) => {
+    const paidOnRemoved = removedItemsFor(removedIds).reduce((s, c) => s + (parseFloat(c.paid) || 0), 0);
+    return Math.max(Math.round((serviceOnlyRemaining - paidOnRemoved) * 100) / 100, 0);
+  };
+  const buildBuckets = (removedIds) => {
     const list = [];
     if (regFeeInfo && regFeeRemaining > 0) list.push({ key: 'reg_fee', due: regFeeRemaining, label: BUCKET_META.reg_fee.label });
     for (const c of customItems) {
-      if (c.remaining > 0.01) list.push({ key: `${CUSTOM_PREFIX}${c.line_item_id}`, due: c.remaining, label: c.description });
+      if (c.remaining > 0.01 && !removedIds.includes(c.line_item_id)) {
+        list.push({ key: `${CUSTOM_PREFIX}${c.line_item_id}`, due: c.remaining, label: c.description });
+      }
     }
-    if (serviceOnlyRemaining > 0) list.push({ key: 'service', due: serviceOnlyRemaining, label: BUCKET_META.service.label });
+    const serviceDue = serviceDueFor(removedIds);
+    if (serviceDue > 0) list.push({ key: 'service', due: serviceDue, label: BUCKET_META.service.label });
     if (productsRemaining > 0) list.push({ key: 'products', due: productsRemaining, label: BUCKET_META.products.label });
     return list;
-  }, [regFeeInfo, regFeeRemaining, customItems, serviceOnlyRemaining, productsRemaining]);
+  };
+  const buckets = useMemo(
+    () => buildBuckets(removedItemIds),
+    [regFeeInfo, regFeeRemaining, customItems, serviceOnlyRemaining, productsRemaining, removedItemIds]
+  );
+  const serviceDue = serviceDueFor(removedItemIds);
+  const removedItems = removedItemsFor(removedItemIds);
+  const removedTotal = removedItems.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+  const removedPaidTotal = removedItems.reduce((s, c) => s + (parseFloat(c.paid) || 0), 0);
+  const invoiceFor = (lineItemId) => lineItems.find((li) => li.line_item_id === lineItemId)?.invoice || null;
+
+  // A removed charge isn't offered for invoicing either.
+  const visibleLineItems = lineItems.filter((li) => !removedItemIds.includes(li.line_item_id));
 
   // Reg fee must be fully covered by this payment's own allocation before
   // the other buckets can take anything — mirrors the backend's own check.
@@ -448,11 +480,11 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   // then products, up to the entered amount. Admin can still hand-edit any
   // row afterward as long as the totals reconcile. Anything beyond what the
   // three buckets can take is left unallocated for the overflow step below.
-  const prefillAllocations = (amount) => {
+  const prefillAllocations = (amount, bucketList = buckets) => {
     let remaining = amount;
     const next = { reg_fee: '', service: '', products: '' };
     for (const c of customItems) next[`${CUSTOM_PREFIX}${c.line_item_id}`] = '';
-    for (const bucket of buckets) {
+    for (const bucket of bucketList) {
       if (remaining <= 0.005) break;
       const take = Math.min(remaining, bucket.due);
       next[bucket.key] = take > 0 ? String(take) : '';
@@ -481,6 +513,19 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
 
   const handleAllocationChange = (key, value) => {
     setAllocations((prev) => ({ ...prev, [key]: value }));
+  };
+
+  // Removing (or restoring) a charge changes what's due, so the payment is spread again
+  // over what's left — e.g. 24,000 paid against 24,000 service + 1,000 transport moves
+  // the 1,000 off transport and back onto the service charges once transport is removed.
+  const toggleRemoveCustomItem = (lineItemId) => {
+    const next = removedItemIds.includes(lineItemId)
+      ? removedItemIds.filter((id) => id !== lineItemId)
+      : [...removedItemIds, lineItemId];
+    setRemovedItemIds(next);
+    setOverflowChoice('');
+    setOverflowBookingId('');
+    prefillAllocations(parsedAmount, buildBuckets(next));
   };
 
   const validateStep2 = () => {
@@ -530,6 +575,15 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
     if (err) { setError(err); return; }
     setError('');
 
+    if (removedItemIds.length > 0) {
+      setConfirmRemovalOpen(true);
+      return;
+    }
+    await submitPayment();
+  };
+
+  const submitPayment = async () => {
+    setConfirmRemovalOpen(false);
     setSubmitting(true);
     try {
       // The linked PRODUCT quote must exist as `invoices` rows before this
@@ -560,8 +614,10 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
             Object.entries(allocations)
               .filter(([k, v]) => k.startsWith(CUSTOM_PREFIX) && (parseFloat(v) || 0) > 0)
               .map(([k, v]) => [k.slice(CUSTOM_PREFIX.length), parseFloat(v)])
+              .filter(([id]) => !removedItemIds.includes(id))
           ),
         },
+        removed_line_item_ids: removedItemIds.length > 0 ? removedItemIds : undefined,
         overflow: unallocated > 0.01
           ? (overflowChoice === 'BOOKING_PAYOFF'
             ? { type: 'BOOKING_PAYOFF', booking_id: overflowBookingId }
@@ -744,26 +800,41 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                             onChange={(v) => handleAllocationChange('reg_fee', v)}
                           />
                         )}
-                        {customItems.filter((c) => c.remaining > 0.01).map((c) => {
+                        {/* Every custom charge is listed — settled ones too — so any of them can be removed. */}
+                        {customItems.map((c) => {
                           const key = `${CUSTOM_PREFIX}${c.line_item_id}`;
+                          if (removedItemIds.includes(c.line_item_id)) {
+                            return (
+                              <RemovedRow
+                                key={key}
+                                label={c.description}
+                                amount={c.amount}
+                                paid={c.paid}
+                                invoiceCode={invoiceFor(c.line_item_id)?.invoice_code}
+                                onUndo={() => toggleRemoveCustomItem(c.line_item_id)}
+                              />
+                            );
+                          }
+                          const settled = c.remaining <= 0.01;
                           return (
                             <BucketRow
                               key={key}
                               meta={customBucketMeta(c)}
                               icon={Receipt}
                               due={c.remaining}
-                              settled={false}
+                              settled={settled}
                               value={allocations[key] ?? ''}
-                              disabled={!regFeeGateOpen}
+                              disabled={!settled && !regFeeGateOpen}
                               onChange={(v) => handleAllocationChange(key, v)}
+                              onRemove={() => toggleRemoveCustomItem(c.line_item_id)}
                             />
                           );
                         })}
-                        {serviceOnlyRemaining > 0 && (
+                        {serviceDue > 0 && (
                           <BucketRow
                             meta={BUCKET_META.service}
                             icon={Receipt}
-                            due={serviceOnlyRemaining}
+                            due={serviceDue}
                             settled={false}
                             value={allocations.service}
                             disabled={!regFeeGateOpen}
@@ -789,13 +860,19 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       <Lock className="h-3 w-3" /> Registration fee must be fully allocated before other charges unlock.
                     </p>
                   )}
+                  {removedItems.length > 0 && (
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      {money(removedTotal)} in removed charges will be deleted from the quotation, along with any invoices raised for them, when this payment is submitted.
+                      {removedPaidTotal > 0.005 && ` The ${money(removedPaidTotal)} already paid towards them stays on the quotation and now counts towards the service charges.`}
+                    </p>
+                  )}
                 </div>
 
-                {lineItems.length > 0 && (
+                {visibleLineItems.length > 0 && (
                   <div>
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Line Item Invoices (optional)</p>
-                      {lineItems.some((li) => !li.invoice) && (
+                      {visibleLineItems.some((li) => !li.invoice) && (
                         <button
                           type="button"
                           onClick={handleCreateAllInvoices}
@@ -811,7 +888,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       Optional. Raise an individual invoice for an item below only if you want one — otherwise it is simply included in the combined invoice. An item you invoice here is not invoiced a second time. Care-rate/shift-rate charges are invoiced through the booking, and rentals get their own invoice when the product quote is accepted, so neither appears here.
                     </p>
                     <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
-                      {lineItems.map((li) => (
+                      {visibleLineItems.map((li) => (
                         <div key={li.line_item_id} className="flex items-center justify-between gap-3 px-3 py-2">
                           <div className="min-w-0">
                             <p className="truncate text-xs font-medium text-slate-700">{li.description}</p>
@@ -1073,6 +1150,38 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
           </form>
         )}
       </div>
+
+      <Popup
+        isOpen={confirmRemovalOpen}
+        onClose={() => setConfirmRemovalOpen(false)}
+        variant="error"
+        title={`Delete ${removedItems.length === 1 ? 'this charge' : `${removedItems.length} charges`} permanently?`}
+        message={(
+          <div className="space-y-2 text-left">
+            <p>Recording this payment will permanently delete the following from the quotation. This can&apos;t be undone.</p>
+            <ul className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+              {removedItems.map((c) => {
+                const inv = invoiceFor(c.line_item_id);
+                return (
+                  <li key={c.line_item_id}>
+                    <span className="font-medium text-slate-800">{c.description}</span> — {money(c.amount)}
+                    {c.paid > 0.005 && <span className="text-slate-500"> ({money(c.paid)} paid)</span>}
+                    {inv && <span className="text-red-600"> · invoice {inv.invoice_code} deleted</span>}
+                  </li>
+                );
+              })}
+            </ul>
+            {removedPaidTotal > 0.005 && (
+              <p className="text-xs">
+                The {money(removedPaidTotal)} already paid towards {removedItems.length === 1 ? 'it' : 'them'} is not refunded — it stays on the quotation and counts towards the remaining service charges.
+                {removedPaidTotal > serviceOnlyRemaining + 0.01 && ` ${money(removedPaidTotal - serviceOnlyRemaining)} of it is more than the service charges still due, so the quotation will show as overpaid.`}
+              </p>
+            )}
+          </div>
+        )}
+        primaryAction={{ label: 'Delete & Record Payment', onClick: submitPayment }}
+        secondaryAction={{ label: 'Cancel', onClick: () => setConfirmRemovalOpen(false) }}
+      />
     </div>
   );
 };
@@ -1090,13 +1199,23 @@ const StepPip = ({ index, label, active, done }) => (
   </div>
 );
 
-const BucketRow = ({ meta, icon: Icon, due, settled, value, disabled, onChange }) => (
+const BucketRow = ({ meta, icon: Icon, due, settled, value, disabled, onChange, onRemove }) => (
   <tr className={disabled ? 'bg-slate-50/60' : ''}>
     <td className="px-3 py-2.5">
       <div className={`flex items-center gap-1.5 text-xs font-medium ${meta.accent}`}>
         <Icon className="h-3.5 w-3.5 shrink-0" />
         {meta.label}
         {disabled && <Lock className="h-3 w-3 text-slate-400" />}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove this charge from the quotation"
+            className="ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       <p className="text-[10px] text-slate-400 mt-0.5">{meta.hint}</p>
     </td>
@@ -1120,6 +1239,33 @@ const BucketRow = ({ meta, icon: Icon, due, settled, value, disabled, onChange }
           className="w-28 rounded-md border border-slate-300 px-2 py-1 text-right text-sm outline-none focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
         />
       )}
+    </td>
+  </tr>
+);
+
+const RemovedRow = ({ label, amount, paid, invoiceCode, onUndo }) => (
+  <tr className="bg-slate-50/60">
+    <td className="px-3 py-2.5">
+      <p className="text-xs font-medium text-slate-400 line-through">{label}</p>
+      <p className="text-[10px] text-slate-400 mt-0.5">Removed — won&apos;t be charged or invoiced</p>
+      {(paid > 0.005 || invoiceCode) && (
+        <p className="text-[10px] text-red-500 mt-0.5">
+          {[
+            paid > 0.005 && `${money(paid)} already paid`,
+            invoiceCode && `invoice ${invoiceCode} will be deleted`,
+          ].filter(Boolean).join(' · ')}
+        </p>
+      )}
+    </td>
+    <td className="px-3 py-2.5 text-right text-xs text-slate-400 line-through align-top">{money(amount)}</td>
+    <td className="px-3 py-2.5 text-right align-top">
+      <button
+        type="button"
+        onClick={onUndo}
+        className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+      >
+        <Undo2 className="h-3 w-3" /> Undo
+      </button>
     </td>
   </tr>
 );

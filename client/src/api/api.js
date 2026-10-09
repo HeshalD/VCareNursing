@@ -345,10 +345,11 @@ class ApiClient {
       body: JSON.stringify({ status, salesperson_id: salespersonId }),
     });
   }
-  async updateRegFeeAmount(clientId, { amount, reason }) {
+  // invoice_id (optional) names the invoice being edited; the server only allows the current one.
+  async updateRegFeeAmount(clientId, { amount, reason, invoice_id }) {
     return this.request(`/client/${clientId}/reg-fee-amount`, {
       method: 'PATCH',
-      body: JSON.stringify({ amount, reason }),
+      body: JSON.stringify({ amount, reason, invoice_id }),
     });
   }
 
@@ -773,7 +774,7 @@ class ApiClient {
       const formData = new FormData();
       Object.entries(paymentData).forEach(([key, value]) => {
         if (value === null || value === undefined || value === '') return;
-        formData.append(key, ['allocations', 'overflow'].includes(key) ? JSON.stringify(value) : value);
+        formData.append(key, ['allocations', 'overflow', 'removed_line_item_ids'].includes(key) ? JSON.stringify(value) : value);
       });
       formData.append('payment_slip', paymentSlipFile);
 
@@ -1583,6 +1584,14 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/resume`, { method: 'POST' });
   }
 
+  // LIVE_IN: resume a paused booking straight onto a staff member (past / today / future start).
+  async resumeBookingWithStaff(bookingId, data) {
+    return this.request(`/bookings/${bookingId}/resume-with-staff`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getBookingPauses(bookingId) {
     return this.request(`/bookings/${bookingId}/pauses`);
   }
@@ -1595,10 +1604,11 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/corrections`);
   }
 
-  async correctInvoiceAmount(bookingId, serviceDate, { new_amount, reason }) {
+  // daily_invoice_id targets one staff member's share on a day invoiced per assignment.
+  async correctInvoiceAmount(bookingId, serviceDate, { new_amount, reason, daily_invoice_id }) {
     return this.request(`/bookings/${bookingId}/invoices/${serviceDate}/amount`, {
       method: 'PATCH',
-      body: JSON.stringify({ new_amount, reason }),
+      body: JSON.stringify({ new_amount, reason, daily_invoice_id }),
     });
   }
 
@@ -2035,6 +2045,12 @@ class ApiClient {
     if (dateRange.end_date) params.set('end_date', dateRange.end_date);
     const qs = params.toString();
     return this.request(`/statement/${clientId}${qs ? `?${qs}` : ''}`);
+  }
+
+  // The entries behind a headline figure on the client page.
+  // metric: 'payments-made' | 'total-invoiced' | 'overdue' | 'wallet'
+  async getClientFinancialBreakdown(clientId, metric) {
+    return this.request(`/client/${clientId}/financial-breakdown/${metric}`);
   }
 
   async getClientTransactions(clientId) {
@@ -2815,6 +2831,26 @@ class ApiClient {
 
   async getProductInvoice(invoiceId) {
     return this.request(`/product-invoices/${invoiceId}`);
+  }
+
+  // Restate a product/rental or extra-charge invoice's amount (marks it edited).
+  async editInvoiceAmount(invoiceId, { new_amount, reason }) {
+    return this.request(`/product-invoices/${invoiceId}/amount`, {
+      method: 'PATCH',
+      body: JSON.stringify({ new_amount, reason }),
+    });
+  }
+
+  // A service quotation's line items + what's been paid towards each (combined-invoice editor).
+  async getQuoteInvoiceLines(quoteId) {
+    return this.request(`/quotes/${quoteId}/invoice-lines`);
+  }
+
+  async editQuoteInvoiceAmounts(quoteId, { items, reason }) {
+    return this.request(`/quotes/${quoteId}/invoice-amounts`, {
+      method: 'PATCH',
+      body: JSON.stringify({ items, reason }),
+    });
   }
 
   async getProductInvoicePdf(invoiceId) {

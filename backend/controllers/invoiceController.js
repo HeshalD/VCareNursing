@@ -13,6 +13,7 @@ const { createPaymentReceipt } = require('../services/receiptService');
 const { ensureCombinedInvoice } = require('./quoteController');
 const { sendClientInvoice } = require('../utils/metaWhatsapp');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { editInvoiceAmount: editInvoiceAmountCore, editQuoteLineAmounts, getQuoteLinesForEdit } = require('../services/invoiceAmountEdits');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
@@ -262,7 +263,8 @@ const lineItemDuplicateSql = (a) => `(
     OR EXISTS (
       SELECT 1 FROM invoices dg
       WHERE dg.quote_id = ${a}.quote_id AND dg.category = 'PRODUCT'
-        AND dg.amount >= (
+        -- As first invoiced: an edited-down product invoice still covered every item.
+        AND COALESCE(dg.original_amount, dg.amount) >= (
           SELECT COALESCE(SUM(dn.amount), 0) FROM quote_line_items dn
           WHERE dn.quote_id = ${a}.quote_id AND dn.rental_billing_type IS NULL AND dn.is_registration_fee = false
         ) - 0.01
@@ -513,6 +515,17 @@ async function ensureInvoicePdf(invoiceId) {
   }
   if (line_items.length === 0) {
     line_items = [{ description: `${invoice.category} Invoice`, quantity: 1, unit_price: invoice.amount, amount: invoice.amount }];
+  } else if (!invoice.line_item_id && invoice.edited_at && invoice.original_amount != null) {
+    // An edited product/rental invoice keeps listing the quotation's items, so
+    // show the edit itself as a line (services/invoiceAmountEdits.js). A
+    // line-item invoice needs none — its line item carries the new amount.
+    const adjustment = Math.round((parseFloat(invoice.amount) - parseFloat(invoice.original_amount)) * 100) / 100;
+    if (Math.abs(adjustment) >= 0.01) {
+      line_items = [...line_items, {
+        description: invoice.edit_reason ? `Amount adjustment — ${invoice.edit_reason}` : 'Amount adjustment',
+        quantity: 1, unit_price: adjustment, amount: adjustment,
+      }];
+    }
   }
 
   const data = {
@@ -855,3 +868,113 @@ exports.recordInvoicePayment = async (req, res) => {
 };
 
 exports.applyInvoicePayment = applyInvoicePayment;
+
+// ─── Invoice amount edits ─────────────────────────────────────────────────────
+// See services/invoiceAmountEdits.js for what each edit touches and why.
+
+async function getActorName(userId) {
+  if (!userId) return 'Admin';
+  const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.full_name || 'Admin';
+}
+
+// PDFs are rebuilt after commit: a rendering/S3 failure must not undo the edit,
+// and a stale PDF is simply rebuilt on its next download (pdf_url was cleared).
+async function regenerateEditedPdfs(result) {
+  for (const invoiceId of result.affected_invoice_ids || []) {
+    await ensureInvoicePdf(invoiceId).catch((err) => console.error('Edited invoice PDF regeneration failed:', err.message));
+  }
+  if (result.combined_quote_id) {
+    await ensureCombinedInvoice(result.combined_quote_id, { regenerate: true })
+      .catch((err) => console.error('Combined invoice PDF regeneration failed:', err.message));
+  }
+}
+
+function sendEditError(res, error, fallback) {
+  if (error.statusCode) return res.status(error.statusCode).json({ status: 'error', message: error.message });
+  console.error(fallback, error);
+  return res.status(500).json({ status: 'error', message: fallback });
+}
+
+// PATCH /api/product-invoices/:invoice_id/amount — body { new_amount, reason }.
+// A product/rental invoice's own amount, or (for an extra-charge invoice) its
+// quotation line item's.
+exports.editInvoiceAmount = async (req, res) => {
+  const { invoice_id } = req.params;
+  const { new_amount, reason } = req.body;
+  const pgClient = await db.pool.connect();
+  try {
+    await pgClient.query('BEGIN');
+    const actorName = await getActorName(req.user?.user_id);
+    const result = await editInvoiceAmountCore(pgClient, {
+      invoice_id, new_amount, reason, actorUserId: req.user?.user_id || null, actorName,
+    });
+    await pgClient.query('COMMIT');
+
+    if (result.changed) {
+      await regenerateEditedPdfs(result);
+      await safeLog({
+        actorUserId: req.user?.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'INVOICE_AMOUNT_EDITED',
+        entityType: result.kind === 'PRODUCT' ? 'INVOICE' : 'QUOTATION',
+        entityId: result.kind === 'PRODUCT' ? invoice_id : result.quote_id,
+        details: { ...result, reason: String(reason).trim() },
+      });
+    }
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    sendEditError(res, error, 'Failed to edit the invoice amount');
+  } finally {
+    pgClient.release();
+  }
+};
+
+// GET /api/quotes/:quote_id/invoice-lines — a service quotation's lines with
+// what has been paid towards each, for the combined-invoice editor.
+exports.getQuoteInvoiceLines = async (req, res) => {
+  try {
+    const data = await getQuoteLinesForEdit(db, req.params.quote_id);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    sendEditError(res, error, 'Failed to load the quotation lines');
+  }
+};
+
+// PATCH /api/quotes/:quote_id/invoice-amounts — body { items: [{ line_item_id,
+// new_amount }], reason }. Restates line items on a service quotation; the
+// combined invoice (and any extra-charge invoice) is regenerated from them.
+exports.editQuoteInvoiceAmounts = async (req, res) => {
+  const { quote_id } = req.params;
+  const { items, reason } = req.body;
+  const pgClient = await db.pool.connect();
+  try {
+    await pgClient.query('BEGIN');
+    const actorName = await getActorName(req.user?.user_id);
+    const result = await editQuoteLineAmounts(pgClient, {
+      quote_id, items, reason, actorUserId: req.user?.user_id || null, actorName,
+    });
+    await pgClient.query('COMMIT');
+
+    if (result.changed) {
+      await regenerateEditedPdfs(result);
+      await safeLog({
+        actorUserId: req.user?.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'INVOICE_AMOUNT_EDITED',
+        entityType: 'QUOTATION',
+        entityId: quote_id,
+        details: { ...result, reason: String(reason).trim() },
+      });
+    }
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    sendEditError(res, error, 'Failed to edit the quotation amounts');
+  } finally {
+    pgClient.release();
+  }
+};

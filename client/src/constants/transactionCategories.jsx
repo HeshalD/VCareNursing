@@ -41,6 +41,7 @@ export const CATEGORY_CONFIG = {
   VENDOR_PAYMENT:     { label: 'Vendor Payment',     dot: 'bg-red-400',     text: 'text-red-700' },
   CLIENT_REFUND:        { label: 'Client Refund',        dot: 'bg-orange-500', text: 'text-orange-700' },
   SETTLEMENT_FORFEITURE: { label: 'Waived Prepayment',   dot: 'bg-green-600',  text: 'text-green-800' },
+  WALLET_ADJUSTMENT:    { label: 'Wallet Adjustment',    dot: 'bg-slate-400',  text: 'text-slate-600' },
 };
 
 export const categoryBadge = (category, customLabel) => {

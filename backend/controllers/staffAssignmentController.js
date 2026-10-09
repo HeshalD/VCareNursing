@@ -5,6 +5,7 @@ const { sendBookingConfirmed, sendStaffNewAssignment } = require('../utils/metaW
 const { logActivity } = require('../utils/activityLogger');
 const { getBusinessDate, toDateStr, isFutureDate, enqueueScheduledAction, hasOpenAction } = require('../services/scheduledActions');
 const { creditSalespersonForBooking } = require('../services/salespersonService');
+const { normalizeRepeatDays } = require('../services/repeatDays');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -339,6 +340,19 @@ exports.assignStaffToBooking = async (req, res) => {
       });
     }
 
+    // Weekly repeat days (LIVE_IN only — a VISITING booking is a single visit). Only
+    // touched when the caller sends the field, so other callers leave the booking's
+    // existing setting alone. null = every day.
+    const shouldSetRepeatDays = booking.service_model === 'LIVE_IN' && req.body.repeat_days !== undefined;
+    let repeatDays = null;
+    if (shouldSetRepeatDays) {
+      try {
+        repeatDays = normalizeRepeatDays(req.body.repeat_days);
+      } catch (e) {
+        return res.status(400).json({ status: 'error', message: e.message });
+      }
+    }
+
     const amount_paid = parseFloat(booking.amount_paid);
     const walletBalance = parseFloat(booking.wallet_balance || 0);
 
@@ -590,6 +604,10 @@ exports.assignStaffToBooking = async (req, res) => {
           ? [booking_id, bookingOtRate, staff_profile_id, service_start_date]
           : [booking_id, bookingOtRate, staff_profile_id]
       );
+    }
+
+    if (shouldSetRepeatDays) {
+      await db.query(`UPDATE bookings SET repeat_days = $2 WHERE booking_id = $1`, [booking_id, repeatDays]);
     }
 
     // Optional: credit the salesperson who brought this booking in. Idempotent and

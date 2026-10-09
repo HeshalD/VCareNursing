@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, Users, CalendarDays, CircleDollarSign, Clock3,
   AlertCircle, StickyNote, Plus, Trash2, Pencil, Check, X, Briefcase, Search,
-  CheckCircle,
+  CheckCircle, Repeat,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
@@ -11,6 +11,8 @@ import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import RequestPipelineStepper from '../components/RequestPipelineStepper';
+import RepeatDaysPicker from '../components/RepeatDaysPicker';
+import { describeRepeatDays } from '../../../utils/repeatDays';
 
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', {
@@ -74,6 +76,7 @@ const BookingStaffAssignmentPage = () => {
     salesperson_id:      '',
     is_hospitalized:     false,
     hospital_name:       '',
+    repeat_days:         null, // LIVE_IN only — null = 7 days a week
   });
 
   const [salespersons, setSalespersons] = useState([]);
@@ -97,6 +100,7 @@ const BookingStaffAssignmentPage = () => {
       label: `Shift ${i + 1}`,
       staff_profile_id: '',
       daily_rate: '',
+      repeat_days: null, // null = every day
     }));
     return cascadeStartTimes(base, 0);
   };
@@ -114,6 +118,7 @@ const BookingStaffAssignmentPage = () => {
         label: s.label || `Shift ${s.shift_number || i + 1}`,
         staff_profile_id: s.staff_profile_id || '',
         daily_rate: '',
+        repeat_days: Array.isArray(s.repeat_days) && s.repeat_days.length ? s.repeat_days.map(Number) : null,
       }));
     }
     const queue = location.state?.selectedStaffQueue;
@@ -146,6 +151,10 @@ const BookingStaffAssignmentPage = () => {
 
   const isShiftBased = formData?.booking?.service_model === 'SHIFT_BASED';
   const isLiveIn     = formData?.booking?.service_model === 'LIVE_IN';
+
+  // Which shift's repeat days the calendar is currently editing (SHIFT_BASED).
+  const [repeatShiftIdx, setRepeatShiftIdx] = useState(0);
+  const activeRepeatIdx = Math.min(repeatShiftIdx, shiftSlots.length - 1);
 
   // How many shifts the client's payments cover — amount paid ÷ per-shift rate.
   // (bookings.amount_paid mirrors verified quote payments on conversion; fall back
@@ -257,6 +266,7 @@ const BookingStaffAssignmentPage = () => {
           start_time:     `${s.start_time}:00`,
           duration_hours: parseFloat(s.duration_hours),
           label:          s.label || null,
+          repeat_days:    s.repeat_days,
         })),
         effective_from_date: isoStartDate,
       });
@@ -305,6 +315,11 @@ const BookingStaffAssignmentPage = () => {
     const isoStartDate = formatDateForBackend(assignment.service_start_date);
     if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
     if (!assignment.daily_rate) { setError('Daily Rate (Staff) is required'); return; }
+    if (isLiveIn && Array.isArray(assignment.repeat_days)
+      && !assignment.repeat_days.includes(new Date(`${isoStartDate}T00:00:00`).getDay())) {
+      setError('The Service Start Date falls on a day off — pick a start date on one of the selected repeat days.');
+      return;
+    }
     try {
       setSubmitting(true); setError(''); setSuccess('');
       await apiClient.assignStaffToBooking(bookingId, {
@@ -316,6 +331,7 @@ const BookingStaffAssignmentPage = () => {
         ot_rate:            assignment.ot_rate     ? parseFloat(assignment.ot_rate)     : null,
         notes:              assignment.notes       || null,
         salesperson_id:     assignment.salesperson_id || null,
+        ...(isLiveIn ? { repeat_days: assignment.repeat_days } : {}),
       });
       try {
         await apiClient.updateBookingHospitalization(bookingId, {
@@ -581,6 +597,25 @@ const BookingStaffAssignmentPage = () => {
                   </FormField>
                 </div>
 
+                {/* Weekly repeat days (LIVE_IN) */}
+                {isLiveIn && (
+                  <div className="rounded-md border border-gray-200 p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Repeat className="h-4 w-4 text-gray-400" />
+                      <h4 className="text-sm font-semibold text-gray-800">Service Days</h4>
+                    </div>
+                    <p className="mb-3 text-xs text-gray-400">
+                      Does this booking run 7 days a week, or only on certain days that repeat every week?
+                      Staff are paid and the client is invoiced only for service days.
+                    </p>
+                    <RepeatDaysPicker
+                      value={assignment.repeat_days}
+                      onChange={(days) => setAssignment((prev) => ({ ...prev, repeat_days: days }))}
+                      startDate={formatDateForBackend(assignment.service_start_date)}
+                    />
+                  </div>
+                )}
+
                 {/* Hospitalization status */}
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
@@ -721,6 +756,70 @@ const BookingStaffAssignmentPage = () => {
                       <p className="text-xs text-gray-400">
                         Rate defaults to the quote daily rate split evenly across shifts if left blank.
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Weekly repeat days, per shift (SHIFT_BASED) */}
+                {isShiftBased && (
+                  <div className="rounded-md border border-gray-200 overflow-hidden">
+                    <div className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-4 py-2.5">
+                      <Repeat className="h-3.5 w-3.5 text-gray-400" />
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Repeat Days per Shift</p>
+                    </div>
+
+                    {/* One tab per shift, each showing that shift's current setting */}
+                    <div className="flex flex-wrap gap-1 border-b border-gray-100 px-3 pt-2">
+                      {shiftSlots.map((slot, idx) => {
+                        const isActive = idx === activeRepeatIdx;
+                        return (
+                          <button
+                            key={slot.shift_number}
+                            type="button"
+                            onClick={() => setRepeatShiftIdx(idx)}
+                            className={`-mb-px rounded-t-md border px-3 py-1.5 text-left transition-colors ${
+                              isActive
+                                ? 'border-gray-200 border-b-white bg-white'
+                                : 'border-transparent text-gray-500 hover:bg-gray-50'
+                            }`}
+                          >
+                            <span className={`block text-sm font-medium ${isActive ? 'text-gray-900' : ''}`}>
+                              {slot.label || `Shift ${slot.shift_number}`}
+                              <span className="ml-1.5 text-xs font-normal text-gray-400">{slot.start_time}</span>
+                            </span>
+                            <span className="block text-[11px] text-gray-400">{describeRepeatDays(slot.repeat_days)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="p-4">
+                      <p className="mb-3 text-xs text-gray-400">
+                        Does <span className="font-medium text-gray-600">{shiftSlots[activeRepeatIdx]?.label || `Shift ${activeRepeatIdx + 1}`}</span> run
+                        7 days a week, or only on certain days that repeat every week? Shift occurrences — and the client
+                        charge and staff pay that come with them — only exist on the selected days.
+                      </p>
+                      <RepeatDaysPicker
+                        key={activeRepeatIdx}
+                        value={shiftSlots[activeRepeatIdx]?.repeat_days ?? null}
+                        onChange={(days) => updateShiftSlot(activeRepeatIdx, 'repeat_days', days)}
+                        startDate={formatDateForBackend(assignment.service_start_date)}
+                        others={shiftSlots
+                          .filter((_, i) => i !== activeRepeatIdx)
+                          .map((s) => ({ label: s.label || `Shift ${s.shift_number}`, days: s.repeat_days }))}
+                      />
+                      {shiftSlots.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const days = shiftSlots[activeRepeatIdx]?.repeat_days ?? null;
+                            setShiftSlots((prev) => prev.map((s) => ({ ...s, repeat_days: Array.isArray(days) ? [...days] : null })));
+                          }}
+                          className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-700"
+                        >
+                          Apply these days to all shifts
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -913,6 +1012,7 @@ const BookingStaffAssignmentPage = () => {
                           <div key={s.shift_number} className="border-b border-gray-100 pb-3 last:border-b-0 last:pb-0">
                             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{s.label || `Shift ${s.shift_number}`}</p>
                             <p className="mt-0.5 text-sm font-medium text-gray-900">{staffMember?.staff_name ? <StaffLink id={staffMember.staff_profile_id}>{staffMember.staff_name}</StaffLink> : '—'}</p>
+                            <p className="mt-0.5 text-xs text-gray-400">{describeRepeatDays(s.repeat_days)}</p>
                           </div>
                         );
                       })}
@@ -926,6 +1026,7 @@ const BookingStaffAssignmentPage = () => {
                     <DetailRow label="Role"     value={selectedStaff.specialization || selectedStaff.designation} />
                     <DetailRow label="Status"   value={selectedStaff.current_status || 'AVAILABLE'} />
                     <DetailRow label="Earnings" value={money(selectedStaff.current_earnings || 0)} />
+                    {isLiveIn && <DetailRow label="Service Days" value={describeRepeatDays(assignment.repeat_days)} />}
                   </div>
                 ) : (
                   <p className="text-sm text-gray-400">No staff selected yet.</p>

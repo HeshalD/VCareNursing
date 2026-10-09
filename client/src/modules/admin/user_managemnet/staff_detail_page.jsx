@@ -41,6 +41,7 @@ import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import BankSelect from '../../../components/common/BankSelect';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -673,7 +674,7 @@ const StaffDetailPage = () => {
                     <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{transaction.category || '-'}</span></td>
                     <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${transaction.transaction_type === 'DEBIT' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{transaction.transaction_type || '-'}</span></td>
                     <td className="px-4 py-3 text-slate-600">{transaction.reference_number || transaction.payment_method || '-'}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatMoney(transaction.amount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatMoney(transaction.amount)}<EditedAmountBadge record={transaction} className="ml-1.5" /></td>
                   </tr>
                 ))}
               </tbody>

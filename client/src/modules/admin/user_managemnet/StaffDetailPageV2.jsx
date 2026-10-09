@@ -57,6 +57,7 @@ import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as 
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import BankSelect from '../../../components/common/BankSelect';
 import CitySelect from '../../../components/common/CitySelect';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -1721,7 +1722,7 @@ const StaffDetailPageV2 = () => {
                     <div><span className="inline-block text-xs font-semibold text-slate-600 bg-slate-100 rounded px-2 py-0.5">{tx.category || '-'}</span></div>
                     <div><span className={`inline-block text-xs font-semibold rounded px-2 py-0.5 ${isDebit ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{tx.transaction_type || '-'}</span></div>
                     <div className="font-mono text-xs text-slate-500">{tx.reference_number || tx.payment_method || '-'}</div>
-                    <div className={`text-right text-sm font-bold ${isDebit ? 'text-red-600' : 'text-emerald-600'}`}>{formatMoney(tx.amount)}</div>
+                    <div className={`text-right text-sm font-bold ${isDebit ? 'text-red-600' : 'text-emerald-600'}`}>{formatMoney(tx.amount)}<EditedAmountBadge record={tx} className="ml-1.5" /></div>
                   </TableRow>
                 );
               })}

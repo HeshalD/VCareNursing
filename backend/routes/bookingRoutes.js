@@ -97,6 +97,15 @@ router.post(
     bookingController.resumeBooking
 );
 
+// LIVE_IN: resume a paused booking straight onto a staff member — past, today or
+// a future start date (future = SCHEDULED to start). See resumeWithStaff.
+router.post(
+    '/:booking_id/resume-with-staff',
+    protect,
+    requirePermission('BOOKING_RESUME'),
+    bookingController.resumeWithStaff
+);
+
 router.get(
     '/:booking_id/pauses',
     protect,
@@ -181,7 +190,9 @@ router.patch('/:booking_id/extend', protect, requirePermission('BOOKING_EXTEND')
 router.post('/:booking_id/mark-overdue', protect, requirePermission('BOOKING_MARK_OVERDUE'), bookingController.markShiftBookingOverdue);
 router.post('/:booking_id/resolve-overdue', protect, requirePermission('BOOKING_RESOLVE_OVERDUE'), bookingController.resolveShiftBookingOverdue);
 
-router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), coordinatorLock, bookingController.swapStaff);
+// Deliberately NOT coordinator-locked: any holder of BOOKING_SWAP_STAFF may swap on
+// any booking, since cover often has to be arranged when the coordinator isn't around.
+router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getSwapHistory);
 // Closes the outgoing side of a swap once they've actually left — the only thing
 // that ever ends an assignment left open by swapStaff. See its header comment.

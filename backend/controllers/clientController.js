@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
@@ -12,6 +13,8 @@ const { uploadBufferToS3 } = require('../config/s3Config');
 const { toE164, isValidPhone, toE164ListWithNames } = require('../utils/phone');
 const { resolveCity } = require('../utils/cityHelper');
 const { userHasPermission } = require('../middleware/authMiddleware');
+const { getClientFinancialTotals, getClientOverdueBreakdown, bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
+const { getClientFinancialBreakdown } = require('../services/clientFinancialBreakdown');
 
 async function getActorName(userId) {
   const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -33,124 +36,6 @@ async function getClientUserAccount(clientId) {
   );
 
   return result.rows[0] || null;
-}
-
-// Single source of truth for a client's Payments Made / Total Invoiced / Overdue.
-//  - Payments Made = real money the client handed over (cash, transfer, cheque, ...). Wallet
-//    draws (payment_method WALLET) only move already-received money around, and refunds /
-//    forfeitures are not payments, so none of those count.
-//  - Total Invoiced = every ledger debit that is a charge (refund pay-outs are not charges)
-//    + every registration-fee (overdue_invoices) invoice ever raised, paid or not.
-//  - Overdue = what is invoiced but not yet settled, worked out booking by booking (so a
-//    settled or refunded booking can't hide another one's debt) + unresolved
-//    overdue_invoices rows. Never negative.
-const NON_PAYMENT_CREDIT_CATEGORIES = ['WALLET_REFUND', 'SETTLEMENT_FORFEITURE', 'STAFF_SALARY'];
-const NON_CHARGE_DEBIT_CATEGORIES = ['WALLET_DEBIT', 'CLIENT_REFUND', 'DEPOSIT_REFUND'];
-
-async function getClientFinancialTotals(clientId) {
-  const [txResult, oiResult, overduePayments] = await Promise.all([
-    db.query(
-      `SELECT
-         COALESCE(SUM(amount) FILTER (
-           WHERE transaction_type = 'CREDIT'
-             AND payment_method IS DISTINCT FROM 'WALLET'
-             AND category::text <> ALL($2::text[])
-         ), 0) as total_paid,
-         COALESCE(SUM(amount) FILTER (
-           WHERE transaction_type = 'DEBIT'
-             AND category::text <> ALL($3::text[])
-         ), 0) as total_invoiced
-       FROM transactions
-       WHERE client_id = $1`,
-      [clientId, NON_PAYMENT_CREDIT_CATEGORIES, NON_CHARGE_DEBIT_CATEGORIES]
-    ),
-    db.query(
-      `SELECT COALESCE(SUM(amount), 0) as all_time_invoiced,
-              COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE'), 0) as open_overdue,
-              COUNT(*) FILTER (WHERE status = 'OVERDUE')::int as overdue_count
-       FROM overdue_invoices
-       WHERE client_id = $1`,
-      [clientId]
-    ),
-    queryBookingOverdueRows(clientId)
-  ]);
-
-  const totalPaid = parseFloat(txResult.rows[0]?.total_paid || 0);
-  const totalInvoiced = parseFloat(txResult.rows[0]?.total_invoiced || 0) + parseFloat(oiResult.rows[0]?.all_time_invoiced || 0);
-  const balanceDue = overduePayments.reduce((sum, row) => sum + row.balance_due, 0)
-    + parseFloat(oiResult.rows[0]?.open_overdue || 0);
-  return {
-    totalPaid,
-    totalInvoiced,
-    balanceDue: Math.max(balanceDue, 0),
-    overduePayments,
-    overdueInvoiceCount: oiResult.rows[0]?.overdue_count || 0
-  };
-}
-
-async function getClientOverdueBreakdown(clientId) {
-  const { balanceDue, overduePayments, overdueInvoiceCount } = await getClientFinancialTotals(clientId);
-
-  const totalOverdue = balanceDue;
-  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount;
-
-  return {
-    overduePayments,
-    totalOverdue,
-    overdueCount
-  };
-}
-
-async function queryBookingOverdueRows(clientId) {
-  // Overdue = what has actually been invoiced (ledger DEBITs) for a booking minus what
-  // has actually been settled against it (ledger CREDITs, excl. STAFF_SALARY, which
-  // includes wallet/refund credits). Comparing against the whole quotation total would
-  // flag bookings that are paid up to date but simply not yet invoiced in full.
-  const result = await db.query(
-    `SELECT
-       b.booking_id,
-       b.status,
-       b.start_date,
-       b.created_at,
-       b.service_type,
-       q.quote_id,
-       q.estimate_number,
-       p.full_name as patient_name,
-       p.age as patient_age,
-       led.total_invoiced as invoice_amount,
-       led.total_paid as amount_paid,
-       led.total_invoiced - led.total_paid as balance_due,
-       led.first_invoice_at as invoice_date,
-       true as is_overdue
-     FROM bookings b
-     LEFT JOIN service_requests sr ON b.request_id = sr.request_id
-     LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
-     LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
-     JOIN LATERAL (
-       SELECT
-         COALESCE(SUM(t.amount) FILTER (WHERE t.transaction_type = 'DEBIT'), 0) as total_invoiced,
-         COALESCE(SUM(t.amount) FILTER (WHERE t.transaction_type = 'CREDIT' AND t.category IS DISTINCT FROM 'STAFF_SALARY'), 0) as total_paid,
-         MIN(t.created_at) FILTER (WHERE t.transaction_type = 'DEBIT') as first_invoice_at
-       FROM transactions t
-       WHERE t.booking_id = b.booking_id
-     ) led ON true
-     WHERE b.client_id = $1
-       AND led.total_invoiced > led.total_paid
-     ORDER BY b.created_at DESC`,
-    [clientId]
-  );
-
-  return result.rows.map((row) => ({
-    ...row,
-    transaction_id: row.booking_id,
-    invoice_amount: parseFloat(row.invoice_amount || 0),
-    amount_paid: parseFloat(row.amount_paid || 0),
-    balance_due: parseFloat(row.balance_due || 0),
-    days_overdue: row.invoice_date
-      ? Math.max(Math.floor((Date.now() - new Date(row.invoice_date).getTime()) / 86400000), 0)
-      : 0,
-    is_fully_paid: false
-  }));
 }
 
 // 0. Get Client Profile by User ID
@@ -976,12 +861,12 @@ exports.updateClientProfile = async (req, res) => {
 
     await dbClient.query(
       `UPDATE client_profiles
-       SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW(),
+       SET full_name = $1, primary_address = $2::text, gender = $3::gender_enum, updated_at = NOW(),
            secondary_phone_numbers = $5::jsonb,
-           city_id = COALESCE($6, city_id),
+           city_id = COALESCE($6::integer, city_id),
            onboarding_status = CASE
                WHEN onboarding_status = 'CONTACT_PENDING' THEN 'ACTIVE'
-               WHEN onboarding_status = 'PENDING_MIGRATION' AND $2 IS NOT NULL AND $3 IS NOT NULL THEN 'ACTIVE'
+               WHEN onboarding_status = 'PENDING_MIGRATION' AND $2::text IS NOT NULL AND $3::gender_enum IS NOT NULL THEN 'ACTIVE'
                ELSE onboarding_status
            END
        WHERE client_profile_id = $4`,
@@ -1167,8 +1052,8 @@ exports.getAllBookingsForClient = async (req, res) => {
          ) pa ON true
          LEFT JOIN LATERAL (
            SELECT
-             SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END) as total_invoiced,
-             SUM(CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END) as total_paid
+             SUM(CASE WHEN ${bookingChargeSql('t')} THEN t.amount ELSE 0 END) as total_invoiced,
+             SUM(CASE WHEN ${bookingSettledSql('t')} THEN t.amount ELSE 0 END) as total_paid
            FROM transactions t
            WHERE t.booking_id = b.booking_id
          ) tx ON true
@@ -1238,8 +1123,8 @@ exports.getAdminClientBookingsPaginated = async (req, res) => {
        LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
        LEFT JOIN LATERAL (
          SELECT
-           SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END) as total_invoiced,
-           SUM(CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END) as total_paid
+           SUM(CASE WHEN ${bookingChargeSql('t')} THEN t.amount ELSE 0 END) as total_invoiced,
+           SUM(CASE WHEN ${bookingSettledSql('t')} THEN t.amount ELSE 0 END) as total_paid
          FROM transactions t
          WHERE t.booking_id = b.booking_id
        ) tx ON true
@@ -1579,29 +1464,49 @@ exports.getAllClients = async (req, res) => {
     if (pending_migration === 'true') filters.push(`cp.onboarding_status = 'PENDING_MIGRATION'`);
     if (contact_pending === 'true') filters.push(`cp.onboarding_status = 'CONTACT_PENDING'`);
     if (search) {
-      params.push(`%${search}%`);
+      const trimmedSearch = String(search).trim();
+      params.push(`%${trimmedSearch}%`);
       const idx = params.length;
-      // Matches on full_name alone (honorific stored separately) as well as
-      // "<honorific> <full_name>" so a search typed with or without the
-      // honorific (e.g. "Mrs. Premila Paulraj" or "Premila Paulraj") both hit.
       const conditions = [
         `cp.full_name ILIKE $${idx}`,
-        `(COALESCE(cp.honorific, '') || ' ' || cp.full_name) ILIKE $${idx}`,
         `u.email ILIKE $${idx}`,
         `u.mobile_number ILIKE $${idx}`,
         `cp.client_code ILIKE $${idx}`,
         `cp.primary_address ILIKE $${idx}`,
       ];
 
-      // Numbers are stored in E.164 (+94XXXXXXXXX). Also match the local
-      // trunk-prefix format (0XXXXXXXXX) by stripping the leading zero, so
-      // "+94777745180", "0777745180", and "777745180" all find the same
-      // record — the last two are already substrings of the E.164 form.
-      const digitsOnly = search.replace(/\D/g, '');
-      const withoutLeadingZero = digitsOnly.replace(/^0+/, '');
-      if (withoutLeadingZero.length >= 4 && withoutLeadingZero !== digitsOnly) {
-        params.push(`%${withoutLeadingZero}%`);
-        conditions.push(`u.mobile_number ILIKE $${params.length}`);
+      // Names: compare dot-less, whitespace-collapsed forms of
+      // "<honorific> <full_name>" so "Mr. John Doe", "Mr John Doe",
+      // "mr  john doe" and "John Doe" all hit. If the search starts with an
+      // honorific, also match the remainder against full_name alone, so
+      // clients whose honorific isn't stored are still found.
+      const normalizedName = trimmedSearch.toLowerCase().replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
+      if (normalizedName) {
+        params.push(`%${normalizedName}%`);
+        conditions.push(
+          `regexp_replace(lower(COALESCE(cp.honorific, '') || ' ' || cp.full_name), '[.\\s]+', ' ', 'g') LIKE $${params.length}`
+        );
+        const withoutHonorific = normalizedName.replace(/^(mr|mrs|ms|miss|dr|prof|rev)\s+/, '');
+        if (withoutHonorific && withoutHonorific !== normalizedName) {
+          params.push(`%${withoutHonorific}%`);
+          conditions.push(
+            `regexp_replace(lower(cp.full_name), '[.\\s]+', ' ', 'g') LIKE $${params.length}`
+          );
+        }
+      }
+
+      // Phone numbers: when the search looks like a number (digits plus
+      // spaces, dashes, brackets, dots or +), compare digits only against
+      // the digits of the stored number, so "077 789 6748", "077-789-6748",
+      // "77 789 6748" and "+94 77 789 6748" all find +94777896748. The local
+      // trunk zero is dropped since the stored E.164 form has 94 there instead.
+      if (/^[\d\s+\-().]+$/.test(trimmedSearch)) {
+        const digitsOnly = trimmedSearch.replace(/\D/g, '');
+        const withoutLeadingZero = digitsOnly.replace(/^0+/, '');
+        if (withoutLeadingZero.length >= 4) {
+          params.push(`%${withoutLeadingZero}%`);
+          conditions.push(`regexp_replace(COALESCE(u.mobile_number, ''), '\\D', '', 'g') LIKE $${params.length}`);
+        }
       }
 
       filters.push(`(${conditions.join(' OR ')})`);
@@ -2041,7 +1946,7 @@ exports.sendRegFeeInvoice = async (req, res) => {
 // WAIVED is not supported: no money moved and no invoice exists to correct.
 exports.updateRegFeeAmount = async (req, res) => {
   const { client_id } = req.params;
-  const { amount, reason } = req.body;
+  const { amount, reason, invoice_id } = req.body;
 
   const newAmount = parseFloat(amount);
   if (!amount || isNaN(newAmount) || newAmount <= 0) {
@@ -2089,11 +1994,17 @@ exports.updateRegFeeAmount = async (req, res) => {
       [client_id, isPaid ? 'PAID' : 'SENT']
     );
     const invoice = invoiceResult.rows[0] || null;
+    // The panel names the invoice it's editing; only the current one is editable.
+    if (invoice_id && invoice?.invoice_id !== invoice_id) {
+      await dbClient.query('ROLLBACK');
+      return res.status(409).json({ message: 'Only the current registration fee invoice for this client can be edited.' });
+    }
+    const actorName = await getActorName(req.user.user_id);
 
     let paymentTx = null;
     if (isPaid) {
       const txResult = await dbClient.query(
-        `SELECT transaction_id, amount, notes FROM transactions
+        `SELECT transaction_id, quote_id, amount, notes FROM transactions
          WHERE client_id = $1 AND category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT'
          ORDER BY created_at DESC
          LIMIT 1
@@ -2129,9 +2040,15 @@ exports.updateRegFeeAmount = async (req, res) => {
         upload_url: uploadUrl,
       });
 
+      // Marked edited the same way as every other invoice (utils/editedAmount.js).
       await dbClient.query(
-        `UPDATE client_reg_fee_invoices SET amount = $1, pdf_url = $2 WHERE invoice_id = $3`,
-        [feeAmount, invoicePdfUrl, invoice.invoice_id]
+        `UPDATE client_reg_fee_invoices
+         SET original_amount = COALESCE(original_amount, amount),
+             amount = $1, pdf_url = $2,
+             edited_at = NOW(), edited_by = $4, edited_by_name = $5, edit_reason = $6,
+             edit_count = COALESCE(edit_count, 0) + 1
+         WHERE invoice_id = $3`,
+        [feeAmount, invoicePdfUrl, invoice.invoice_id, req.user.user_id, actorName, reason.trim()]
       );
 
       // Regardless of OVERDUE (still unpaid) or RESOLVED (already paid), this row's
@@ -2152,17 +2069,53 @@ exports.updateRegFeeAmount = async (req, res) => {
     if (isPaid) {
       await dbClient.query(
         `UPDATE transactions
-         SET amount = $1,
-             notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text)
+         SET original_amount = COALESCE(original_amount, amount),
+             amount = $1,
+             notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text),
+             edited_at = NOW(), edited_by = $4, edited_by_name = $5, edit_reason = $6,
+             edit_count = COALESCE(edit_count, 0) + 1
          WHERE transaction_id = $3`,
-        [feeAmount, `Corrected Rs.${oldAmount} -> Rs.${feeAmount}: ${reason.trim()}`, paymentTx.transaction_id]
+        [feeAmount, `Corrected Rs.${oldAmount} -> Rs.${feeAmount}: ${reason.trim()}`, paymentTx.transaction_id,
+         req.user.user_id, actorName, reason.trim()]
       );
     }
 
+    // Converting a booking books the registration fee onto it as a REGISTRATION_FEE DEBIT
+    // charge (services/registrationFeeService.js). That charge must follow the amount, or
+    // the booking keeps owing the old figure while the fee itself reads as settled — the
+    // difference shows up as a phantom overdue amount. A paid fee is matched by quotation;
+    // an unpaid one has no payment to match, so it is the charges still at the old amount
+    // that nothing has been paid against.
+    const chargeRes = await dbClient.query(
+      isPaid
+        ? `SELECT transaction_id FROM transactions
+           WHERE client_id = $1 AND category = 'REGISTRATION_FEE' AND transaction_type = 'DEBIT'
+             AND quote_id IS NOT NULL AND quote_id = $2
+           FOR UPDATE`
+        : `SELECT d.transaction_id FROM transactions d
+           WHERE d.client_id = $1 AND d.category = 'REGISTRATION_FEE' AND d.transaction_type = 'DEBIT'
+             AND d.amount = $2::numeric
+             AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.client_id = d.client_id AND c.quote_id = d.quote_id
+                               AND c.category = 'REGISTRATION_FEE' AND c.transaction_type = 'CREDIT')
+           FOR UPDATE`,
+      [client_id, isPaid ? paymentTx.quote_id : oldAmount]
+    );
+    if (chargeRes.rows.length > 0) {
+      await dbClient.query(
+        `UPDATE transactions
+         SET original_amount = COALESCE(original_amount, amount),
+             amount = $1,
+             notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text),
+             edited_at = NOW(), edited_by = $4, edited_by_name = $5, edit_reason = $6,
+             edit_count = COALESCE(edit_count, 0) + 1
+         WHERE transaction_id = ANY($3::uuid[])`,
+        [feeAmount, `Corrected Rs.${oldAmount} -> Rs.${feeAmount}: ${reason.trim()}`,
+         chargeRes.rows.map((r) => r.transaction_id), req.user.user_id, actorName, reason.trim()]
+      );
+    }
     await dbClient.query('COMMIT');
 
     try {
-      const actorName = await getActorName(req.user.user_id);
       await logActivity({
         actorUserId: req.user.user_id,
         actorName,
@@ -2611,6 +2564,7 @@ exports.getClientInvoices = async (req, res) => {
             bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount,
             bdi.entry_mode, bdi.decided_by_name, bdi.decided_at, bdi.notes,
             bdi.shift_slot_id, bdi.whatsapp_sent_at,
+            ${dayCorrectionColumns('corr')},
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
             CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
@@ -2619,6 +2573,7 @@ exports.getClientInvoices = async (req, res) => {
          JOIN bookings b ON bdi.booking_id = b.booking_id
          LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
          LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+         ${dayCorrectionJoin('bdi.daily_invoice_id', 'daily_invoice_id', 'corr')}
          WHERE ${where}
          ORDER BY bdi.service_date DESC, bdi.decided_at DESC
          LIMIT $${idx} OFFSET $${idx + 1}`,
@@ -2672,6 +2627,7 @@ exports.getAdminInvoices = async (req, res) => {
             bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount,
             bdi.entry_mode, bdi.decided_by_name, bdi.decided_at, bdi.notes,
             bdi.shift_slot_id,
+            ${dayCorrectionColumns('corr')},
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
             CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
@@ -2681,6 +2637,7 @@ exports.getAdminInvoices = async (req, res) => {
          JOIN bookings b ON bdi.booking_id = b.booking_id
          LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
          LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+         ${dayCorrectionJoin('bdi.daily_invoice_id', 'daily_invoice_id', 'corr')}
          ${where}
          ORDER BY bdi.service_date DESC, bdi.decided_at DESC
          LIMIT $${idx} OFFSET $${idx + 1}`,
@@ -2864,6 +2821,7 @@ exports.getClientRegFeeInvoices = async (req, res) => {
     const result = await db.query(
       `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
               crfi.whatsapp_resent_at, crfi.period_start, crfi.period_end,
+              crfi.original_amount, crfi.edited_at, crfi.edited_by_name, crfi.edit_reason, crfi.edit_count,
               ba.account_nickname AS bank_account_nickname, ba.bank_name,
               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
                    THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS billed_to_name
@@ -3161,5 +3119,22 @@ exports.getAllOverdueInvoices = async (req, res) => {
   } catch (err) {
     console.error('Get all overdue invoices error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch overdue invoices.' });
+  }
+};
+
+// GET /api/client/:client_id/financial-breakdown/:metric
+// metric: payments-made | total-invoiced | overdue | wallet — the entries behind
+// each headline figure on the admin client page (services/clientFinancialBreakdown.js).
+exports.getClientFinancialBreakdown = async (req, res) => {
+  const { client_id, metric } = req.params;
+  try {
+    const data = await getClientFinancialBreakdown(client_id, metric);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ status: 'error', message: error.message });
+    }
+    console.error('Client financial breakdown error:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to load the breakdown' });
   }
 };

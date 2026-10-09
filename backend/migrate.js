@@ -882,7 +882,7 @@ async function runMigration() {
     CREATE TABLE IF NOT EXISTS scheduled_actions (
       action_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
-      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | ASSIGNMENT_START | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT
+      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | STAFF_RELIEVE | ASSIGNMENT_START | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT
       effective_date DATE NOT NULL,
       status VARCHAR(20) DEFAULT 'SCHEDULED',   -- SCHEDULED | EXECUTED | CANCELLED | FAILED
       payload JSONB NOT NULL DEFAULT '{}',      -- action-specific args
@@ -2688,6 +2688,20 @@ async function runMigration() {
       WHERE status = 'ACTIVE' AND shift_slot_id IS NOT NULL
   `);
 
+  // Weekly repeat days — which days of the week the service actually runs, as JS
+  // getDay() / Postgres EXTRACT(DOW) numbers (0 = Sunday … 6 = Saturday). NULL means
+  // every day (7 days a week), which is how every booking/slot behaved before this
+  // column existed. SHIFT_BASED sets it per shift slot; LIVE_IN sets it on the
+  // booking so it survives staff swaps (which open new assignment rows).
+  await db.query(`
+    ALTER TABLE booking_shift_slots
+    ADD COLUMN IF NOT EXISTS repeat_days SMALLINT[]
+  `);
+  await db.query(`
+    ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS repeat_days SMALLINT[]
+  `);
+
   // Which shift slot (if any) an attendance/invoice row belongs to. NULL for
   // LIVE_IN/VISITING, preserving today's one-row-per-day behavior exactly.
   await db.query(`
@@ -3368,6 +3382,80 @@ async function runMigration() {
     END $$;
   `);
 
+  // ── Wallet adjustments and the wallet audit trail ─────────────────────────────
+  // client_profiles.wallet_balance is a running figure that several code paths (and,
+  // occasionally, a person with database access) nudge up and down; the ledger is the
+  // only record of why. Two additions make any drift traceable:
+  //
+  //  1. WALLET_ADJUSTMENT — a NEUTRAL ledger category (not cash in, not a charge; see
+  //     services/walletLedger.js) for money the wallet holds that no other entry
+  //     explains, e.g. a prepayment carried over from a hard-deleted booking.
+  //  2. client_wallet_movements — a row for EVERY change to the stored balance, written
+  //     by a database trigger so it also catches scripts and manual edits. changed_at
+  //     is the transaction's start time, which is the same instant the ledger rows
+  //     posted in that transaction carry, so a movement can be paired with its entry;
+  //     a movement with no matching entry is a change the ledger never heard about.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'WALLET_ADJUSTMENT';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS client_wallet_movements (
+      movement_id      BIGSERIAL PRIMARY KEY,
+      client_id        UUID NOT NULL REFERENCES client_profiles(client_profile_id) ON DELETE CASCADE,
+      kind             VARCHAR(12) NOT NULL DEFAULT 'CHANGE',   -- BASELINE | CHANGE
+      old_balance      NUMERIC(12,2),
+      new_balance      NUMERIC(12,2) NOT NULL,
+      delta            NUMERIC(12,2) NOT NULL,
+      changed_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+      recorded_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT clock_timestamp(),
+      db_user          TEXT DEFAULT current_user,
+      application_name TEXT DEFAULT current_setting('application_name', true)
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_wallet_movements_client
+    ON client_wallet_movements(client_id, movement_id);
+  `);
+
+  await db.query(`
+    CREATE OR REPLACE FUNCTION log_client_wallet_change() RETURNS trigger AS $fn$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        IF COALESCE(NEW.wallet_balance, 0) <> 0 THEN
+          INSERT INTO client_wallet_movements (client_id, old_balance, new_balance, delta)
+          VALUES (NEW.client_profile_id, 0, NEW.wallet_balance, NEW.wallet_balance);
+        END IF;
+      ELSIF COALESCE(OLD.wallet_balance, 0) IS DISTINCT FROM COALESCE(NEW.wallet_balance, 0) THEN
+        INSERT INTO client_wallet_movements (client_id, old_balance, new_balance, delta)
+        VALUES (NEW.client_profile_id, COALESCE(OLD.wallet_balance, 0), COALESCE(NEW.wallet_balance, 0),
+                COALESCE(NEW.wallet_balance, 0) - COALESCE(OLD.wallet_balance, 0));
+      END IF;
+      RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  `);
+  await db.query(`DROP TRIGGER IF EXISTS trg_log_client_wallet_change ON client_profiles`);
+  await db.query(`
+    CREATE TRIGGER trg_log_client_wallet_change
+    AFTER INSERT OR UPDATE OF wallet_balance ON client_profiles
+    FOR EACH ROW EXECUTE FUNCTION log_client_wallet_change()
+  `);
+
+  // Whatever each wallet held when auditing began. Everything before this moment has
+  // no per-change record, so it is the one figure the page can only take on trust.
+  await db.query(`
+    INSERT INTO client_wallet_movements (client_id, kind, old_balance, new_balance, delta, changed_at)
+    SELECT cp.client_profile_id, 'BASELINE', 0, cp.wallet_balance, cp.wallet_balance, now()
+    FROM client_profiles cp
+    WHERE COALESCE(cp.wallet_balance, 0) <> 0
+      AND NOT EXISTS (SELECT 1 FROM client_wallet_movements m WHERE m.client_id = cp.client_profile_id)
+  `);
+
   // =========================================================
   // OVERDUE INVOICES
   // Generic ledger of "invoiced but not yet paid" amounts, shared across every
@@ -3448,6 +3536,9 @@ async function runMigration() {
   // A day may be corrected repeatedly; every pass appends a row here, so the
   // reconciliation invariant is:
   //   row.amount == original transaction + SUM(corrections.delta_amount)
+  // where, for corrections applied in place (applied_in_place, added below), the
+  // delta is already folded into the original transaction's amount and its
+  // original_amount holds the figure first posted.
   // =========================================================
 
   await db.query(`
@@ -3481,6 +3572,49 @@ async function runMigration() {
   // common render path doesn't have to join booking_amount_corrections.
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP WITH TIME ZONE`);
   await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP WITH TIME ZONE`);
+
+  // ── In-place amount edits on the ledger ──────────────────────────────────────
+  // Amount corrections now restate the day's ORIGINAL transaction instead of
+  // appending a separate adjustment row, so the ledger shows one line per day at
+  // its correct figure. These columns are the visible "this was edited" marker:
+  // original_amount is the figure first posted (set once, on the first edit) and
+  // the edited_* fields describe the most recent edit. The full edit-by-edit
+  // history stays in booking_amount_corrections (adjustment_transaction_id points
+  // at the edited row). Corrections made before this change remain as separate
+  // adjustment rows and carry no marker.
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS original_amount NUMERIC(12,2)`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS edited_by UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS edited_by_name VARCHAR(255)`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS edit_reason TEXT`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS edit_count INTEGER NOT NULL DEFAULT 0`);
+  // true = adjustment_transaction_id is the day's own (edited) row; false = a
+  // separate delta row (pre-in-place corrections, or a day with no linked row).
+  await db.query(`ALTER TABLE booking_amount_corrections ADD COLUMN IF NOT EXISTS applied_in_place BOOLEAN NOT NULL DEFAULT false`);
+
+  // Day-row lookups for the latest correction (invoice lists, day modal).
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_amount_corrections_daily_invoice_id
+    ON booking_amount_corrections(daily_invoice_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_amount_corrections_attendance_id
+    ON booking_amount_corrections(attendance_id);
+  `);
+
+  // Same "Edited" marker on the other invoice documents a client can be billed
+  // with — product/rental and extra-charge invoices, registration-fee invoices,
+  // and the combined quotation invoice (on quotations; its amount column is
+  // total_amount, and original_amount there is the service quote's own total).
+  // See services/invoiceAmountEdits.js.
+  for (const table of ['invoices', 'client_reg_fee_invoices', 'quotations']) {
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS original_amount NUMERIC(12,2)`);
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP WITH TIME ZONE`);
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS edited_by UUID REFERENCES users(user_id)`);
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS edited_by_name VARCHAR(255)`);
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS edit_reason TEXT`);
+    await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS edit_count INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // ── Per-staff client invoicing on a LIVE_IN mid-swap day ────────────────────
   // A day with 2+ concurrently active assignments (outgoing staff not yet closed

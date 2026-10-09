@@ -158,6 +158,9 @@ const PERMISSIONS = {
   INVOICE_CREATE_FROM_QUOTE:   { label: 'Create Invoice from Quote',        module: 'Invoices', entity: 'Invoice', verb: 'Create from Quote', category: 'action' },
   INVOICE_RESEND:              { label: 'Resend Invoice',                   module: 'Invoices', entity: 'Invoice', verb: 'Resend',             category: 'action' },
   INVOICE_RECORD_PAYMENT:      { label: 'Record Invoice Payment',           module: 'Invoices', entity: 'Invoice', verb: 'Record Payment',     category: 'action' },
+  // Restating the amount on a product/rental, extra-charge or combined quotation
+  // invoice. Care-day invoices use BOOKING_CORRECT_AMOUNT; registration fees CLIENT_EDIT.
+  INVOICE_EDIT_AMOUNT:         { label: 'Edit Invoice Amount',              module: 'Invoices', entity: 'Invoice', verb: 'Edit Amount',        category: 'action' },
 
   // ── Receipts ──────────────────────────────────────────────────────────────
   RECEIPT_SEND:                { label: 'Send Receipt via WhatsApp',        module: 'Receipts', entity: 'Receipt', verb: 'Send', category: 'action' },
@@ -309,7 +312,7 @@ const ROLE_TEMPLATES = {
     'TERMINATION_APPROVE', 'TERMINATION_REJECT',
     'PATIENT_CREATE', 'PATIENT_EDIT', 'PATIENT_DELETE',
     'STATEMENT_SEND', 'STATEMENT_DELETE', 'TRANSACTION_ADD_MANUAL',
-    'INVOICE_CREATE_FROM_QUOTE', 'INVOICE_RESEND', 'INVOICE_RECORD_PAYMENT',
+    'INVOICE_CREATE_FROM_QUOTE', 'INVOICE_RESEND', 'INVOICE_RECORD_PAYMENT', 'INVOICE_EDIT_AMOUNT',
     'RECEIPT_SEND',
     'REVIEW_TOGGLE_VISIBILITY', 'REVIEW_SEND_REQUEST',
     'BULK_IMPORT_COMMIT', 'SCHEDULED_ACTION_CANCEL', 'SCHEDULED_ACTION_EXECUTE_NOW',
@@ -345,7 +348,7 @@ const ROLE_TEMPLATES = {
     'STAFF_EXPORT_SALARY', 'STAFF_NOTIFY_SALARY',
     'TRANSACTION_ADD_MANUAL',
     'STATEMENT_SEND', 'STATEMENT_DELETE',
-    'INVOICE_CREATE_FROM_QUOTE', 'INVOICE_RESEND', 'INVOICE_RECORD_PAYMENT',
+    'INVOICE_CREATE_FROM_QUOTE', 'INVOICE_RESEND', 'INVOICE_RECORD_PAYMENT', 'INVOICE_EDIT_AMOUNT',
     'RECEIPT_SEND',
     'BANK_ACCOUNT_CREATE', 'BANK_ACCOUNT_EDIT', 'BANK_ACCOUNT_DEACTIVATE', 'BANK_ACCOUNT_TRANSFER',
     'PETTY_CASH_RECORD_TRANSACTION',

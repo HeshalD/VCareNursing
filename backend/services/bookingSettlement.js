@@ -3,11 +3,13 @@
 // completion/termination) and the scheduled-action enforcer (future-dated execution).
 // Kept in their own module so neither side has to require the other (avoids a cycle).
 
+const { bookingChargeSql } = require('./clientFinancials');
+
 const getBookingFinancialTotals = async (client, booking_id) => {
     const result = await client.query(
         `SELECT
             COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) as total_paid,
-            COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_invoiced
+            COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) as total_invoiced
          FROM transactions
          WHERE booking_id = $1`,
         [booking_id]

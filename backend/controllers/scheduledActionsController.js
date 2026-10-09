@@ -13,6 +13,7 @@
 const db = require('../config/db');
 const { dispatchScheduledAction } = require('../services/scheduledActions');
 const { logActivity } = require('../utils/activityLogger');
+const { bookingChargeSql } = require('../services/clientFinancials');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -95,7 +96,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 LEFT JOIN (
                     SELECT booking_id,
                         COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') != 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
-                        COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                        COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) AS total_invoiced
                     FROM transactions
                     GROUP BY booking_id
                 ) bill ON bill.booking_id = b.booking_id

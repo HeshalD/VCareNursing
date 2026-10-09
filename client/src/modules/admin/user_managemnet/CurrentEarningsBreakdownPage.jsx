@@ -18,6 +18,7 @@ import {
 import * as XLSX from 'xlsx';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -173,6 +174,7 @@ const LedgerRow = ({ entry }) => {
       </td>
       <td className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${isCredit ? 'text-emerald-700' : 'text-rose-600'}`}>
         {isCredit ? '+' : '-'}{formatMoney(entry.amount)}
+        <EditedAmountBadge record={entry} className="ml-1.5" />
       </td>
       <td className="px-4 py-3 text-right text-sm font-medium text-slate-700 whitespace-nowrap">
         {formatMoney(entry.running_balance)}

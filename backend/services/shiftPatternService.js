@@ -11,6 +11,7 @@
 
 const db = require('../config/db');
 const { toDateStr, isFutureDate, getBusinessDate, enqueueScheduledAction, hasOpenAction } = require('./scheduledActions');
+const { normalizeRepeatDays } = require('./repeatDays');
 
 // Resolve a slot's actual start/end Date for a given calendar service_date,
 // handling overnight shifts (e.g. start_time 19:00, duration 12h -> ends 07:00 next day).
@@ -110,10 +111,10 @@ const insertSlots = async (client, pattern_id, slots) => {
     const inserted = [];
     for (const slot of slots) {
         const res = await client.query(
-            `INSERT INTO booking_shift_slots (pattern_id, shift_number, start_time, duration_hours, label)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO booking_shift_slots (pattern_id, shift_number, start_time, duration_hours, label, repeat_days)
+             VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [pattern_id, slot.shift_number, slot.start_time, slot.duration_hours, slot.label || null]
+            [pattern_id, slot.shift_number, slot.start_time, slot.duration_hours, slot.label || null, normalizeRepeatDays(slot.repeat_days)]
         );
         inserted.push(res.rows[0]);
     }
@@ -131,6 +132,8 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
     for (let i = 0; i < sortedNumbers.length; i++) {
         if (sortedNumbers[i] !== i + 1) throw new Error('shift_number must be sequential starting from 1');
     }
+    // Validate repeat days up front so a bad value fails before any pattern row is written.
+    slots.forEach((s) => normalizeRepeatDays(s.repeat_days));
 
     const businessDate = await getBusinessDate(client);
     const effFromStr = toDateStr(effective_from_date) || businessDate;

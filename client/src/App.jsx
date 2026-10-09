@@ -32,6 +32,7 @@ import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard'
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
 import StaffManagement from './modules/admin/user_managemnet/staff_management';
 import ClientDetailPage from './modules/admin/user_managemnet/client_detail_page';
+import ClientFinancialBreakdownPage from './modules/admin/user_managemnet/ClientFinancialBreakdownPage';
 import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
 import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
@@ -212,6 +213,26 @@ function App() {
             <Route path="/admin/users/:clientId/detail" element={
               <AdminAuthProvider>
                 <ClientDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/users/:clientId/payments-made" element={
+              <AdminAuthProvider>
+                <ClientFinancialBreakdownPage metric="payments-made" />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/users/:clientId/total-invoiced" element={
+              <AdminAuthProvider>
+                <ClientFinancialBreakdownPage metric="total-invoiced" />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/users/:clientId/overdue-amount" element={
+              <AdminAuthProvider>
+                <ClientFinancialBreakdownPage metric="overdue" />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/users/:clientId/wallet-balance" element={
+              <AdminAuthProvider>
+                <ClientFinancialBreakdownPage metric="wallet" />
               </AdminAuthProvider>
             } />
             <Route path="/admin/proxy-user-management" element={

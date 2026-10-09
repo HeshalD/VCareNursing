@@ -10,6 +10,14 @@ router.get('/', protect, requirePermission('VIEW_INVOICES'), invoiceController.l
 router.get('/:invoice_id', protect, requirePermission('VIEW_INVOICES'), invoiceController.getInvoice);
 router.get('/:invoice_id/pdf', protect, requirePermission('VIEW_INVOICES'), invoiceController.getInvoicePdf);
 
+// Restate a product/rental or extra-charge invoice's amount (marks it edited).
+router.patch(
+  '/:invoice_id/amount',
+  protect,
+  requirePermission('INVOICE_EDIT_AMOUNT'),
+  invoiceController.editInvoiceAmount
+);
+
 router.post(
   '/from-quote/:quote_id',
   protect,

@@ -4,6 +4,7 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const { sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { logActivity } = require('../utils/activityLogger');
+const { transactionEditColumns } = require('../utils/editedAmount');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
@@ -62,7 +63,12 @@ async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paym
             NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
             pp.full_name AS patient_name,
             COALESCE(json_agg(
-                json_build_object('date', t.created_at::date, 'amount', t.amount)
+                json_build_object(
+                            'date', t.created_at::date, 'amount', t.amount,
+                            'original_amount', t.original_amount, 'edited_at', t.edited_at,
+                            'edited_by_name', t.edited_by_name, 'edit_reason', t.edit_reason,
+                            'edit_count', t.edit_count
+                        )
                 ORDER BY t.created_at
             ) FILTER (WHERE t.transaction_id IS NOT NULL), '[]'::json) AS daily_entries,
             COALESCE(SUM(t.amount), 0) AS total_salary_earned
@@ -78,7 +84,7 @@ async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paym
         WHERE bsa.staff_profile_id = $1
         GROUP BY bsa.assignment_id, bsa.booking_id, b.booking_code,
                  bsa.service_start_date, bsa.service_end_date, bsa.daily_rate,
-                 cp.full_name, pp.full_name
+                 cp.honorific, cp.full_name, pp.full_name
         HAVING COALESCE(SUM(t.amount), 0) > 0
         ORDER BY bsa.service_start_date DESC
     `, params);
@@ -702,7 +708,7 @@ exports.getEarningsTransactions = async (req, res) => {
         const totalCount = parseInt(countRes.rows[0].total_count || 0);
 
         const dataRes = await db.query(`
-            SELECT transaction_id, category, amount, transaction_type, payment_method, bank_account_id, reference_number, status, created_at
+            SELECT transaction_id, category, amount, transaction_type, payment_method, bank_account_id, reference_number, status, created_at, ${transactionEditColumns('')}
             FROM transactions
             WHERE staff_profile_id = $1 AND (category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID')
             ORDER BY created_at DESC
@@ -3840,6 +3846,7 @@ exports.getCurrentEarningsBreakdown = async (req, res) => {
                     t.reference_number,
                     t.notes,
                     t.created_at,
+                    ${transactionEditColumns('t')},
                     SUM(
                         CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE -t.amount END
                     ) OVER (
@@ -4158,7 +4165,12 @@ exports.getStaffBookingSalaryBreakdown = async (req, res) => {
                 pp.full_name AS patient_name,
                 COALESCE(
                     json_agg(
-                        json_build_object('date', t.created_at::date, 'amount', t.amount)
+                        json_build_object(
+                            'date', t.created_at::date, 'amount', t.amount,
+                            'original_amount', t.original_amount, 'edited_at', t.edited_at,
+                            'edited_by_name', t.edited_by_name, 'edit_reason', t.edit_reason,
+                            'edit_count', t.edit_count
+                        )
                         ORDER BY t.created_at
                     ) FILTER (WHERE t.transaction_id IS NOT NULL),
                     '[]'::json
@@ -4270,7 +4282,12 @@ exports.getStaffMonthlyEarnings = async (req, res) => {
                 pp.full_name AS patient_name,
                 COALESCE(
                     json_agg(
-                        json_build_object('date', t.created_at::date, 'amount', t.amount)
+                        json_build_object(
+                            'date', t.created_at::date, 'amount', t.amount,
+                            'original_amount', t.original_amount, 'edited_at', t.edited_at,
+                            'edited_by_name', t.edited_by_name, 'edit_reason', t.edit_reason,
+                            'edit_count', t.edit_count
+                        )
                         ORDER BY t.created_at
                     ) FILTER (WHERE t.transaction_id IS NOT NULL),
                     '[]'::json
@@ -4289,7 +4306,7 @@ exports.getStaffMonthlyEarnings = async (req, res) => {
             WHERE bsa.staff_profile_id = $1
             GROUP BY bsa.assignment_id, bsa.booking_id, b.booking_code,
                      bsa.service_start_date, bsa.service_end_date,
-                     bsa.daily_rate, bsa.status, cp.full_name, pp.full_name
+                     bsa.daily_rate, bsa.status, cp.honorific, cp.full_name, pp.full_name
             HAVING COALESCE(SUM(t.amount), 0) > 0
             ORDER BY bsa.service_start_date DESC
         `, [staff_profile_id, parseInt(year), parseInt(month)]);

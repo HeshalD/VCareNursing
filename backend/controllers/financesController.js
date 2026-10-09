@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const { IN_CATEGORIES, OUT_CATEGORIES } = require('../utils/transactionFlow');
+const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 const { resolvePeriodRange, CASH_FLOW_PERIODS, INCOME_EXPENSE_PERIODS, TOP_EXPENSES_PERIODS } = require('../utils/financePeriods');
 
 const getOverview = async (req, res) => {
@@ -44,8 +45,8 @@ const getOverview = async (req, res) => {
       FROM (
         SELECT
           b.booking_id,
-          COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) AS total_debits,
-          COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) AS total_credits
+          COALESCE(SUM(CASE WHEN ${bookingChargeSql('t')} THEN t.amount ELSE 0 END), 0) AS total_debits,
+          COALESCE(SUM(CASE WHEN ${bookingSettledSql('t')} THEN t.amount ELSE 0 END), 0) AS total_credits
         FROM bookings b
         LEFT JOIN transactions t ON b.booking_id = t.booking_id
         WHERE b.status = 'OVERDUE'
@@ -469,7 +470,7 @@ const getReceivablesAging = async (req, res) => {
       WITH booking_credits AS (
         SELECT booking_id, COALESCE(SUM(amount), 0) AS total_credits
         FROM transactions
-        WHERE transaction_type = 'CREDIT' AND COALESCE(category::text, '') != 'STAFF_SALARY'
+        WHERE ${bookingSettledSql()}
         GROUP BY booking_id
       ),
       booking_debits AS (
@@ -477,7 +478,7 @@ const getReceivablesAging = async (req, res) => {
           booking_id, created_at, amount,
           SUM(amount) OVER (PARTITION BY booking_id ORDER BY created_at, transaction_id) AS running_debit
         FROM transactions
-        WHERE transaction_type = 'DEBIT'
+        WHERE ${bookingChargeSql()}
       ),
       oldest_unpaid AS (
         SELECT bd.booking_id, MIN(bd.created_at) AS oldest_unpaid_date
@@ -489,8 +490,8 @@ const getReceivablesAging = async (req, res) => {
       booking_balances AS (
         SELECT
           b.booking_id,
-          COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) AS total_debits,
-          COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) AS total_credits
+          COALESCE(SUM(CASE WHEN ${bookingChargeSql('t')} THEN t.amount ELSE 0 END), 0) AS total_debits,
+          COALESCE(SUM(CASE WHEN ${bookingSettledSql('t')} THEN t.amount ELSE 0 END), 0) AS total_credits
         FROM bookings b
         LEFT JOIN transactions t ON b.booking_id = t.booking_id
         WHERE b.status = 'OVERDUE'

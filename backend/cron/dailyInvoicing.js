@@ -9,6 +9,8 @@ const {
 } = require('../services/billingService');
 const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
 const { drawWalletForBooking } = require('../services/walletService');
+const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
+const { isServiceDay } = require('../services/repeatDays');
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
@@ -21,9 +23,9 @@ const getActiveBookingBalances = async (client) => {
         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
         uc.mobile_number as client_mobile,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) as total_paid,
-        COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_invoiced,
-        COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_debits,
-        COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END), 0) as total_credits
+        COALESCE(SUM(CASE WHEN ${bookingChargeSql('t')} THEN t.amount ELSE 0 END), 0) as total_invoiced,
+        COALESCE(SUM(CASE WHEN ${bookingChargeSql('t')} THEN t.amount ELSE 0 END), 0) as total_debits,
+        COALESCE(SUM(CASE WHEN ${bookingSettledSql('t')} THEN t.amount ELSE 0 END), 0) as total_credits
      FROM bookings b
      JOIN client_profiles cp ON b.client_id = cp.client_profile_id
      JOIN users uc ON cp.user_id = uc.user_id
@@ -128,6 +130,7 @@ const startDailyInvoicing = () => {
           b.scheduled_end_time,
           b.actual_end_time,
           b.invoicing_mode,
+          b.repeat_days,
           q.daily_rate as quote_daily_rate,
           b.daily_rate as booking_daily_rate,
           sp.full_name as staff_name,
@@ -145,12 +148,23 @@ const startDailyInvoicing = () => {
 
       // An ACTIVE assignment dated in the future hasn't started serving yet — don't pay
       // or invoice for it (service_start_date is cast to text, so ISO strings compare correctly).
-      const activeAssignments = activeAssignmentsRes.rows.filter(a => !a.service_start_date || a.service_start_date <= today);
+      // Likewise a LIVE_IN booking set to repeat only on specific weekdays (bookings.repeat_days)
+      // isn't served on its off days: no staff pay, no client invoice, no PENDING row.
+      // SHIFT_BASED off days are handled per slot in bookingController.getShiftSchedule.
+      // The off-day filter is applied after the early return below on purpose: a day where
+      // every booking happens to be off must still run post-billing actions and the credit monitor.
+      const startedAssignments = activeAssignmentsRes.rows.filter(a => !a.service_start_date || a.service_start_date <= today);
 
-      if (activeAssignments.length === 0) {
+      if (startedAssignments.length === 0) {
         console.log('No active staff assignments to process today.');
         await client.query('COMMIT');
         return;
+      }
+
+      const activeAssignments = startedAssignments.filter(a => a.service_model !== 'LIVE_IN' || isServiceDay(a.repeat_days, today));
+      const offDayCount = startedAssignments.length - activeAssignments.length;
+      if (offDayCount > 0) {
+        console.log(`⏭️  ${offDayCount} LIVE_IN assignment(s) skipped — ${today} is not one of their booking's repeat days.`);
       }
 
       // How many ACTIVE assignments a booking currently has. Normally 1 — but a

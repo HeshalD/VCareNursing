@@ -2,6 +2,8 @@
 // Shared billing helpers used by both the nightly cron (cron/dailyInvoicing.js)
 // and the manual attendance/invoice confirmation endpoints.
 
+const { bookingChargeSql, bookingSettledSql } = require('./clientFinancials');
+
 // ─── Billing Engine (per-booking client charge calculation) ───────────────────
 
 const calculateLiveInCharge = (booking) => {
@@ -326,8 +328,8 @@ const createServiceInvoice = async (client, { booking_id, client_id, amount, not
 const checkAndFlagBookingOverdue = async (client, booking_id) => {
   const result = await client.query(
     `SELECT
-        COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_debits,
-        COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) as total_credits
+        COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) as total_debits,
+        COALESCE(SUM(CASE WHEN ${bookingSettledSql()} THEN amount ELSE 0 END), 0) as total_credits
      FROM transactions
      WHERE booking_id = $1`,
     [booking_id]

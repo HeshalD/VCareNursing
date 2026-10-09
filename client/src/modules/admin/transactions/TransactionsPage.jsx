@@ -9,6 +9,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 import AddTransactionModal from './AddTransactionModal';
+import EditedAmountBadge from '../components/EditedAmountBadge';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import { CATEGORY_CONFIG, flowOf, categoryBadge, relatedTo } from '../../../constants/transactionCategories';
 
@@ -479,6 +480,7 @@ const TransactionsPage = () => {
                             flowDir === 'IN' ? 'text-emerald-600' : flowDir === 'OUT' ? 'text-rose-600' : 'text-slate-500'
                           }`}>
                             {flowDir === 'IN' ? '+' : flowDir === 'OUT' ? '−' : ''}{fmt(tx.amount)}
+                            <EditedAmountBadge record={tx} className="ml-1.5" />
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusCfg.text}`}>

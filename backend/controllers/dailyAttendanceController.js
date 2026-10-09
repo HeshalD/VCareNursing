@@ -4,6 +4,7 @@ const db = require('../config/db');
 const { creditStaffSalary, reverseStaffSalary, reverseServiceInvoice } = require('../services/billingService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { correctInvoiceAmount, correctSalaryAmount, getCorrectionsForBooking } = require('../services/amountCorrections');
+const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { logActivity } = require('../utils/activityLogger');
 
 async function getDeciderName(userId) {
@@ -44,6 +45,7 @@ exports.getBookingAttendance = async (req, res) => {
                 a.revoked_by_name,
                 a.revoked_at,
                 a.corrected_at,
+                ${dayCorrectionColumns('corr')},
                 ss.shift_number,
                 ss.label as shift_label,
                 ss.duration_hours as shift_duration_hours,
@@ -55,6 +57,7 @@ exports.getBookingAttendance = async (req, res) => {
              JOIN staff_profiles sp ON a.staff_profile_id = sp.staff_profile_id
              LEFT JOIN booking_shift_slots ss ON a.shift_slot_id = ss.shift_slot_id
              LEFT JOIN booking_staff_assignments bsa ON a.assignment_id = bsa.assignment_id
+             ${dayCorrectionJoin('a.attendance_id', 'attendance_id', 'corr')}
              WHERE a.booking_id = $1
              ORDER BY a.service_date DESC`,
             [booking_id]
@@ -966,6 +969,153 @@ async function settleBoundaryPay(client, { booking_id, assignment_id, days, deci
     return settled;
 }
 
+/**
+ * Re-decides the staff pay for the days a BACKDATED LIVE_IN swap reaches back over.
+ *
+ * When a swap is logged late, the nightly cron has already auto-paid the outgoing
+ * staff member for every day from the real swap date up to its last run, and the
+ * incoming staff member has nothing for those days at all. The admin picks, per
+ * day and per staff member, who should be paid; this applies that in the swap's
+ * own transaction so the swap and the money never disagree.
+ *
+ * oldStaffDays: [{ attendance_id, pay, amount? }] — only already-PAID rows of the
+ *   outgoing staff on/after the swap date. pay=false reverses the salary (row
+ *   becomes REVOKED, original CREDIT kept as the audit trail, same as
+ *   markAbsentRange); pay=true with a different amount restates it through
+ *   correctSalaryAmount; pay=true with the same amount leaves it alone.
+ * newStaffDays: [{ service_date, pay, amount? }] — the incoming staff's days. A
+ *   PRESENT row is created if none exists, then decided through the ordinary
+ *   applySalaryDecision (PAID or SKIPPED). Days already decided are left as is.
+ *
+ * Client invoices are not touched — the client is billed per day regardless of
+ * which staff member was on site.
+ */
+async function applyBackdatedSwapPay(client, {
+    booking_id, outgoing_staff_id, new_assignment_id, swap_date, business_date,
+    oldStaffDays = [], newStaffDays = [], reason, deciderUserId, deciderName,
+    label = 'Backdated swap',
+}) {
+    const badRequest = (message) => { const err = new Error(message); err.statusCode = 400; return err; };
+    const inWindow = (d) => d >= swap_date && d <= business_date;
+    const parseAmount = (amount) => {
+        if (amount === undefined || amount === null || amount === '') return null;
+        const n = Number(amount);
+        if (Number.isNaN(n) || n <= 0) throw badRequest('Each paid day needs a positive amount');
+        return n;
+    };
+    const why = `${label} (${swap_date})${reason ? ` — ${reason}` : ''}`;
+    const result = { old_staff: [], new_staff: [] };
+
+    const seenAttendance = new Set();
+    for (const day of oldStaffDays) {
+        if (!day?.attendance_id || typeof day.pay !== 'boolean') throw badRequest('Each outgoing-staff day needs attendance_id and pay');
+        if (seenAttendance.has(day.attendance_id)) throw badRequest('The same outgoing-staff day was sent twice');
+        seenAttendance.add(day.attendance_id);
+
+        const rowRes = await client.query(
+            `SELECT attendance_id, staff_profile_id, service_date::text AS service_date, shift_slot_id,
+                    salary_status, salary_amount
+             FROM staff_daily_attendance
+             WHERE attendance_id = $1 AND booking_id = $2
+             FOR UPDATE`,
+            [day.attendance_id, booking_id]
+        );
+        const row = rowRes.rows[0];
+        if (!row) throw badRequest('An outgoing-staff day does not belong to this booking');
+        if (row.staff_profile_id !== outgoing_staff_id || row.shift_slot_id) throw badRequest(`${row.service_date} is not a day of the outgoing staff member`);
+        if (!inWindow(row.service_date)) throw badRequest(`${row.service_date} is outside the swap window (${swap_date} to ${business_date})`);
+        if (row.salary_status !== 'PAID') {
+            result.old_staff.push({ service_date: row.service_date, skipped: `already ${row.salary_status.toLowerCase()}` });
+            continue;
+        }
+
+        const paidAmount = Number(row.salary_amount || 0);
+        if (!day.pay) {
+            const reversalTransactionId = paidAmount > 0
+                ? await reverseStaffSalary(client, {
+                    staff_profile_id: row.staff_profile_id,
+                    booking_id,
+                    amount: paidAmount,
+                    notes: `Reversal of ${row.service_date} salary — ${why}`,
+                })
+                : null;
+            await client.query(
+                `UPDATE staff_daily_attendance
+                 SET salary_status = 'REVOKED',
+                     reversal_transaction_id = $1,
+                     revoked_at = NOW(),
+                     revoked_by_user_id = $2,
+                     revoked_by_name = $3,
+                     revoke_reason = $4,
+                     updated_at = NOW()
+                 WHERE attendance_id = $5`,
+                [reversalTransactionId, deciderUserId || null, deciderName, why, row.attendance_id]
+            );
+            result.old_staff.push({ service_date: row.service_date, action: 'REVOKED', amount: paidAmount });
+            continue;
+        }
+
+        const newAmount = parseAmount(day.amount);
+        if (newAmount !== null && Math.abs(newAmount - paidAmount) >= 0.005) {
+            await correctSalaryAmount(client, {
+                booking_id, attendance_id: row.attendance_id, new_amount: newAmount,
+                reason: why, actorUserId: deciderUserId, actorName: deciderName,
+            });
+            result.old_staff.push({ service_date: row.service_date, action: 'CORRECTED', old_amount: paidAmount, amount: newAmount });
+        } else {
+            result.old_staff.push({ service_date: row.service_date, action: 'KEPT', amount: paidAmount });
+        }
+    }
+
+    if (newStaffDays.length > 0) {
+        const assignmentRes = await client.query(
+            `SELECT staff_profile_id FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2`,
+            [new_assignment_id, booking_id]
+        );
+        const newStaffId = assignmentRes.rows[0]?.staff_profile_id;
+        if (!newStaffId) throw badRequest('Incoming assignment not found');
+
+        const seenDates = new Set();
+        for (const day of newStaffDays) {
+            const service_date = String(day?.service_date || '').slice(0, 10);
+            if (!ISO_DATE.test(service_date) || typeof day.pay !== 'boolean') throw badRequest('Each incoming-staff day needs service_date and pay');
+            if (seenDates.has(service_date)) throw badRequest(`${service_date} was sent twice for the incoming staff member`);
+            seenDates.add(service_date);
+            if (!inWindow(service_date)) throw badRequest(`${service_date} is outside the swap window (${swap_date} to ${business_date})`);
+            const amount = day.pay ? parseAmount(day.amount) : null;
+
+            await client.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date, entry_mode, attendance_status
+                ) VALUES ($1, $2, $3, $4, 'MANUAL', 'PRESENT')
+                ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
+                [booking_id, new_assignment_id, newStaffId, service_date]
+            );
+            const rowRes = await client.query(
+                `SELECT attendance_id, salary_status FROM staff_daily_attendance
+                 WHERE assignment_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL`,
+                [new_assignment_id, service_date]
+            );
+            const row = rowRes.rows[0];
+            if (row.salary_status !== 'PENDING') {
+                result.new_staff.push({ service_date, skipped: `already ${row.salary_status.toLowerCase()}` });
+                continue;
+            }
+
+            const { salaryAmount } = await applySalaryDecision(client, {
+                attendance_id: row.attendance_id, approve: day.pay, amount, deciderUserId, deciderName,
+            });
+            await client.query(
+                `UPDATE staff_daily_attendance SET notes = CONCAT_WS(' | ', NULLIF(notes, ''), $1::text) WHERE attendance_id = $2`,
+                [why, row.attendance_id]
+            );
+            result.new_staff.push({ service_date, action: day.pay ? 'PAID' : 'SKIPPED', amount: salaryAmount });
+        }
+    }
+
+    return result;
+}
+
 // A DATE column read back through pg arrives as a Date pinned to local midnight,
 // so an ISO slice would report the previous day east of UTC — read the calendar
 // parts off it instead.
@@ -1591,19 +1741,21 @@ const logCorrections = (req, booking_id, applied) => {
 
 /**
  * @route   PATCH /api/bookings/:booking_id/invoices/:service_date/amount
- * @desc    Restate one day's client invoice amount. Body: { new_amount, reason }
+ * @desc    Restate one day's client invoice amount. Body: { new_amount, reason,
+ *          daily_invoice_id? } — daily_invoice_id picks one staff member's share
+ *          on a day invoiced per assignment; omit it for an ordinary day.
  * @access  Private (BOOKING_CORRECT_AMOUNT)
  */
 exports.correctInvoiceAmountForDay = async (req, res) => {
     const { booking_id, service_date } = req.params;
-    const { new_amount, reason } = req.body;
+    const { new_amount, reason, daily_invoice_id } = req.body;
 
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
         const actorName = await getDeciderName(req.user?.user_id);
         const result = await correctInvoiceAmount(client, {
-            booking_id, service_date, new_amount, reason,
+            booking_id, service_date, daily_invoice_id: daily_invoice_id || null, new_amount, reason,
             actorUserId: req.user?.user_id || null, actorName,
         });
         await client.query('COMMIT');
@@ -1704,7 +1856,7 @@ exports.correctAmountsBulk = async (req, res) => {
 
         if (wantsInvoice) {
             const daysRes = await client.query(
-                `SELECT service_date::text AS service_date, status
+                `SELECT service_date::text AS service_date, status, assignment_id
                  FROM booking_daily_invoices
                  WHERE booking_id = $1
                    AND ($2::date[] IS NOT NULL AND service_date = ANY($2::date[])
@@ -1714,6 +1866,15 @@ exports.correctAmountsBulk = async (req, res) => {
                 [booking_id, explicitDates, from_date || null, to_date || null]
             );
             for (const day of daysRes.rows) {
+                // A day split per staff member holds one invoice per share — one
+                // bulk amount can't apply to each of them, so those are corrected
+                // individually from the day view instead.
+                if (day.assignment_id) {
+                    if (!skipped.some(s => s.service_date === day.service_date && s.target_type === 'INVOICE')) {
+                        skipped.push({ service_date: day.service_date, target_type: 'INVOICE', why: 'invoiced per staff member — correct each share from the day view' });
+                    }
+                    continue;
+                }
                 if (day.status !== 'INVOICED') {
                     skipped.push({ service_date: day.service_date, target_type: 'INVOICE', why: `status is ${day.status}` });
                     continue;
@@ -1754,7 +1915,9 @@ exports.correctAmountsBulk = async (req, res) => {
             await client.query('ROLLBACK');
             return res.status(400).json({
                 status: 'error',
-                message: 'Nothing to correct in that range — the days are already at that amount, or none of them are in a decided state.',
+                message: skipped.length > 0
+                    ? `Nothing was corrected. ${skipped.map(s => `${s.service_date} (${s.target_type.toLowerCase()}): ${s.why}`).join('; ')}.`
+                    : 'Nothing to correct in that range — the days are already at that amount.',
                 data: { skipped, unchanged },
             });
         }
@@ -1806,6 +1969,7 @@ exports._internal = {
     applyAttendancePresentFlat,
     applySalaryDecision,
     settleBoundaryPay,
+    applyBackdatedSwapPay,
     boundaryDatesFor,
     getDeciderName,
     EXCEPTION_ACTION_TYPES,
