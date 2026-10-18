@@ -17,6 +17,8 @@
 // cannot be silently consumed by booking B; if A's own funds run out the charge
 // goes overdue even while B still holds money.
 
+const { bookingChargeSql, bookingSettledSql } = require('./clientFinancials');
+
 // Total currently reserved across all of a client's bookings. Used to work out how
 // much of the wallet is unearmarked and therefore free for any booking to draw.
 const getEarmarkedTotal = async (client, client_id) => {
@@ -156,4 +158,68 @@ const drawWalletForBooking = async (client, { booking_id, client_id, maxAmount, 
   return drawAmount;
 };
 
-module.exports = { creditClientWallet, drawWalletForBooking, getEarmarkedTotal };
+// Settles whatever a booking has already been invoiced but not yet paid, out of the
+// client's wallet. Quotation payments only ever land in the wallet; a booking draws
+// from it as each day/shift is invoiced. Charges raised BEFORE the money arrived
+// (booking running unpaid, then the quotation is paid) would otherwise stay open on
+// the booking's ledger — and show as overdue — while the matching cash sits unused
+// in the wallet. Call this right after a wallet credit that is meant for the booking.
+// Returns the amount drawn (0 if nothing was owed or available).
+const settleBookingOutstandingFromWallet = async (client, { booking_id, client_id, verified_by = null }) => {
+  if (!booking_id || !client_id) return 0;
+
+  const res = await client.query(
+    `SELECT
+       COALESCE(SUM(amount) FILTER (WHERE ${bookingChargeSql()}), 0) AS invoiced,
+       COALESCE(SUM(amount) FILTER (WHERE ${bookingSettledSql()}), 0) AS settled
+     FROM transactions
+     WHERE booking_id = $1`,
+    [booking_id]
+  );
+  const outstanding = parseFloat(res.rows[0].invoiced) - parseFloat(res.rows[0].settled);
+  if (outstanding <= 0.005) return 0;
+
+  const drawn = await drawWalletForBooking(client, { booking_id, client_id, maxAmount: outstanding, verified_by });
+
+  // Fully cleared → the booking is no longer overdue (the cron only ever flags
+  // bookings, it never un-flags them).
+  if (drawn > 0 && outstanding - drawn <= 0.005) {
+    await client.query(
+      `UPDATE bookings SET status = 'ACTIVE' WHERE booking_id = $1 AND status = 'OVERDUE'`,
+      [booking_id]
+    );
+  }
+  return drawn;
+};
+
+// Quotation-payment entry point: finds the booking the quote belongs to — the
+// quotation's own booking_id once converted, otherwise the open booking sharing its
+// service request (a booking created separately from the client profile) — and
+// settles its outstanding invoiced charges from the wallet.
+const settleQuoteBookingFromWallet = async (client, { quote_id, client_id, verified_by = null }) => {
+  const q = await client.query(
+    `SELECT booking_id, request_id FROM quotations WHERE quote_id = $1`,
+    [quote_id]
+  );
+  if (q.rows.length === 0) return 0;
+
+  let bookingId = q.rows[0].booking_id;
+  if (!bookingId && q.rows[0].request_id) {
+    const b = await client.query(
+      `SELECT booking_id FROM bookings
+       WHERE request_id = $1 AND client_id = $2 AND status IN ('ACTIVE', 'OVERDUE')
+       ORDER BY created_at DESC LIMIT 1`,
+      [q.rows[0].request_id, client_id]
+    );
+    bookingId = b.rows[0]?.booking_id || null;
+  }
+  return settleBookingOutstandingFromWallet(client, { booking_id: bookingId, client_id, verified_by });
+};
+
+module.exports = {
+  creditClientWallet,
+  drawWalletForBooking,
+  getEarmarkedTotal,
+  settleBookingOutstandingFromWallet,
+  settleQuoteBookingFromWallet,
+};

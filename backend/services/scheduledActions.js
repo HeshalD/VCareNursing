@@ -183,7 +183,7 @@ const executeTermination = async (client, params) => {
                 const ref = terminationCode || 'your request';
                 await Promise.allSettled([
                     sendClientTerminationApproved(mobile_number, full_name, ref, endDateStr),
-                    sendSms(mobile_number, `VCare: Hi ${full_name}, your booking has ended. Official end date: ${endDateStr}. Please contact us regarding any eligible refund.`),
+                    sendSms(mobile_number, `VCare: Hi ${full_name}, your booking has ended. Official end date: ${endDateStr}. Please contact us regarding any eligible refund.`, 'termination_approved_client'),
                 ]);
             }
 
@@ -201,7 +201,7 @@ const executeTermination = async (client, params) => {
                     const patientDisplay = patient_name || 'the patient';
                     await Promise.allSettled([
                         sendStaffAssignmentTerminated(mobile_number, full_name, patientDisplay, endDateStr),
-                        sendSms(mobile_number, `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has ended. End date: ${endDateStr}. Thank you for your dedication and service.`),
+                        sendSms(mobile_number, `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has ended. End date: ${endDateStr}. Thank you for your dedication and service.`, 'assignment_ended_staff'),
                     ]);
                 }
             }
@@ -298,7 +298,7 @@ const executeCompletion = async (client, params) => {
                     const patientDisplay = patient_name || booking.client_name || 'the patient';
                     await Promise.allSettled([
                         sendStaffAssignmentTerminated(mobile_number, full_name, patientDisplay, endDateStr),
-                        sendSms(mobile_number, `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has been completed successfully on ${endDateStr}. Thank you for your dedication and service.`),
+                        sendSms(mobile_number, `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has been completed successfully on ${endDateStr}. Thank you for your dedication and service.`, 'assignment_ended_staff'),
                     ]);
                 }
             }
@@ -411,19 +411,19 @@ const executeStaffSwap = async (client, payload) => {
             // The outgoing staff's assignment has NOT ended — only a heads-up.
             if (c.old_mobile && c.old_name) {
                 tasks.push(
-                    sendSms(c.old_mobile, `VCare: Hi ${c.old_name}, ${c.new_name} has been assigned to take over ${patient}'s care. Please log your out-time once your shift ends.`)
+                    sendSms(c.old_mobile, `VCare: Hi ${c.old_name}, ${c.new_name} has been assigned to take over ${patient}'s care. Please log your out-time once your shift ends.`, 'staff_swap_outgoing')
                 );
             }
             if (c.new_mobile && c.new_name) {
                 tasks.push(
                     sendStaffNewAssignment(c.new_mobile, c.new_name, patient, c.location, c.conditions, swapDateStr),
-                    sendSms(c.new_mobile, `VCare: Hi ${c.new_name}, you have a new assignment for ${patient} at ${c.location}. Please contact the VCare office for full details.`)
+                    sendSms(c.new_mobile, `VCare: Hi ${c.new_name}, you have a new assignment for ${patient} at ${c.location}. Please contact the VCare office for full details.`, 'staff_new_assignment')
                 );
             }
             if (c.client_mobile) {
                 tasks.push(
                     sendClientStaffSwapped(c.client_mobile, c.client_name, patient, c.new_name, swapDateStr),
-                    sendSms(c.client_mobile, `VCare: Hi ${c.client_name}, your caregiver for ${patient} has been updated to ${c.new_name}. Contact us with any questions.`)
+                    sendSms(c.client_mobile, `VCare: Hi ${c.client_name}, your caregiver for ${patient} has been updated to ${c.new_name}. Contact us with any questions.`, 'client_staff_swapped')
                 );
             }
             await Promise.allSettled(tasks);

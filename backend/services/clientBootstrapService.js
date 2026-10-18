@@ -127,7 +127,7 @@ Temporary password: ${bootstrap.temp_password}
 You'll be asked to set your own password on first login. - VCare Nursing`;
 
   Promise.allSettled([
-    sendSms(bootstrap.payer_mobile, welcomeSms),
+    sendSms(bootstrap.payer_mobile, welcomeSms, 'client_welcome'),
     sendClientWelcomeNew(bootstrap.payer_mobile, bootstrap.payer_name),
   ]).then(([smsResult, waResult]) => {
     if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);

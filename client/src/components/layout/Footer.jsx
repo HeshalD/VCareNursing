@@ -86,8 +86,20 @@ const Footer = () => {
 
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="text-slate-500 text-sm">
-            2026 VCare. All rights reserved.
+          <div className="text-slate-500 text-sm flex flex-col md:flex-row items-center gap-1 md:gap-4">
+            <span>2026 VCare. All rights reserved.</span>
+            <span className="hidden md:inline text-slate-300">|</span>
+            <span>
+              Designed and Developed by{' '}
+              <a
+                href="https://www.endermonks.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-slate-700 hover:text-blue-600 transition-colors"
+              >
+                EnderMonks
+              </a>
+            </span>
           </div>
           <div className="flex gap-8 text-sm text-slate-500">
             <a href="#" className="hover:text-slate-900 transition-colors">Privacy Policy</a>

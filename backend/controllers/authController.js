@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
-const { sendWhatsAppOtp } = require('../utils/whatsapp');
+const { sendOtp: sendWhatsAppOtp } = require('../utils/metaWhatsapp');
 const { sendSmsOtp } = require('../utils/sms');
 const { resolveCity } = require('../utils/cityHelper');
 const { toE164, isValidPhone } = require('../utils/phone');
@@ -99,8 +99,8 @@ exports.registerClient = async (req, res, next) => {
     );
 
     const [whatsappResult, smsResult] = await Promise.allSettled([
-      sendWhatsAppOtp(mobile_number, otp),
-      sendSmsOtp(mobile_number, otp)
+      sendWhatsAppOtp(mobile_number, otp, 'otp_auth'),
+      sendSmsOtp(mobile_number, otp, 'otp_auth')
     ]);
 
     if (whatsappResult.status === 'rejected') console.error("WhatsApp OTP failed:", whatsappResult.reason?.message);
@@ -148,8 +148,8 @@ exports.resendOtp = async (req, res) => {
     );
 
     await Promise.allSettled([
-      sendWhatsAppOtp(mobile_number, newOtp),
-      sendSmsOtp(mobile_number, newOtp)
+      sendWhatsAppOtp(mobile_number, newOtp, 'otp_auth'),
+      sendSmsOtp(mobile_number, newOtp, 'otp_auth')
     ]);
 
     console.log(`[DEV ONLY] Resend OTP for ${mobile_number}: ${newOtp}`);
@@ -652,8 +652,8 @@ exports.requestForgotPasswordOtp = async (req, res) => {
 
     // 6. Send OTP via WhatsApp and SMS
     const [wpReset, smsReset] = await Promise.allSettled([
-      sendWhatsAppOtp(mobile_number, otp),
-      sendSmsOtp(mobile_number, otp)
+      sendWhatsAppOtp(mobile_number, otp, 'otp_auth'),
+      sendSmsOtp(mobile_number, otp, 'otp_auth')
     ]);
 
     if (wpReset.status === 'fulfilled') console.log('Password reset OTP sent via WhatsApp');

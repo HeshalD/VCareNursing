@@ -1,10 +1,11 @@
 const axios = require('axios');
 const { toMessagingDigits } = require('./phone');
 
-const { isSmsEnabled } = require('./systemSettings');
+const { isMessageEnabled } = require('./systemSettings');
 
-const sendSmsOtp = async (mobileNumber, otp) => {
-  if (!(await isSmsEnabled())) {
+// eventKey: see messageEvents.js — lets an admin switch this specific message off.
+const sendSmsOtp = async (mobileNumber, otp, eventKey) => {
+  if (!(await isMessageEnabled('sms', eventKey))) {
     console.log(`[SMS] BLOCKED (disabled in admin settings): OTP to ${mobileNumber}`);
     return { blocked: true };
   }
@@ -31,8 +32,8 @@ const sendSmsOtp = async (mobileNumber, otp) => {
   return response.data;
 };
 
-const sendSms = async (mobileNumber, message) => {
-  if (!(await isSmsEnabled())) {
+const sendSms = async (mobileNumber, message, eventKey) => {
+  if (!(await isMessageEnabled('sms', eventKey))) {
     console.log(`[SMS] BLOCKED (disabled in admin settings): to ${mobileNumber}`);
     return { blocked: true };
   }
@@ -62,25 +63,29 @@ const sendSms = async (mobileNumber, message) => {
 const sendStaffAdvanceApprovedSms = (mobileNumber, staffName, amount, newBalance) =>
   sendSms(
     mobileNumber,
-    `Hi ${staffName}, your advance request of LKR ${amount} has been approved. Your new wallet balance is LKR ${newBalance}. Log in to the VCare staff portal to view your wallet. - VCare Nursing`
+    `Hi ${staffName}, your advance request of LKR ${amount} has been approved. Your new wallet balance is LKR ${newBalance}. Log in to the VCare staff portal to view your wallet. - VCare Nursing`,
+    'staff_advance_approved'
   );
 
 const sendStaffAdvanceRejectedSms = (mobileNumber, staffName, amount, reason) =>
   sendSms(
     mobileNumber,
-    `Hi ${staffName}, your advance request of LKR ${amount} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`
+    `Hi ${staffName}, your advance request of LKR ${amount} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`,
+    'staff_advance_rejected'
   );
 
 const sendStaffLeaveApprovedSms = (mobileNumber, staffName, startDate, endDate, days) =>
   sendSms(
     mobileNumber,
-    `Hi ${staffName}, your leave request from ${startDate} to ${endDate} (${days} day${days === 1 ? '' : 's'}) has been approved. - VCare Nursing`
+    `Hi ${staffName}, your leave request from ${startDate} to ${endDate} (${days} day${days === 1 ? '' : 's'}) has been approved. - VCare Nursing`,
+    'staff_leave_approved'
   );
 
 const sendStaffLeaveRejectedSms = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendSms(
     mobileNumber,
-    `Hi ${staffName}, your leave request from ${startDate} to ${endDate} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`
+    `Hi ${staffName}, your leave request from ${startDate} to ${endDate} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`,
+    'staff_leave_rejected'
   );
 
 module.exports = { sendSmsOtp, sendSms, sendStaffAdvanceApprovedSms, sendStaffAdvanceRejectedSms, sendStaffLeaveApprovedSms, sendStaffLeaveRejectedSms };

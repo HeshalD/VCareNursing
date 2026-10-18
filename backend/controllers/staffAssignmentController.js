@@ -685,10 +685,10 @@ exports.assignStaffToBooking = async (req, res) => {
 
         const results = await Promise.allSettled([
           sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, staffProfileUrl),
-          sendSms(clientMobile, clientSms),
+          sendSms(clientMobile, clientSms, 'booking_confirmed'),
           ...(staffMobile ? [
             sendStaffNewAssignment(staffMobile, staff.full_name, patient_name || 'N/A', location_address || 'N/A', conditions, staffStartLabel),
-            sendSms(staffMobile, staffSms),
+            sendSms(staffMobile, staffSms, 'staff_new_assignment'),
           ] : []),
         ]);
 

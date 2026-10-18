@@ -17,9 +17,35 @@ const Toggle = ({ checked, disabled, onChange }) => (
   </button>
 );
 
+// Three-position master switch. Its position is derived from the individual message switches:
+// none on = Off, every one on = On, otherwise Mixed. Only Off / On are clickable (they set every message).
+const TriToggle = ({ state, disabled, onChange }) => {
+  const options = [
+    { id: 'none', label: 'Off', active: 'bg-slate-500 text-white' },
+    { id: 'some', label: 'Mixed', active: 'bg-amber-500 text-white' },
+    { id: 'all', label: 'On', active: 'bg-blue-600 text-white' },
+  ];
+  return (
+    <div role="group" className="inline-flex rounded-full bg-slate-100 p-0.5 text-xs font-semibold">
+      {options.map(({ id, label, active }) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={state === id}
+          disabled={disabled || id === 'some'}
+          onClick={() => id !== 'some' && state !== id && onChange(id === 'all')}
+          className={`px-3 py-1 rounded-full transition-colors disabled:cursor-not-allowed ${state === id ? active : 'text-slate-500 hover:text-slate-700 disabled:hover:text-slate-500'}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
 const CHANNELS = [
-  { key: 'whatsapp_enabled', label: 'WhatsApp messages', icon: MessageCircle, desc: 'Invoices, receipts, OTPs and notifications sent over WhatsApp.' },
-  { key: 'sms_enabled', label: 'SMS messages', icon: Smartphone, desc: 'OTPs and staff advance / leave notifications sent by SMS.' },
+  { key: 'whatsapp', label: 'WhatsApp messages', icon: MessageCircle, desc: 'Invoices, receipts, OTPs and notifications sent over WhatsApp.' },
+  { key: 'sms', label: 'SMS messages', icon: Smartphone, desc: 'OTPs and staff notifications sent by SMS.' },
 ];
 
 const NotificationsMessages = () => {
@@ -36,18 +62,30 @@ const NotificationsMessages = () => {
       .catch(err => setError(err?.message || 'Failed to load settings.'));
   }, [adminToken]);
 
-  const handleToggle = async (key, value) => {
-    setSavingKey(key);
+  const save = async (savingId, payload) => {
+    setSavingKey(savingId);
     setError('');
     try {
-      const res = await apiClient.updateNotificationSettings({ [key]: value });
-      setSettings(res?.data || { ...settings, [key]: value });
+      const res = await apiClient.updateNotificationSettings(payload);
+      if (res?.data) setSettings(res.data);
     } catch (err) {
       setError(err?.message || 'Failed to update setting.');
     } finally {
       setSavingKey(null);
     }
   };
+
+  const handleChannelToggle = (channel, value) => save(channel, { channel, enabled: value });
+  const handleEventToggle = (eventKey, channel, value) =>
+    save(`${eventKey}.${channel}`, { event_key: eventKey, channel, enabled: value });
+
+  // Group the per-message events, keeping the order the backend sends them in.
+  const groups = (settings?.events || []).reduce((acc, ev) => {
+    let g = acc.find((x) => x.name === ev.group);
+    if (!g) acc.push((g = { name: ev.group, events: [] }));
+    g.events.push(ev);
+    return acc;
+  }, []);
 
   return (
     <AdminLayout
@@ -61,7 +99,7 @@ const NotificationsMessages = () => {
           <div className="p-6 border-b border-slate-200">
             <h3 className="font-bold text-lg text-slate-900">Message Sending</h3>
             <p className="text-sm text-slate-500 mt-1">
-              When a channel is off, messages are skipped and nothing is sent to clients or staff. Changes apply within seconds.
+              Each channel switch reflects the individual message settings below: Off when none are on, On when all are on, Mixed otherwise. Choosing Off or On sets every message on that channel. Changes apply within seconds.
             </p>
           </div>
           {!settings ? (
@@ -80,14 +118,11 @@ const NotificationsMessages = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={`text-xs font-semibold ${settings[key] ? 'text-emerald-600' : 'text-slate-400'}`}>
-                      {settings[key] ? 'On' : 'Off'}
-                    </span>
                     {savingKey === key && <Loader2 className="w-4 h-4 animate-spin text-slate-400" />}
-                    <Toggle
-                      checked={!!settings[key]}
+                    <TriToggle
+                      state={settings.channels?.[key] || 'none'}
                       disabled={!canEdit || savingKey !== null}
-                      onChange={(v) => handleToggle(key, v)}
+                      onChange={(v) => handleChannelToggle(key, v)}
                     />
                   </div>
                 </div>
@@ -98,6 +133,58 @@ const NotificationsMessages = () => {
             <p className="px-5 pb-4 text-xs text-slate-400">You don't have permission to change these switches.</p>
           )}
         </div>
+
+        {settings && groups.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-slate-200">
+              <h3 className="font-bold text-lg text-slate-900">Individual Messages</h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Choose which messages are sent, per channel. A dash means that message is not sent over that channel.              </p>
+            </div>
+            {groups.map((group) => (
+              <div key={group.name}>
+                <div className="px-5 py-2 bg-slate-50 border-y border-slate-100 flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wide text-slate-500">{group.name}</span>
+                  <span className="hidden sm:flex gap-3 text-xs font-semibold text-slate-400">
+                    <span className="w-11 text-center">WhatsApp</span>
+                    <span className="w-11 text-center">SMS</span>
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {group.events.map((ev) => (
+                    <div key={ev.key} className="px-5 py-3 flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm">{ev.label}</p>
+                        <p className="text-xs text-slate-500">{ev.desc}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        {[
+                          { channel: 'whatsapp', name: 'WhatsApp' },
+                          { channel: 'sms', name: 'SMS' },
+                        ].map(({ channel, name }) => (
+                          <div key={channel} className="w-11 flex flex-col items-center" title={name}>
+                            <span className="sm:hidden text-[10px] text-slate-400 mb-0.5">{name}</span>
+                            {ev[channel] === null ? (
+                              <span className="text-slate-300 h-6 flex items-center">—</span>
+                            ) : (
+                              <div>
+                                <Toggle
+                                  checked={!!ev[channel]}
+                                  disabled={!canEdit || savingKey !== null}
+                                  onChange={(v) => handleEventToggle(ev.key, channel, v)}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
           <MessageSquare className="w-8 h-8 mx-auto mb-2 text-slate-300" />

@@ -1,7 +1,6 @@
 const db = require('../config/db');
 const { userHasPermission } = require('../middleware/authMiddleware');
-const { sendWhatsAppMessage } = require('../utils/whatsapp');
-const { sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet } = require('../utils/metaWhatsapp');
+const { sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendStaffAccountCreated } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { logActivity } = require('../utils/activityLogger');
 const { transactionEditColumns } = require('../utils/editedAmount');
@@ -208,7 +207,8 @@ async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paym
 
         await sendSms(
             staff.mobile_number,
-            `VCare Nursing: Your ${monthLabel} salary of ${formattedAmount} has been paid via ${methodLabel}.${referenceNumber ? ' Ref: ' + referenceNumber + '.' : ''} Net payable was ${formattedNetPayable}. Check WhatsApp for your full salary sheet.`
+            `VCare Nursing: Your ${monthLabel} salary of ${formattedAmount} has been paid via ${methodLabel}.${referenceNumber ? ' Ref: ' + referenceNumber + '.' : ''} Net payable was ${formattedNetPayable}. Check WhatsApp for your full salary sheet.`,
+            'staff_salary_payout'
         );
     }
 }
@@ -314,7 +314,8 @@ async function _sendNotificationForPayoutId(staffPaymentId) {
     try {
         await sendSms(
             payout.mobile_number,
-            `VCare Nursing: Your ${label} salary of ${formattedAmount} has been paid via ${methodLabel}.${payout.reference_number ? ' Ref: ' + payout.reference_number + '.' : ''} Net payable was ${formattedNetPayable}. Check WhatsApp for your full salary sheet.`
+            `VCare Nursing: Your ${label} salary of ${formattedAmount} has been paid via ${methodLabel}.${payout.reference_number ? ' Ref: ' + payout.reference_number + '.' : ''} Net payable was ${formattedNetPayable}. Check WhatsApp for your full salary sheet.`,
+            'staff_salary_payout'
         );
         anySent = true;
     } catch (smsErr) {
@@ -2097,7 +2098,7 @@ exports.createStaffDeduction = async (req, res) => {
             }
 
             try {
-                await sendSms(mobile_number, `VCare: Dear ${full_name}, a deduction of ${formattedAmount} has been applied to your earnings. Reason: ${trimmedReason}. Date: ${formattedDate}. Contact us for queries.`);
+                await sendSms(mobile_number, `VCare: Dear ${full_name}, a deduction of ${formattedAmount} has been applied to your earnings. Reason: ${trimmedReason}. Date: ${formattedDate}. Contact us for queries.`, 'staff_deduction');
             } catch (smsErr) {
                 console.error('SMS deduction notice failed:', smsErr.message);
             }
@@ -2247,7 +2248,7 @@ exports.createStaffBonus = async (req, res) => {
             }
 
             try {
-                await sendSms(mobile_number, `VCare: Dear ${full_name}, a bonus of ${formattedAmount} has been credited to your earnings. Reason: ${trimmedReason}. Date: ${formattedDate}. Contact us for queries.`);
+                await sendSms(mobile_number, `VCare: Dear ${full_name}, a bonus of ${formattedAmount} has been credited to your earnings. Reason: ${trimmedReason}. Date: ${formattedDate}. Contact us for queries.`, 'staff_bonus');
             } catch (smsErr) {
                 console.error('SMS bonus notice failed:', smsErr.message);
             }
@@ -3634,29 +3635,8 @@ exports.createStaffProfile = async (req, res) => {
         }
 
         // Send WhatsApp notification with the login credentials (mobile number is the username)
-        const messageBody = `Hello ${full_name}!
-
-Great news! Your staff account has been created by the administrator!
-
-Here are your login details:
-
-PHONE NUMBER: ${mobile_number}
-TEMPORARY PASSWORD: ${tempPassword}
-
-STEP 1: Go to VCare website
-STEP 2: Click "Login"
-STEP 3: Enter your PHONE NUMBER: ${mobile_number}
-STEP 4: Enter your temporary password: ${tempPassword}
-STEP 5: You'll be automatically prompted to set your own permanent password
-
-We're excited to have you join our team of dedicated healthcare professionals!
-
-With love,
-The VCare Team`;
-
-        Promise.allSettled([
-            sendWhatsAppMessage(mobile_number, messageBody)
-        ]);
+        sendStaffAccountCreated(mobile_number, full_name, mobile_number, tempPassword)
+            .catch((err) => console.error('Staff account WhatsApp failed:', err.message));
 
         res.status(201).json({
             status: 'success',

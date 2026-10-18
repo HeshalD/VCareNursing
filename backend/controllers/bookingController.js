@@ -1,6 +1,5 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
-const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
@@ -337,7 +336,7 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
                             : `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has ended on ${endDateStr}. Please contact the VCare office to confirm your next steps.`;
                         await Promise.allSettled([
                             sendStaffAssignmentTerminated(mobile_number, full_name, patientDisplay, endDateStr),
-                            sendSms(mobile_number, smsText),
+                            sendSms(mobile_number, smsText, 'assignment_ended_staff'),
                         ]);
                     }
                 } catch (e) {
@@ -885,7 +884,7 @@ exports.resumeWithStaff = async (req, res) => {
                     const startStr = new Date(`${service_start_date}T00:00:00`).toLocaleDateString('en-GB');
                     await Promise.allSettled([
                         sendStaffNewAssignment(staff.mobile_number, staff.full_name, info.patient_name, info.location, info.conditions, startStr),
-                        sendSms(staff.mobile_number, `VCare: Hi ${staff.full_name}, you have an assignment for ${info.patient_name} at ${info.location} from ${startStr}. Please contact the VCare office for full details.`),
+                        sendSms(staff.mobile_number, `VCare: Hi ${staff.full_name}, you have an assignment for ${info.patient_name} at ${info.location} from ${startStr}. Please contact the VCare office for full details.`, 'staff_new_assignment'),
                     ]);
                 } catch (e) {
                     console.error('[resumeWithStaff] notification error:', e.message);
@@ -1199,7 +1198,7 @@ const convertToBookingInternal = async (req, res) => {
             const welcomeSms = `Welcome to VCare Nursing, ${reqData.payer_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${reqData.payer_mobile}\nTemporary password: ${reqData.tempPassword}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
 
             Promise.allSettled([
-                sendSms(reqData.payer_mobile, welcomeSms),
+                sendSms(reqData.payer_mobile, welcomeSms, 'client_welcome'),
                 sendClientWelcomeNew(reqData.payer_mobile, reqData.payer_name)
             ]).then(([smsResult, waResult]) => {
                 if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
@@ -3440,7 +3439,8 @@ exports.rejectTerminationRequest = async (req, res) => {
                     const { mobile_number, full_name } = clientRes.rows[0];
                     await sendSms(
                         mobile_number,
-                        `VCare: Hi ${full_name}, your termination request (${request.termination_code}) was not approved. Reason: ${reason.trim()}. Please contact us if you have questions.`
+                        `VCare: Hi ${full_name}, your termination request (${request.termination_code}) was not approved. Reason: ${reason.trim()}. Please contact us if you have questions.`,
+                        'termination_rejected'
                     );
                 }
             } catch (e) {
@@ -3684,7 +3684,8 @@ exports.forceStopBooking = async (req, res) => {
                         notifications.push(
                             sendClientForceTerminated(client_mobile, client_name, patientDisplay, endDateStr),
                             sendSms(client_mobile,
-                                `VCare: Hi ${client_name}, your care arrangement for ${patientDisplay} has been ended effective ${endDateStr}. Please contact us if you have any questions.`
+                                `VCare: Hi ${client_name}, your care arrangement for ${patientDisplay} has been ended effective ${endDateStr}. Please contact us if you have any questions.`,
+                                'force_terminated_client'
                             )
                         );
                     }
@@ -3693,7 +3694,8 @@ exports.forceStopBooking = async (req, res) => {
                         notifications.push(
                             sendStaffForceTerminated(staff_mobile, staff_name, patientDisplay, endDateStr),
                             sendSms(staff_mobile,
-                                `VCare: Hi ${staff_name}, your assignment for ${patientDisplay} has been ended effective ${endDateStr}. Please contact the VCare office to confirm your availability.`
+                                `VCare: Hi ${staff_name}, your assignment for ${patientDisplay} has been ended effective ${endDateStr}. Please contact the VCare office to confirm your availability.`,
+                                'force_terminated_staff'
                             )
                         );
                     }
@@ -4859,7 +4861,8 @@ exports.swapStaff = async (req, res) => {
                 if (oldMobile && currentStaffName && !oldStaffClosedOn && !loggedLeave) {
                     notifications.push(
                         sendSms(oldMobile,
-                            `VCare: Hi ${currentStaffName}, ${newStaff.full_name} has been assigned to take over ${patientName}'s care. Please log your out-time once your shift ends.`
+                            `VCare: Hi ${currentStaffName}, ${newStaff.full_name} has been assigned to take over ${patientName}'s care. Please log your out-time once your shift ends.`,
+                            'staff_swap_outgoing'
                         )
                     );
                 }
@@ -4868,7 +4871,8 @@ exports.swapStaff = async (req, res) => {
                     notifications.push(
                         sendStaffNewAssignment(newStaff.staff_mobile, newStaff.full_name, patientName, location, conditions, swapDate),
                         sendSms(newStaff.staff_mobile,
-                            `VCare: Hi ${newStaff.full_name}, you have a new assignment for ${patientName} at ${location}. Please contact the VCare office for full details.`
+                            `VCare: Hi ${newStaff.full_name}, you have a new assignment for ${patientName} at ${location}. Please contact the VCare office for full details.`,
+                            'staff_new_assignment'
                         )
                     );
                 }
@@ -4877,7 +4881,8 @@ exports.swapStaff = async (req, res) => {
                     notifications.push(
                         sendClientStaffSwapped(clientMobile, clientName, patientName, newStaff.full_name, swapDate),
                         sendSms(clientMobile,
-                            `VCare: Hi ${clientName}, your caregiver for ${patientName} has been updated to ${newStaff.full_name}. Contact us if you have any questions.`
+                            `VCare: Hi ${clientName}, your caregiver for ${patientName} has been updated to ${newStaff.full_name}. Contact us if you have any questions.`,
+                            'client_staff_swapped'
                         )
                     );
                 }

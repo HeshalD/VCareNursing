@@ -1,13 +1,14 @@
 const twilio = require('twilio');
 const { toMessagingDigits } = require('./phone');
-const { isWhatsAppEnabled } = require('./systemSettings');
+const { isMessageEnabled } = require('./systemSettings');
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const client = twilio(accountSid, authToken);
 
-const sendWhatsAppOtp = async (mobileNumber, otp) => {
-  if (!(await isWhatsAppEnabled())) {
+// eventKey: see messageEvents.js — lets an admin switch this specific message off.
+const sendWhatsAppOtp = async (mobileNumber, otp, eventKey) => {
+  if (!(await isMessageEnabled('whatsapp', eventKey))) {
     console.log(`[WhatsApp disabled] Skipped OTP WhatsApp message to ${mobileNumber}`);
     return { skipped: true };
   }
@@ -44,8 +45,8 @@ const sendWhatsAppOtp = async (mobileNumber, otp) => {
   }
 };
 
-const sendWhatsAppMessage = async (mobileNumber, content, mediaOptions = null) => {
-  if (!(await isWhatsAppEnabled())) {
+const sendWhatsAppMessage = async (mobileNumber, content, mediaOptions = null, eventKey) => {
+  if (!(await isMessageEnabled('whatsapp', eventKey))) {
     console.log(`[WhatsApp disabled] Skipped WhatsApp message to ${mobileNumber}`);
     return { skipped: true };
   }

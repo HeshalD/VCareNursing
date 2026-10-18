@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { sendSms, sendSmsOtp } = require('../utils/sms');
-const { sendWhatsAppOtp } = require('../utils/whatsapp');
+const { sendOtp: sendWhatsAppOtp } = require('../utils/metaWhatsapp');
 const { sendServiceRequestConfirmed } = require('../utils/metaWhatsapp');
 const { resolveCity } = require('../utils/cityHelper');
 const { toE164, isValidPhone } = require('../utils/phone');
@@ -45,7 +45,7 @@ const notifyClient = async (mobile, name) => {
   const today = new Date().toLocaleDateString('en-LK', { day: 'numeric', month: 'long', year: 'numeric' });
   const smsBody = `Hi ${name},\n\nWe have received your Priority Membership request.\n\nOur team will get back to you shortly with your registration fee quotation.\n\nThank you for choosing VCare Nursing.`;
   const [smsRes, waRes] = await Promise.allSettled([
-    sendSms(mobile, smsBody),
+    sendSms(mobile, smsBody, 'priority_membership_confirmed'),
     sendServiceRequestConfirmed(mobile, name, 'Priority Membership', today),
   ]);
   if (smsRes.status === 'rejected') console.error('[PriorityMembership] SMS failed:', smsRes.reason?.message);
@@ -126,7 +126,7 @@ exports.sendOtp = async (req, res) => {
       [mobile, otp, String(OTP_TTL_MINUTES)]
     );
 
-    await Promise.allSettled([sendWhatsAppOtp(mobile, otp), sendSmsOtp(mobile, otp)]);
+    await Promise.allSettled([sendWhatsAppOtp(mobile, otp, 'otp_priority_membership'), sendSmsOtp(mobile, otp, 'otp_priority_membership')]);
     if (process.env.NODE_ENV !== 'production') console.log(`[DEV ONLY] Priority Membership OTP for ${mobile}: ${otp}`);
 
     res.status(200).json({ status: 'success', message: 'A verification code has been sent to your mobile number.' });

@@ -10,7 +10,7 @@ const { applyInvoicePayment, lineItemDuplicateSql } = require('./invoiceControll
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const { resolveBankAccountId } = require('../utils/pettyCash');
-const { creditClientWallet } = require('../services/walletService');
+const { creditClientWallet, settleQuoteBookingFromWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -414,6 +414,10 @@ const recordPayment = async (req, res) => {
         notes: notes || null,
         verified_by,
       });
+
+      // Charges already invoiced on the booking before this money arrived would
+      // otherwise stay overdue while the cash sits in the wallet — clear them now.
+      await settleQuoteBookingFromWallet(client, { quote_id, client_id, verified_by });
     }
 
     // Fetch bank account details (client-supplied, or the Petty Cash account for CASH)
@@ -957,6 +961,8 @@ const recordAllocatedPayment = async (req, res) => {
           notes: notes || 'Service charges credited to wallet',
           verified_by,
         });
+        // Clear charges already invoiced on the booking before this money arrived.
+        await settleQuoteBookingFromWallet(client, { quote_id, client_id, verified_by });
         if (serviceAlloc > 0) {
           receiptLineItems.push({ label: 'Service Charges', description: 'Credited to client wallet — drawn down as service is delivered', amount: serviceAlloc });
         }

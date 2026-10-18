@@ -3,7 +3,8 @@ const { toMessagingDigits: formatNumber } = require('./phone');
 
 const API_URL = `https://graph.facebook.com/v21.0/${process.env.META_WA_PHONE_NUMBER_ID}/messages`;
 
-const { isWhatsAppEnabled } = require('./systemSettings');
+const { isWhatsAppEnabled, isMessageEnabled } = require('./systemSettings');
+const { EVENT_BY_TEMPLATE } = require('./messageEvents');
 
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
   if (!(await isWhatsAppEnabled())) {
@@ -36,9 +37,12 @@ const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') =
   return response.data;
 };
 
-const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null, buttonComponents = null) => {
-  if (!(await isWhatsAppEnabled())) {
-    console.log(`[Meta WA] BLOCKED (WhatsApp disabled in admin settings): template "${templateName}" to ${to}`);
+const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null, buttonComponents = null, eventKey = null) => {
+  // The admin's per-event switch is looked up from the template name (see messageEvents.js),
+  // unless the caller names the event itself (needed when one template serves several events, e.g. OTPs).
+  const event = eventKey || EVENT_BY_TEMPLATE[templateName];
+  if (!(await isMessageEnabled('whatsapp', event))) {
+    console.log(`[Meta WA] BLOCKED (WhatsApp or "${event || templateName}" disabled in admin settings): template "${templateName}" to ${to}`);
     return { blocked: true };
   }
   try {
@@ -86,6 +90,49 @@ const sendTemplate = async (to, templateName, languageCode, bodyParams, headerPa
     throw err;
   }
 };
+
+// Verification code (OTP). eventKey picks which admin toggle governs it (otp_auth / otp_staff_applicant /
+// otp_priority_membership); all three share one template.
+// Body var: {{1}} = the code. Authentication templates also carry a "Copy code" button, which Meta
+// requires to be sent with the same code as a url-button parameter (else error #131008).
+//
+// META TEMPLATE SPEC — vcare_otp (AUTHENTICATION, en)
+// Body:    {{1}} is your VCare verification code. (Meta adds the security line / expiry per its settings.)
+// Button:  Copy code
+//
+// Language: most templates here are "en", but vcare_staff_welcome_new was created as "en_US". If vcare_otp
+// was created as English (US), the "en" attempt fails with #132001 and we retry with "en_US". Once you know
+// which one the template uses, set OTP_TEMPLATE_LANG below to skip the extra attempt.
+const OTP_TEMPLATE_LANG = null; // 'en' | 'en_US' | null (auto-detect)
+const sendOtp = async (mobileNumber, otp, eventKey) => {
+  const to = formatNumber(mobileNumber);
+  const button = [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(otp) }] }];
+  const send = (lang) => sendTemplate(to, 'vcare_otp', lang, [String(otp)], null, button, eventKey);
+  if (OTP_TEMPLATE_LANG) return send(OTP_TEMPLATE_LANG);
+  try {
+    return await send('en');
+  } catch (err) {
+    if (err.response?.data?.error?.code !== 132001) throw err;
+    return send('en_US');
+  }
+};
+
+// Sent when an admin creates a staff profile — login details. {{1}} = staff name, {{2}} = phone number
+// (the username), {{3}} = temporary password.
+//
+// META TEMPLATE SPEC — vcare_staff_account_created (UTILITY, en) — TO BE SUBMITTED
+// Body:
+//   Hi {{1}}, your VCare staff account has been created.
+//
+//   Username (phone): {{2}}
+//   Temporary password: {{3}}
+//
+//   Log in on the VCare website with these details; you will be asked to set your own password.
+//   Welcome to the VCare team!
+// NOTE: Meta may reject a UTILITY template that carries a password variable. If so, send the password by
+// SMS only (the way client welcome credentials are) and keep this template as a "check your SMS" notice.
+const sendStaffAccountCreated = (mobileNumber, staffName, phoneNumber, tempPassword) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_staff_account_created', 'en', [staffName, phoneNumber, tempPassword]);
 
 // Sent on accept when applicant is a brand-new user
 const sendStaffWelcomeNew = (mobileNumber, fullName) =>
@@ -532,4 +579,4 @@ const sendRegFeeInvoice = (mobileNumber, clientName, amount, bankName, accountHo
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };
+module.exports = { sendOtp, sendStaffAccountCreated, sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };

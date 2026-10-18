@@ -2,7 +2,7 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
-const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
+const { sendOtp: sendWhatsAppOtp } = require('../utils/metaWhatsapp');
 const { sendSmsOtp, sendSms } = require('../utils/sms');
 const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
@@ -185,8 +185,8 @@ exports.submitApplication = async (req, res) => {
 
     // Send OTP via WhatsApp and SMS in parallel
     const [wpResult, smsResult] = await Promise.allSettled([
-      sendWhatsAppOtp(mobile_number, otp),
-      sendSmsOtp(mobile_number, otp)
+      sendWhatsAppOtp(mobile_number, otp, 'otp_staff_applicant'),
+      sendSmsOtp(mobile_number, otp, 'otp_staff_applicant')
     ]);
 
     if (wpResult.status === 'rejected') console.error('WhatsApp OTP failed:', wpResult.reason?.message);
@@ -300,8 +300,8 @@ exports.resendStaffApplicationOtp = async (req, res) => {
     );
 
     await Promise.allSettled([
-      sendWhatsAppOtp(mobile_number, newOtp),
-      sendSmsOtp(mobile_number, newOtp)
+      sendWhatsAppOtp(mobile_number, newOtp, 'otp_staff_applicant'),
+      sendSmsOtp(mobile_number, newOtp, 'otp_staff_applicant')
     ]);
 
     console.log(`[DEV ONLY] Resent staff OTP for ${application_id}: ${newOtp}`);
@@ -616,7 +616,7 @@ exports.acceptApplication = async (req, res) => {
     Promise.allSettled([
         // email notification temporarily disabled
         /* sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }), */
-        sendSms(app.mobile_number, messageBody),
+        sendSms(app.mobile_number, messageBody, 'staff_application_accepted'),
         isNewUser
             ? sendStaffWelcomeNew(app.mobile_number, app.full_name)
             : sendStaffWelcomeExisting(app.mobile_number, app.full_name)
@@ -847,7 +847,7 @@ exports.rejectApplication = async (req, res) => {
             subject: emailSubject,
             message: messageBody
         }), */
-        sendSms(app.mobile_number, messageBody),
+        sendSms(app.mobile_number, messageBody, 'staff_application_rejected'),
         sendStaffApplicationRejected(app.mobile_number, app.full_name, reason)
     ]);
 

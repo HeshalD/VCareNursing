@@ -110,7 +110,7 @@ exports.createWalkInCustomer = async (req, res) => {
     const welcomeSms = `Welcome to VCare Nursing, ${full_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${mobile_number}\nTemporary password: ${tempPassword}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
 
     Promise.allSettled([
-      sendSms(mobile_number, welcomeSms),
+      sendSms(mobile_number, welcomeSms, 'client_welcome'),
       sendClientWelcomeNew(mobile_number, full_name),
     ]).then(([smsResult, waResult]) => {
       if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);

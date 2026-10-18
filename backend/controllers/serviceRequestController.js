@@ -20,7 +20,7 @@ const sendServiceRequestNotifications = async (mobileNumber, payerName, serviceT
     const smsBody = `Hi ${payerName},\n\nWe have received your service request for ${formattedType} on ${formattedDate}.\n\nOur team is reviewing your request and will get back to you with a quote shortly.\n\nThank you for choosing VCare Nursing.`;
 
     const [smsRes, waRes] = await Promise.allSettled([
-        sendSms(mobileNumber, smsBody),
+        sendSms(mobileNumber, smsBody, 'service_request_confirmed'),
         sendServiceRequestConfirmed(mobileNumber, payerName, formattedType, formattedDate),
     ]);
 
