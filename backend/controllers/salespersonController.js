@@ -89,7 +89,7 @@ exports.getSalespersonBookings = async (req, res) => {
 
     const rowsRes = await db.query(
       `SELECT bsa.id, bsa.booking_id, b.booking_code, b.status AS booking_status,
-              b.service_type, b.start_date, b.amount_paid,
+              b.service_type, b.start_date, b.amount_paid, b.client_id, b.patient_id,
               NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
               COALESCE(pp.full_name, sr.patient_name) AS patient_name,
               bsa.credited_amount, bsa.is_current, bsa.is_origin, bsa.action,

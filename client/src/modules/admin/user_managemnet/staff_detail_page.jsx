@@ -42,6 +42,7 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import BankSelect from '../../../components/common/BankSelect';
 import EditedAmountBadge from '../components/EditedAmountBadge';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -575,8 +576,8 @@ const StaffDetailPage = () => {
               <InfoRow label="Booking ID" value={currentAssignment.booking_code || currentAssignment.booking_id || '-'} mono />
               <InfoRow label="Assignment Status" value={currentAssignment.status || '-'} />
               <InfoRow label="Service Type" value={currentAssignment.service_type || currentAssignment.booking_status || '-'} />
-              <InfoRow label="Client" value={currentAssignment.client_name || '-'} />
-              <InfoRow label="Patient" value={currentAssignment.patient_name || '-'} />
+              <InfoRow label="Client" value={<ClientLink id={currentAssignment.client_id}>{currentAssignment.client_name || '-'}</ClientLink>} />
+              <InfoRow label="Patient" value={<PatientLink id={currentAssignment.patient_id}>{currentAssignment.patient_name || '-'}</PatientLink>} />
               <InfoRow label="Start Date" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
               <InfoRow label="End Date" value={formatDate(currentAssignment.service_end_date)} />
               <InfoRow label="Daily Rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
@@ -596,8 +597,8 @@ const StaffDetailPage = () => {
                     <div key={row.assignment_id || index} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-900">{row.client_name || 'Client'}</p>
-                          <p className="text-sm text-slate-500">{row.patient_name || '-'} • {row.status || '-'}</p>
+                          <p className="font-semibold text-slate-900"><ClientLink id={row.client_id}>{row.client_name || 'Client'}</ClientLink></p>
+                          <p className="text-sm text-slate-500"><PatientLink id={row.patient_id}>{row.patient_name || '-'}</PatientLink> • {row.status || '-'}</p>
                         </div>
                         <span className="text-sm font-semibold text-slate-700">{formatMoney(row.amount_allocated || row.daily_rate)}</span>
                       </div>
@@ -616,7 +617,7 @@ const StaffDetailPage = () => {
                     <div key={review.review_id || index} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
+                          <p className="font-semibold text-slate-900"><ClientLink id={review.client_profile_id}>{review.client_name || 'Client'}</ClientLink></p>
                           {review.review_code && (
                             <p className="text-xs font-mono text-slate-400">{review.review_code}</p>
                           )}
@@ -691,7 +692,7 @@ const StaffDetailPage = () => {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard icon={CalendarDays} label="Assignment Status" value={currentAssignment.status || '-'} tone="blue" />
           <StatCard icon={Briefcase} label="Service Type" value={currentAssignment.service_type || '-'} tone="violet" />
-          <StatCard icon={User} label="Client" value={currentAssignment.client_name || '-'} tone="emerald" />
+          <StatCard icon={User} label="Client" value={<ClientLink id={currentAssignment.client_id}>{currentAssignment.client_name || '-'}</ClientLink>} tone="emerald" />
           <StatCard icon={CalendarDays} label="Start Date" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} tone="amber" />
         </div>
       ) : null}
@@ -703,8 +704,8 @@ const StaffDetailPage = () => {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <InfoRow label="Assignment ID" value={currentAssignment.assignment_id || '-'} mono />
             <InfoRow label="Booking ID" value={currentAssignment.booking_code || currentAssignment.booking_id || '-'} mono />
-            <InfoRow label="Client Name" value={currentAssignment.client_name || '-'} />
-            <InfoRow label="Patient Name" value={currentAssignment.patient_name || '-'} />
+            <InfoRow label="Client Name" value={<ClientLink id={currentAssignment.client_id}>{currentAssignment.client_name || '-'}</ClientLink>} />
+            <InfoRow label="Patient Name" value={<PatientLink id={currentAssignment.patient_id}>{currentAssignment.patient_name || '-'}</PatientLink>} />
             <InfoRow label="Service Start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
             <InfoRow label="Service End" value={formatDate(currentAssignment.service_end_date)} />
             <InfoRow label="Daily Rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
@@ -772,8 +773,8 @@ const StaffDetailPage = () => {
                 {futureBookings.map((row, index) => (
                   <tr key={row.assignment_id || index} className="hover:bg-slate-50/60">
                     <td className="px-4 py-3 font-medium text-slate-900">{row.booking_id || row.assignment_id || '-'}</td>
-                    <td className="px-4 py-3 text-slate-600">{row.client_name || '-'}</td>
-                    <td className="px-4 py-3 text-slate-600">{row.patient_name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600"><ClientLink id={row.client_id}>{row.client_name || '-'}</ClientLink></td>
+                    <td className="px-4 py-3 text-slate-600"><PatientLink id={row.patient_id}>{row.patient_name || '-'}</PatientLink></td>
                     <td className="px-4 py-3 text-slate-600">
                       {row.shift_label || (row.shift_number ? `Shift ${row.shift_number}` : '-')}
                       {row.shift_start_time && <span className="ml-1 text-xs text-slate-400">({row.shift_start_time})</span>}
@@ -828,8 +829,8 @@ const StaffDetailPage = () => {
               {bookingHistory.map((row, index) => (
                 <tr key={row.assignment_id || index} className="hover:bg-slate-50/60">
                   <td className="px-4 py-3 font-medium text-slate-900">{row.booking_id || row.assignment_id || '-'}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.client_name || '-'}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.patient_name || '-'}</td>
+                  <td className="px-4 py-3 text-slate-600"><ClientLink id={row.client_id}>{row.client_name || '-'}</ClientLink></td>
+                  <td className="px-4 py-3 text-slate-600"><PatientLink id={row.patient_id}>{row.patient_name || '-'}</PatientLink></td>
                   <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{row.status || '-'}</span></td>
                   <td className="px-4 py-3 text-slate-600">{formatDate(row.service_start_date)}</td>
                   <td className="px-4 py-3 text-slate-600">{formatDate(row.service_end_date)}</td>
@@ -912,7 +913,7 @@ const StaffDetailPage = () => {
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
+                        <p className="font-semibold text-slate-900"><ClientLink id={review.client_profile_id}>{review.client_name || 'Client'}</ClientLink></p>
                         {review.review_code && (
                           <p className="text-xs font-mono font-medium text-slate-400">{review.review_code}</p>
                         )}

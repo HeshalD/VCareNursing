@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
+import { ClientLink, StaffLink } from '../components/EntityLinks';
 import {
   ArrowLeft, ArrowRight, Pencil, Loader2, AlertCircle, HeartPulse,
   User, Phone, MapPin, Stethoscope, CalendarDays, Users, Briefcase,
@@ -387,7 +388,7 @@ export default function PatientDetailPage() {
 
       <DataCard title="Client (Payer)">
         <div className="grid grid-cols-2 gap-4">
-          <div className="col-span-2"><InfoRow label="Client Name" value={patient.client_name} /></div>
+          <div className="col-span-2"><InfoRow label="Client Name" value={patient.client_name ? <ClientLink id={patient.client_id}>{patient.client_name}</ClientLink> : patient.client_name} /></div>
           <InfoRow label="Phone" value={formatMobileNumber(patient.client_mobile)} />
           <InfoRow label="Email" value={patient.client_email} />
           <div className="col-span-2"><InfoRow label="Address" value={patient.client_address} /></div>
@@ -408,7 +409,7 @@ export default function PatientDetailPage() {
             <span className="font-semibold">{active_bookings.length} active booking{active_bookings.length > 1 ? 's' : ''}</span> currently running for this care profile.
             {active_bookings.some((b) => b.assigned_staff_name) && (
               <span className="ml-1">
-                Current staff: <span className="font-semibold">{active_bookings.map((b) => b.assigned_staff_name).filter(Boolean).join(', ')}</span>
+                Current staff: <span className="font-semibold">{active_bookings.filter((b) => b.assigned_staff_name).map((b, i) => <React.Fragment key={b.booking_id}>{i > 0 && ', '}<StaffLink id={b.assigned_staff_id}>{b.assigned_staff_name}</StaffLink></React.Fragment>)}</span>
               </span>
             )}
           </p>
@@ -435,7 +436,7 @@ export default function PatientDetailPage() {
                   <span className="font-semibold text-gray-900 text-sm">{b.service_type || 'Service Booking'}</span>
                   <StatusBadge status={b.status} />
                   <span className="text-sm text-gray-500">{fmt(b.start_date)}</span>
-                  <span className="text-sm text-gray-500">{b.assigned_staff_name || 'Not assigned'}</span>
+                  <span className="text-sm text-gray-500"><StaffLink id={b.assigned_staff_id}>{b.assigned_staff_name || 'Not assigned'}</StaffLink></span>
                   <span className="font-semibold text-gray-700 text-sm">{fmtMoney(b.amount_paid)}</span>
                 </div>
               }
@@ -443,7 +444,7 @@ export default function PatientDetailPage() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <InfoRow label="Service Model" value={b.service_model} />
                 <InfoRow label="Start Date" value={fmt(b.start_date)} />
-                <InfoRow label="Assigned Staff" value={b.assigned_staff_name || 'Not assigned'} />
+                <InfoRow label="Assigned Staff" value={<StaffLink id={b.assigned_staff_id}>{b.assigned_staff_name || 'Not assigned'}</StaffLink>} />
                 <InfoRow label="Amount Paid" value={fmtMoney(b.amount_paid)} />
                 <InfoRow label="Balance" value={fmtMoney((b.amount_quotated || 0) - (b.amount_paid || 0))} />
                 <InfoRow label="Daily Rate" value={b.daily_rate ? fmtMoney(b.daily_rate) : '-'} />
@@ -485,7 +486,7 @@ export default function PatientDetailPage() {
             key={s.staff_profile_id}
             summary={
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                <span className="font-semibold text-gray-900 text-sm">{s.staff_name}</span>
+                <span className="font-semibold text-gray-900 text-sm"><StaffLink id={s.staff_profile_id}>{s.staff_name}</StaffLink></span>
                 <span className="text-sm text-gray-500">{s.designation || '-'}</span>
                 {s.is_currently_active && (
                   <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
@@ -603,7 +604,7 @@ export default function PatientDetailPage() {
                   )}
                 </div>
                 <div className="mt-1.5 text-[13px] text-gray-500">
-                  Client: <span className="font-semibold text-gray-900">{patient.client_name || '-'}</span>
+                  Client: <span className="font-semibold text-gray-900"><ClientLink id={patient.client_id}>{patient.client_name || '-'}</ClientLink></span>
                   {patient.client_mobile && <span className="ml-3 inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{formatMobileNumber(patient.client_mobile)}</span>}
                   {patient.relationship_to_client && <span className="ml-3 text-gray-400">({patient.relationship_to_client})</span>}
                 </div>

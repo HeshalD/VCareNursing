@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import {
   ArrowLeft, Loader2, Briefcase, TrendingUp, Receipt, CalendarClock, Wallet,
   Mail, Phone, CalendarDays, ExternalLink, History, UserPlus, Users, IdCard,
@@ -215,7 +216,7 @@ const SalespersonDetailPage = () => {
                             {!b.is_origin && <Tag>switched in</Tag>}
                           </div>
                           <div className="text-xs text-slate-400 truncate mt-0.5">
-                            {b.patient_name || b.client_name || '—'}
+                            {b.patient_name ? <PatientLink id={b.patient_id}>{b.patient_name}</PatientLink> : <ClientLink id={b.client_id}>{b.client_name || '—'}</ClientLink>}
                             {b.service_type ? ` · ${b.service_type}` : ''}
                             {b.start_date ? ` · starts ${formatDate(b.start_date)}` : ''}
                           </div>
@@ -262,8 +263,8 @@ const SalespersonDetailPage = () => {
                                 <div className="mt-0.5"><StatusDot status={b.booking_status} /></div>
                               </td>
                               <td className="px-4 py-3 text-slate-600">
-                                <div>{b.client_name || '—'}</div>
-                                {b.patient_name && <div className="text-xs text-slate-400">{b.patient_name}</div>}
+                                <div><ClientLink id={b.client_id}>{b.client_name || '—'}</ClientLink></div>
+                                {b.patient_name && <div className="text-xs text-slate-400"><PatientLink id={b.patient_id}>{b.patient_name}</PatientLink></div>}
                               </td>
                               <td className="px-4 py-3 text-slate-500">{formatDate(b.assigned_at)}</td>
                               <td className="px-4 py-3">
@@ -345,13 +346,13 @@ const SalespersonDetailPage = () => {
                 ) : (
                   <div className="divide-y divide-slate-100">
                     {currentClients.map((c) => (
-                      <Link to={`/admin/users/${c.client_id}/detail`} onClick={(e) => e.stopPropagation()}
+                      <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${c.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                         key={c.id}
                         className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left hover:bg-slate-50 transition-colors"
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2.5">
-                            <span className="text-sm font-semibold text-slate-900">{c.client_name || '—'}</span>
+                            <span className="text-sm font-semibold text-slate-900"><ClientLink id={c.client_id}>{c.client_name || '—'}</ClientLink></span>
                             <StatusDot status={c.reg_fee_status} />
                             {!c.is_origin && <Tag>switched in</Tag>}
                           </div>
@@ -396,7 +397,7 @@ const SalespersonDetailPage = () => {
                           return (
                             <tr key={c.id} className="hover:bg-slate-50 transition-colors">
                               <td className="px-4 py-3">
-                                <Link to={`/admin/users/${c.client_id}/detail`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline">
+                                <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${c.client_id}/detail`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline">
                                   {c.client_name || '—'}
                                 </Link>
                                 <div className="text-xs text-slate-400 mt-0.5">{formatMobileNumber(c.mobile_number) || '—'}</div>
@@ -442,7 +443,7 @@ const SalespersonDetailPage = () => {
                       <div key={a.id} className="flex items-center justify-between gap-3 px-5 py-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2.5 flex-wrap">
-                            <span className="text-sm font-semibold text-slate-900">{a.client_name || '—'}</span>
+                            <span className="text-sm font-semibold text-slate-900"><ClientLink id={a.client_id}>{a.client_name || '—'}</ClientLink></span>
                             <Tag tone={a.action === 'CREDITED' ? 'blue' : 'slate'}>{a.action}</Tag>
                             {a.is_current && <Tag tone="emerald">CURRENT</Tag>}
                           </div>

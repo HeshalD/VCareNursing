@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import {
@@ -56,7 +57,7 @@ const ExpiryBadge = ({ daysRemaining }) => {
 
 const StaffLink = ({ id, children }) =>
   id ? (
-    <Link to={`/admin/staff/${id}/detail`} className="hover:text-blue-600 hover:underline transition-colors">
+    <Link target="_blank" rel="noopener noreferrer" to={`/admin/staff/${id}/detail`} className="hover:text-blue-600 hover:underline transition-colors">
       {children}
     </Link>
   ) : (
@@ -848,9 +849,9 @@ const LeaveRequests = () => {
                         return (
                           <div key={c.assignment_id} className="rounded-lg border border-slate-200 p-3 flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900">{c.client_name || '—'}</p>
+                              <p className="text-sm font-semibold text-slate-900"><ClientLink id={c.client_id}>{c.client_name || '—'}</ClientLink></p>
                               <p className="text-xs text-slate-400 mt-0.5">
-                                {c.patient_name || ''} · {c.service_type || ''}
+                                <PatientLink id={c.patient_id}>{c.patient_name || ''}</PatientLink> · {c.service_type || ''}
                                 {c.service_model === 'SHIFT_BASED' && (c.shift_label || c.shift_number) && ` · ${c.shift_label || `Shift ${c.shift_number}`}`}
                               </p>
                               <p className="text-xs text-slate-400 mt-0.5">
@@ -886,7 +887,7 @@ const LeaveRequests = () => {
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      Replacement for {swapConflict.client_name || 'booking'}
+                      Replacement for <ClientLink id={swapConflict.client_id}>{swapConflict.client_name || 'booking'}</ClientLink>
                     </p>
                     <button onClick={closeSwap} className="text-xs font-semibold text-slate-500 hover:text-slate-700">← Back</button>
                   </div>

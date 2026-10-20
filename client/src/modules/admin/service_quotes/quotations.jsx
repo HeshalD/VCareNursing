@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ClientLink } from '../components/EntityLinks';
 import {
   FileText,
   Search,
@@ -709,7 +710,7 @@ const QuotationsPage = () => {
                         >
                           <td className="px-4 py-3 font-semibold text-slate-900">{quote.estimate_number}</td>
                           <td className="px-4 py-3">
-                            <p className="text-slate-700">{withHonorific(quote.client_honorific, quote.payer_name)}</p>
+                            <p className="text-slate-700"><ClientLink id={quote.request_client_id}>{withHonorific(quote.client_honorific, quote.payer_name)}</ClientLink></p>
                             <p className="text-xs text-slate-400">{formatMobileNumber(quote.payer_mobile)}</p>
                           </td>
                           <td className="px-4 py-3 text-right text-slate-700">{money(quote.total_amount)}</td>

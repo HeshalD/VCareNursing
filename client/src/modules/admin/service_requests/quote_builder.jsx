@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -303,7 +304,7 @@ const QuoteBuilder = () => {
               <p className="text-blue-200 text-xs font-semibold uppercase tracking-widest mb-1">Creating Quote For</p>
               <h2 className="text-xl font-bold text-white leading-tight">{serviceRequest.patient_name}</h2>
               <p className="text-blue-200 text-sm mt-1">
-                Payer: <span className="text-white font-medium">{serviceRequest.payer_name}</span>
+                Payer: <span className="text-white font-medium"><ClientLink id={serviceRequest.client_id}>{serviceRequest.payer_name}</ClientLink></span>
                 <span className="mx-2 opacity-50">·</span>
                 {formatMobileNumber(serviceRequest.payer_mobile)}
               </p>
@@ -361,7 +362,7 @@ const QuoteBuilder = () => {
                     <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</span>
                   </div>
                   <div className="pl-8 divide-y divide-slate-100">
-                    <InfoRow label="Name" value={serviceRequest.patient_name} />
+                    <InfoRow label="Name" value={serviceRequest.patient_name ? <PatientLink id={serviceRequest.patient_id}>{serviceRequest.patient_name}</PatientLink> : serviceRequest.patient_name} />
                     <InfoRow label="Age" value={`${serviceRequest.patient_age} years`} />
                     <InfoRow label="Condition" value={serviceRequest.patient_condition} />
                   </div>

@@ -312,6 +312,7 @@ exports.getPatientDetail = async (req, res) => {
                     b.amount_paid,
                     b.daily_rate,
                     b.created_at,
+                    b.assigned_staff_id,
                     sp.full_name   AS assigned_staff_name,
                     sp.designation AS assigned_staff_designation
                  FROM bookings b

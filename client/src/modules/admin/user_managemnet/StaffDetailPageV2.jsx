@@ -58,6 +58,7 @@ import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../act
 import BankSelect from '../../../components/common/BankSelect';
 import CitySelect from '../../../components/common/CitySelect';
 import EditedAmountBadge from '../components/EditedAmountBadge';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -1636,7 +1637,7 @@ const StaffDetailPageV2 = () => {
                 <div className="flex items-center gap-3 mb-4">
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0" />
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">{currentAssignment.patient_name || 'Patient'}</div>
+                    <div className="text-sm font-semibold text-slate-900"><PatientLink id={currentAssignment.patient_id}>{currentAssignment.patient_name || 'Patient'}</PatientLink></div>
                     <div className="text-xs text-slate-500 mt-0.5">
                       {currentAssignment.service_type || '-'} · since {formatDate(currentAssignment.service_start_date || currentAssignment.start_date)}
                     </div>
@@ -1644,7 +1645,7 @@ const StaffDetailPageV2 = () => {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <Field label="Booking code" value={currentAssignment.booking_code || currentAssignment.booking_id} mono />
-                  <Field label="Client" value={currentAssignment.client_name} />
+                  <Field label="Client" value={currentAssignment.client_name ? <ClientLink id={currentAssignment.client_id}>{currentAssignment.client_name}</ClientLink> : currentAssignment.client_name} />
                   <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
                   <Field label="Status" value={currentAssignment.status} />
                 </div>
@@ -1666,8 +1667,8 @@ const StaffDetailPageV2 = () => {
                   <div className="flex items-center gap-2.5">
                     <span className="w-2 h-2 rounded-full bg-slate-400 flex-shrink-0" />
                     <div>
-                      <div className="text-sm font-semibold text-slate-900">{row.client_name || 'Client'}</div>
-                      <div className="text-xs text-slate-400">{row.patient_name || '-'} · {row.status || '-'}</div>
+                      <div className="text-sm font-semibold text-slate-900"><ClientLink id={row.client_id}>{row.client_name || 'Client'}</ClientLink></div>
+                      <div className="text-xs text-slate-400"><PatientLink id={row.patient_id}>{row.patient_name || '-'}</PatientLink> · {row.status || '-'}</div>
                     </div>
                   </div>
                   <span className="text-sm font-bold text-slate-700">{formatMoney(row.amount_allocated || row.daily_rate)}</span>
@@ -1739,7 +1740,7 @@ const StaffDetailPageV2 = () => {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniCard label="Assignment status" value={currentAssignment.status || '-'} />
           <MiniCard label="Service type" value={currentAssignment.service_type || '-'} />
-          <MiniCard label="Client" value={currentAssignment.client_name || '-'} />
+          <MiniCard label="Client" value={<ClientLink id={currentAssignment.client_id}>{currentAssignment.client_name || '-'}</ClientLink>} />
           <MiniCard label="Start date" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
         </div>
       )}
@@ -1752,8 +1753,8 @@ const StaffDetailPageV2 = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <Field label="Assignment ID" value={currentAssignment.assignment_id} mono />
               <Field label="Booking ID" value={currentAssignment.booking_code || currentAssignment.booking_id} mono />
-              <Field label="Client name" value={currentAssignment.client_name} />
-              <Field label="Patient name" value={currentAssignment.patient_name} />
+              <Field label="Client name" value={currentAssignment.client_name ? <ClientLink id={currentAssignment.client_id}>{currentAssignment.client_name}</ClientLink> : currentAssignment.client_name} />
+              <Field label="Patient name" value={currentAssignment.patient_name ? <PatientLink id={currentAssignment.patient_id}>{currentAssignment.patient_name}</PatientLink> : currentAssignment.patient_name} />
               <Field label="Service start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
               <Field
                 label="Service end"
@@ -1840,8 +1841,8 @@ const StaffDetailPageV2 = () => {
               {futureBookings.map((row, i) => (
                 <TableRow key={row.assignment_id || i} cols="1fr 1.2fr 1.2fr 1fr 1fr 0.8fr 0.8fr">
                   <div className="font-mono text-xs text-slate-500">{row.booking_id || row.assignment_id || '-'}</div>
-                  <div className="text-sm font-semibold text-slate-900">{row.client_name || '-'}</div>
-                  <div className="text-sm text-slate-600">{row.patient_name || '-'}</div>
+                  <div className="text-sm font-semibold text-slate-900"><ClientLink id={row.client_id}>{row.client_name || '-'}</ClientLink></div>
+                  <div className="text-sm text-slate-600"><PatientLink id={row.patient_id}>{row.patient_name || '-'}</PatientLink></div>
                   <div className="text-xs text-slate-500">
                     {row.shift_label || (row.shift_number ? `Shift ${row.shift_number}` : '-')}
                     {row.shift_start_time && <span className="ml-1 text-slate-400">({row.shift_start_time})</span>}
@@ -1887,7 +1888,7 @@ const StaffDetailPageV2 = () => {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniCard label="Total bookings" value={rows.length} />
           <MiniCard label="Days worked" value={totalDays} />
-          <MiniCard label="Active booking" value={currentAssignment?.client_name || '—'} color="#1d4ed8" />
+          <MiniCard label="Active booking" value={<ClientLink id={currentAssignment.client_id}>{currentAssignment?.client_name || '—'}</ClientLink>} color="#1d4ed8" />
           <MiniCard label="Avg per booking" value={rows.length ? formatMoney(avgSalary) : '—'} />
         </div>
         <Card>
@@ -1910,8 +1911,8 @@ const StaffDetailPageV2 = () => {
                   return (
                     <TableRow key={row.assignment_id || i} cols="1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr">
                       <div className="font-mono text-xs text-slate-500">{row.booking_id || row.assignment_id || '-'}</div>
-                      <div className="text-sm font-semibold text-slate-900">{row.client_name || '-'}</div>
-                      <div className="text-sm text-slate-600">{row.patient_name || '-'}</div>
+                      <div className="text-sm font-semibold text-slate-900"><ClientLink id={row.client_id}>{row.client_name || '-'}</ClientLink></div>
+                      <div className="text-sm text-slate-600"><PatientLink id={row.patient_id}>{row.patient_name || '-'}</PatientLink></div>
                       <div><StatusPill value={row.status} /></div>
                       <div className="text-xs text-slate-500">{start ? formatDate(row.service_start_date) : '-'}</div>
                       <div className="text-right text-sm text-slate-600">{days ? `${days}d` : '-'}</div>
@@ -1978,7 +1979,7 @@ const StaffDetailPageV2 = () => {
                       <div key={review.review_id || i} className={`bg-slate-50 border border-slate-200 rounded-lg p-3.5 transition-opacity ${isVisible ? '' : 'opacity-60'}`}>
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                           <div>
-                            <div className="text-sm font-semibold text-slate-900">{review.client_name || 'Client'}</div>
+                            <div className="text-sm font-semibold text-slate-900"><ClientLink id={review.client_profile_id}>{review.client_name || 'Client'}</ClientLink></div>
                             <div className="text-xs text-slate-400 mt-0.5">{formatDateTime(review.created_at)}</div>
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">

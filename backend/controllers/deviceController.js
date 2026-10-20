@@ -166,6 +166,7 @@ exports.listAllSessions = async (req, res) => {
               d.label AS device_label,
               d.status AS device_status,
               COALESCE(i.full_name, u.email) AS staff_name,
+              i.id AS internal_staff_id,
               s.id AS session_id,
               s.ip_address,
               s.login_at,

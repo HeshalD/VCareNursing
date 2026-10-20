@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 
 // Shared admin links for people names. Each renders plain text when no id is
 // available (e.g. anonymous review, unassigned booking, departed staff), so it is
-// always safe to wrap a name in one of these.
+// always safe to wrap a name in one of these. Links open in a new tab.
 const makeLink = (buildPath, title) => ({ id, children, className = '' }) => {
   if (!id) return <>{children}</>;
   return (
     <Link
       to={buildPath(id)}
+      target="_blank"
+      rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
       title={title}
       className={`hover:text-blue-600 hover:underline transition-colors ${className}`}

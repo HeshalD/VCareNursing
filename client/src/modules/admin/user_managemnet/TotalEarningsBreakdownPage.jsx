@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -64,8 +65,8 @@ const BookingRow = ({ booking }) => {
         onClick={() => setExpanded((p) => !p)}
       >
         <td className="px-4 py-3">
-          <div className="font-medium text-slate-900">{booking.client_name || '-'}</div>
-          <div className="text-xs text-slate-500">{booking.patient_name || '-'}</div>
+          <div className="font-medium text-slate-900"><ClientLink id={booking.client_id}>{booking.client_name || '-'}</ClientLink></div>
+          <div className="text-xs text-slate-500"><PatientLink id={booking.patient_id}>{booking.patient_name || '-'}</PatientLink></div>
         </td>
         <td className="px-4 py-3 text-sm text-slate-600">
           {booking.service_type || '-'}
@@ -160,7 +161,7 @@ export default function TotalEarningsBreakdownPage() {
           <div>
             <h1 className="text-xl font-bold text-slate-900">Total Earnings Breakdown</h1>
             {data?.staff_name && (
-              <p className="text-sm text-slate-500">{data.staff_name}</p>
+              <p className="text-sm text-slate-500"><StaffLink id={staffProfileId}>{data.staff_name}</StaffLink></p>
             )}
           </div>
         </div>

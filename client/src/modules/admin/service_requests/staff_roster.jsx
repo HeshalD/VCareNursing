@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -401,7 +402,7 @@ const StaffRoster = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                 <div className="flex items-center gap-2">
                   <User className="w-4 h-4 text-blue-600" />
-                  <span className="text-blue-800">Patient: {serviceRequest.patient_name}</span>
+                  <span className="text-blue-800">Patient: <PatientLink id={serviceRequest.patient_id}>{serviceRequest.patient_name}</PatientLink></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Phone className="w-4 h-4 text-blue-600" />
@@ -927,7 +928,7 @@ const StaffRoster = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                       <div className="flex items-center gap-2">
                         <User className="w-4 h-4 text-blue-600" />
-                        <span className="text-blue-800">Patient: {serviceRequest.patient_name}</span>
+                        <span className="text-blue-800">Patient: <PatientLink id={serviceRequest.patient_id}>{serviceRequest.patient_name}</PatientLink></span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Phone className="w-4 h-4 text-blue-600" />
@@ -1173,7 +1174,7 @@ const StaffRoster = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-500">Care Profile:</span>
-                            <span className="text-sm font-medium text-slate-900">{serviceRequest.patient_name}</span>
+                            <span className="text-sm font-medium text-slate-900"><PatientLink id={serviceRequest.patient_id}>{serviceRequest.patient_name}</PatientLink></span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-500">Service:</span>

@@ -351,7 +351,8 @@ const getLeaveConflicts = async (req, res) => {
               b.service_type, b.service_model,
               bsa.shift_slot_id, s.shift_number, s.label AS shift_label,
               NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
-              p.full_name AS patient_name
+              p.full_name AS patient_name,
+              b.client_id, b.patient_id
        FROM booking_staff_assignments bsa
        JOIN bookings b ON b.booking_id = bsa.booking_id
        LEFT JOIN booking_shift_slots s ON s.shift_slot_id = bsa.shift_slot_id

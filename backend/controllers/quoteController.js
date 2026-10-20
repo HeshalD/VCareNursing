@@ -139,7 +139,19 @@ exports.getQuotesByRequest = async (req, res) => {
                        SELECT COUNT(*)
                        FROM payment_tracking pt
                        WHERE pt.quote_id = q.quote_id
-                   ), 0) as payment_count
+                   ), 0) as payment_count,
+                   COALESCE((
+                       SELECT json_agg(json_build_object(
+                           'line_item_id', li.line_item_id,
+                           'item_type', li.item_type,
+                           'description', li.description,
+                           'quantity', li.quantity,
+                           'unit_price', li.unit_price,
+                           'amount', li.amount
+                       ) ORDER BY li.sort_order)
+                       FROM quote_line_items li
+                       WHERE li.quote_id = q.quote_id
+                   ), '[]') as line_items
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
             LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id

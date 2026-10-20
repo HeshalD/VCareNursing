@@ -9,6 +9,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PayslipPreviewModal from '../internal_staff_salary/PayslipPreviewModal';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 
 const SHEET_STATUS_CONFIG = {
   DRAFT:     { text: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200', label: 'Draft' },
@@ -615,7 +616,7 @@ const InternalStaffProfilePage = () => {
                           {coordinatorWork.bookings.map((b) => (
                             <div key={b.booking_id} className="px-4 py-2.5 flex items-center justify-between text-[13px]">
                               <div>
-                                <p className="font-medium text-gray-900">{b.client_name || '—'}</p>
+                                <p className="font-medium text-gray-900"><ClientLink id={b.client_id}>{b.client_name || '—'}</ClientLink></p>
                                 <p className="text-xs text-gray-500 font-mono">{b.booking_code} · {b.service_type}</p>
                               </div>
                               <span className="text-xs font-medium text-gray-500">{b.status?.replace(/_/g, ' ')}</span>
@@ -633,7 +634,7 @@ const InternalStaffProfilePage = () => {
                               <div key={c.client_profile_id} className="px-4 py-2.5 flex items-center justify-between text-[13px]">
                                 <div className="flex items-center gap-2">
                                   <Users className="w-3.5 h-3.5 text-gray-400" />
-                                  <span className="font-medium text-gray-900">{c.full_name}</span>
+                                  <span className="font-medium text-gray-900"><ClientLink id={c.client_profile_id}>{c.full_name}</ClientLink></span>
                                 </div>
                                 <span className="text-xs text-gray-400 font-mono">{c.client_code}</span>
                               </div>
@@ -649,9 +650,9 @@ const InternalStaffProfilePage = () => {
                               <div key={p.patient_id} className="px-4 py-2.5 flex items-center justify-between text-[13px]">
                                 <div className="flex items-center gap-2">
                                   <HeartPulse className="w-3.5 h-3.5 text-gray-400" />
-                                  <span className="font-medium text-gray-900">{p.full_name}</span>
+                                  <span className="font-medium text-gray-900"><PatientLink id={p.patient_id}>{p.full_name}</PatientLink></span>
                                 </div>
-                                <span className="text-xs text-gray-500">{p.client_name}</span>
+                                <span className="text-xs text-gray-500"><ClientLink id={p.client_profile_id || p.client_id}>{p.client_name}</ClientLink></span>
                               </div>
                             ))}
                           </div>
@@ -664,7 +665,7 @@ const InternalStaffProfilePage = () => {
                         <div className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
                           {monthAttribution.registrations.map((r) => (
                             <div key={r.id} className="px-4 py-2.5 flex items-center justify-between text-[13px]">
-                              <span className="text-gray-700">{r.client_name}</span>
+                              <span className="text-gray-700"><ClientLink id={r.client_id}>{r.client_name}</ClientLink></span>
                               <span className="font-medium text-gray-800">{money(r.credited_amount)}</span>
                             </div>
                           ))}

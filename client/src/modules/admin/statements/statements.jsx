@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import {
   Eye, XCircle, Loader2, Calendar, Activity, Clock, CheckCircle,
   FileText, Download, MessageSquare, Stethoscope, Baby, Heart,
@@ -204,9 +205,9 @@ const BulkBookingModal = ({ bookings, params, periodLabel, adminToken, mode, sou
                 {r.status === 'pending' && <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">{r.booking.client_name}</p>
+                <p className="text-sm font-semibold text-slate-800 truncate"><ClientLink id={r.booking.client_profile_id}>{r.booking.client_name}</ClientLink></p>
                 <p className="text-xs text-slate-500 truncate">
-                  {r.booking.patient_name}{r.booking.booking_code ? ` · ${r.booking.booking_code}` : ''}
+                  <PatientLink id={r.booking.patient_id}>{r.booking.patient_name}</PatientLink>{r.booking.booking_code ? ` · ${r.booking.booking_code}` : ''}
                 </p>
               </div>
               <span className={`text-xs font-medium shrink-0 ${
@@ -370,7 +371,7 @@ const BulkHistoryModal = ({ statements, adminToken, mode, onClose, onSuccess }) 
                 {r.status === 'pending' && <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">{r.statement.client_name || '—'}</p>
+                <p className="text-sm font-semibold text-slate-800 truncate"><ClientLink id={r.statement.client_id}>{r.statement.client_name || '—'}</ClientLink></p>
                 <p className="text-xs text-slate-500 truncate">
                   {r.statement.statement_code}
                   {r.statement.period_start ? ` · ${fmtDate(r.statement.period_start)} – ${fmtDate(r.statement.period_end)}` : ''}
@@ -1266,12 +1267,12 @@ const Statements = () => {
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-2 flex-1 min-w-0">
                       <div>
                         <p className="text-xs text-slate-400 mb-0.5">Client</p>
-                        <p className="text-sm font-semibold text-slate-900 truncate">{booking.client_name}</p>
+                        <p className="text-sm font-semibold text-slate-900 truncate"><ClientLink id={booking.client_profile_id}>{booking.client_name}</ClientLink></p>
                         <p className="text-xs text-slate-500 truncate">{formatMobileNumber(booking.client_mobile)}</p>
                       </div>
                       <div>
                         <p className="text-xs text-slate-400 mb-0.5">Care Profile</p>
-                        <p className="text-sm font-medium text-slate-900 truncate">{booking.patient_name}</p>
+                        <p className="text-sm font-medium text-slate-900 truncate"><PatientLink id={booking.patient_id}>{booking.patient_name}</PatientLink></p>
                         <p className="text-xs text-slate-500">Age {booking.patient_age}</p>
                       </div>
                       <div>
@@ -1286,7 +1287,7 @@ const Statements = () => {
                         <p className="text-xs text-slate-400 mb-0.5">Staff</p>
                         {booking.staff_name ? (
                           <>
-                            <p className="text-sm font-medium text-slate-900 truncate">{booking.staff_name}</p>
+                            <p className="text-sm font-medium text-slate-900 truncate"><StaffLink id={booking.staff_profile_id}>{booking.staff_name}</StaffLink></p>
                             <p className="text-xs text-slate-500 truncate">{formatMobileNumber(booking.staff_mobile)}</p>
                           </>
                         ) : (
@@ -1619,7 +1620,7 @@ const Statements = () => {
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-2 flex-1 min-w-0">
                         <div>
                           <p className="text-xs text-slate-400 mb-0.5">Client</p>
-                          <p className="text-sm font-semibold text-slate-900 truncate">{client.honorific ? `${client.honorific} ` : ''}{client.full_name}</p>
+                          <p className="text-sm font-semibold text-slate-900 truncate"><ClientLink id={client.client_profile_id}>{client.honorific ? `${client.honorific} ` : ''}{client.full_name}</ClientLink></p>
                           <p className="text-xs text-slate-500 truncate">{client.client_code}</p>
                         </div>
                         <div>
@@ -1922,7 +1923,7 @@ const Statements = () => {
                     <td className="px-5 py-3">
                       <span className="font-mono text-xs text-slate-500">{s.statement_code}</span>
                     </td>
-                    <td className="px-5 py-3 text-sm font-semibold text-slate-900">{s.client_name || '—'}</td>
+                    <td className="px-5 py-3 text-sm font-semibold text-slate-900"><ClientLink id={s.client_id}>{s.client_name || '—'}</ClientLink></td>
                     <td className="px-5 py-3 text-xs text-slate-600 whitespace-nowrap">
                       {fmtDate(s.period_start)} – {fmtDate(s.period_end)}
                     </td>

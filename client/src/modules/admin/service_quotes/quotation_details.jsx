@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
@@ -476,7 +477,7 @@ const QuotationDetailsPage = () => {
                     <span className="text-xs">{quote.estimate_number}</span>
                   </div>
                   {quote.request_client_id ? (
-                    <Link to={`/admin/users/${quote.request_client_id}/detail`}
+                    <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${quote.request_client_id}/detail`}
                       title="View client profile"
                       className="mt-1 block w-fit text-left text-lg font-semibold text-slate-900 hover:text-blue-600 hover:underline transition-colors"
                     >
@@ -485,7 +486,7 @@ const QuotationDetailsPage = () => {
                   ) : (
                     <h2 className="mt-1 text-lg font-semibold text-slate-900">{withHonorific(quote.client_honorific, quote.payer_name)}</h2>
                   )}
-                  <p className="text-sm text-slate-500">{quote.patient_name} · {quote.service_type}</p>
+                  <p className="text-sm text-slate-500"><PatientLink id={quote.patient_id}>{quote.patient_name}</PatientLink> · {quote.service_type}</p>
                 </div>
                 <StatusDot config={PAYMENT_STATUS_CONFIG} status={status} />
               </div>
@@ -702,7 +703,7 @@ const QuotationDetailsPage = () => {
                 <Row
                   label="Payer"
                   value={quote.request_client_id ? (
-                    <Link to={`/admin/users/${quote.request_client_id}/detail`} onClick={(e) => e.stopPropagation()}
+                    <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${quote.request_client_id}/detail`} onClick={(e) => e.stopPropagation()}
                       className="font-medium text-blue-600 hover:underline"
                     >
                       {withHonorific(quote.client_honorific, quote.payer_name)}

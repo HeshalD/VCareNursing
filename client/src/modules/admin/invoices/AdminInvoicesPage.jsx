@@ -550,7 +550,7 @@ export default function AdminInvoicesPage() {
                             </td>
                             <td className="px-4 py-3">
                               {inv.client_name ? (
-                                <Link to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
+                                <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                   className={linkCls}
                                 >
                                   {inv.client_name}
@@ -708,7 +708,7 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.service_date)}</td>
                           <td className="px-4 py-3">
                             {inv.client_name ? (
-                              <Link to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
+                              <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={linkCls}
                               >
                                 {inv.client_name}
@@ -857,7 +857,7 @@ export default function AdminInvoicesPage() {
                         return (
                           <tr key={row.client_profile_id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-4 py-3">
-                              <Link to={`/admin/users/${row.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
+                              <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${row.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={`${linkCls} text-left`}
                               >
                                 <span className="block font-medium">{regFeeDisplayName(row)}</span>
@@ -869,7 +869,7 @@ export default function AdminInvoicesPage() {
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {row.mobile_number ? (
-                                <Link to={`/admin/users/${row.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
+                                <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${row.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                   className={linkCls}
                                 >
                                   {formatMobileNumber(row.mobile_number)}
@@ -1088,7 +1088,7 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.created_at)}</td>
                           <td className="px-4 py-3">
                             {inv.client_id ? (
-                              <Link to={`/admin/users/${inv.client_id}/detail`} onClick={(e) => e.stopPropagation()}
+                              <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${inv.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={linkCls}
                               >
                                 {inv.client_name}
@@ -1282,7 +1282,7 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.invoiced_at)}</td>
                           <td className="px-4 py-3">
                             {inv.client_profile_id ? (
-                              <Link to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
+                              <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={linkCls}
                               >
                                 {inv.client_name || '—'}

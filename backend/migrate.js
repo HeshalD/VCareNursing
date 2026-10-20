@@ -1459,6 +1459,7 @@ async function runMigration() {
   // enforced in the controller, not a DB CHECK, to keep this additive.
   await db.query(`ALTER TABLE quotations ALTER COLUMN request_id DROP NOT NULL`);
   await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS quote_type VARCHAR(20) NOT NULL DEFAULT 'SERVICE'`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP`);
   await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES client_profiles(client_profile_id)`);
   await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS walk_in_customer_id UUID REFERENCES walk_in_customers(walk_in_customer_id)`);
 

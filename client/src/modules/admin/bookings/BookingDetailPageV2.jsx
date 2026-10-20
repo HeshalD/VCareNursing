@@ -24,6 +24,7 @@ import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import EditedAmountBadge from '../components/EditedAmountBadge';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -3186,7 +3187,7 @@ const BookingDetailPageV2 = () => {
                 <div className="flex flex-wrap items-center gap-2 mb-1.5">
                   <h1 className="text-[17px] font-semibold text-gray-900">
                     {heroProfilePath ? (
-                      <Link to={heroProfilePath} onClick={(e) => e.stopPropagation()}
+                      <Link target="_blank" rel="noopener noreferrer" to={heroProfilePath} onClick={(e) => e.stopPropagation()}
                         title={patientDetails.patient_id ? 'Open care profile' : 'Open client profile'}
                         className={heroLinkCls}
                       >
@@ -3230,7 +3231,7 @@ const BookingDetailPageV2 = () => {
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5" />
                       {clientProfilePath ? (
-                        <Link to={clientProfilePath} onClick={(e) => e.stopPropagation()}
+                        <Link target="_blank" rel="noopener noreferrer" to={clientProfilePath} onClick={(e) => e.stopPropagation()}
                           title="Open client profile"
                           className="hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors"
                         >
@@ -4443,7 +4444,7 @@ const BookingDetailPageV2 = () => {
                   <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Client</h3>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
-                  <Field label="Name"      value={clientDetails.client_name} />
+                  <Field label="Name"      value={clientDetails.client_name ? <ClientLink id={statementClientId}>{clientDetails.client_name}</ClientLink> : clientDetails.client_name} />
                   <Field label="Client ID" value={clientDetails.client_code || clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
                   <Field label="Phone"     value={formatMobileNumber(clientDetails.client_mobile || clientDetails.mobile) || '-'} />
                   <Field label="Email"     value={clientDetails.client_email || clientDetails.email || '-'} />
@@ -4456,7 +4457,7 @@ const BookingDetailPageV2 = () => {
                   <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Care profile</h3>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
-                  <Field label="Patient"      value={patientDetails.patient_name} />
+                  <Field label="Patient"      value={patientDetails.patient_name ? <PatientLink id={patientDetails.patient_id}>{patientDetails.patient_name}</PatientLink> : patientDetails.patient_name} />
                   <Field label="Age"          value={patientDetails.patient_age || '-'} />
                   <Field label="Relationship" value={patientDetails.relationship_to_client || '-'} />
                   <Field label="Mobility"     value={patientDetails.mobility || '-'} />
@@ -6207,7 +6208,7 @@ const BookingDetailPageV2 = () => {
                           {s.label || `Shift ${s.shift_number}`} · {(s.start_time || '').slice(0, 5)} ({s.duration_hours}h)
                           <span className="text-slate-300">—</span>
                           <span className={slot?.assignment ? 'font-semibold text-slate-900' : 'italic text-slate-400'}>
-                            {slot?.assignment?.staff_name || 'Unassigned'}
+                            <StaffLink id={slot?.assignment?.staff_profile_id}>{slot?.assignment?.staff_name || 'Unassigned'}</StaffLink>
                           </span>
                         </span>
                       );
@@ -6513,7 +6514,7 @@ const BookingDetailPageV2 = () => {
                         return (
                           <div key={a.assignment_id} className="flex items-center justify-between gap-3 flex-wrap">
                             <span>
-                              Did <span className="font-semibold text-slate-800">{staffName}</span> leave on {formatDate(dayModal.dateISO)}? Logging them out ends their assignment that day, and the booking is paused from then until you resume it.
+                              Did <span className="font-semibold text-slate-800"><StaffLink id={a.staff_profile_id}>{staffName}</StaffLink></span> leave on {formatDate(dayModal.dateISO)}? Logging them out ends their assignment that day, and the booking is paused from then until you resume it.
                             </span>
                             <button
                               onClick={() => openCloseAssignment({

@@ -97,7 +97,7 @@ exports.getProductPurchaseHistory = async (req, res) => {
   try {
     const result = await db.query(
       `SELECT li.line_item_id, li.quantity, li.unit_price, li.amount,
-              q.quote_id, q.estimate_number, q.created_at AS quoted_at, q.status AS quote_status,
+              q.quote_id, q.estimate_number, q.created_at AS quoted_at, q.status AS quote_status, q.client_id,
               NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, wc.full_name AS walk_in_name,
               i.invoice_id, i.invoice_code, i.status AS invoice_status, i.amount AS invoice_amount, i.paid_at
        FROM quote_line_items li

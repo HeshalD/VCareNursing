@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Phone, MapPin, Calendar, FileText,
   Eye, Calculator, Settings, Shield, Loader2,
-  ChevronRight, Wallet, UserPlus, CalendarCheck, UserCog, User,
+  ChevronRight, ChevronDown, Wallet, UserPlus, CalendarCheck, UserCog, User, X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import FilterableTh from '../components/FilterableTh';
@@ -105,7 +106,7 @@ const getStageAction = (r) => {
     const isFullyPaid = r.quote_total_amount != null
       && Number(r.quote_total_paid) >= Number(r.quote_total_amount);
     if (!isFullyPaid) {
-      return { icon: Wallet, title: 'Record Payment', path: `/admin/quotations/${r.active_quote_id}` };
+      return { icon: Wallet, title: 'Record Payment', path: `/admin/quotations/${r.active_quote_id}`, pickQuote: true };
     }
     // A Priority Membership is just a registration fee — nothing to book once it's paid.
     if (r.service_type === PRIORITY_TYPE) return null;
@@ -117,8 +118,80 @@ const getStageAction = (r) => {
   return null;
 };
 
+const formatMoney = (v) =>
+  `Rs. ${Number(v || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const QuoteOption = ({ quote, isActive, onSelect }) => {
+  const [open, setOpen] = useState(false);
+  const items = quote.line_items || [];
+  const total = Number(quote.total_amount || 0);
+  const paid = Number(quote.total_paid || 0);
+  const fullyPaid = total > 0 && paid >= total;
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          className="p-1 rounded text-slate-400 hover:bg-slate-100"
+          title={open ? 'Hide line items' : 'Show line items'}
+        >
+          <ChevronDown className={`w-4 h-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-sm text-slate-900">{quote.estimate_number || 'Quotation'}</span>
+            {isActive && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700">Active</span>
+            )}
+            {fullyPaid && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Fully paid</span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {formatDate(quote.created_at)} · {formatMoney(total)} · Paid {formatMoney(paid)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onSelect(quote)}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-500"
+        >
+          Record Payment
+        </button>
+      </div>
+      {open && (
+        <div className="border-t border-slate-100 bg-slate-50 px-3 py-2">
+          {items.length === 0 ? (
+            <p className="text-xs text-slate-400 py-1">No line items.</p>
+          ) : (
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-slate-100">
+                {items.map(li => (
+                  <tr key={li.line_item_id}>
+                    <td className="py-1.5 pr-2 text-slate-700">{li.description || li.item_type}</td>
+                    <td className="py-1.5 px-2 text-slate-500 whitespace-nowrap">
+                      {Number(li.quantity)} × {formatMoney(li.unit_price)}
+                    </td>
+                    <td className="py-1.5 pl-2 text-right font-medium text-slate-800 whitespace-nowrap">
+                      {formatMoney(li.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ServiceRequests = () => {
   const navigate = useNavigate();
+  // { request, quotes, loading } while the "which quotation?" picker is open
+  const [paymentPicker, setPaymentPicker] = useState(null);
   const [requests, setRequests]               = useState([]);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState(null);
@@ -137,7 +210,11 @@ const ServiceRequests = () => {
       if (!silent) setLoading(true);
       if (!silent) setError(null);
       const res = await apiClient.getAllServiceRequests();
-      setRequests(res.data || []);
+      const next = res.data || [];
+      // The 5s background poll usually returns identical data; keeping the old
+      // array reference avoids re-rendering the whole table (which causes paint
+      // glitches / ghosted rows on low-end GPUs).
+      setRequests(prev => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
     } catch (err) {
       if (!silent) setError('Failed to load service requests.');
       else console.error('ServiceRequests silent refresh error:', err);
@@ -152,6 +229,32 @@ const ServiceRequests = () => {
     intervalMs: 5000,
     enabled: !showPresetManager,
   });
+
+  // With a single quotation we go straight to it; with several, ask which one.
+  const handleStageAction = async (r, action) => {
+    if (!action.pickQuote) {
+      navigate(action.path);
+      return;
+    }
+    setPaymentPicker({ request: r, quotes: [], loading: true });
+    try {
+      const res = await apiClient.getServiceRequestQuoteList(r.request_id);
+      const quotes = res.data || [];
+      if (quotes.length <= 1) {
+        setPaymentPicker(null);
+        navigate(action.path);
+      } else {
+        setPaymentPicker({ request: r, quotes, loading: false });
+      }
+    } catch (err) {
+      console.error('Failed to load quotations:', err);
+      setPaymentPicker({
+        request: r, quotes: [], loading: false,
+        error: err.message || 'Failed to load quotations.',
+        fallbackPath: action.path,
+      });
+    }
+  };
 
   const filtered = requests.filter(r => {
     const statusMatch = activeTab === 'All' || r.status === TAB_TO_STATUS[activeTab];
@@ -326,11 +429,11 @@ const ServiceRequests = () => {
                   </td>
                 </tr>
               ) : filtered.map(r => (
-                <tr key={r.request_id} className="hover:bg-slate-50 transition-colors">
+                <tr key={r.request_id} className="hover:bg-slate-50">
 
                   {/* Request */}
                   <td className="px-4 py-3 align-top">
-                    <p className="font-semibold text-slate-900 leading-tight">{withHonorific(r.client_honorific || r.honorific, r.payer_name)}</p>
+                    <p className="font-semibold text-slate-900 leading-tight"><ClientLink id={r.client_id}>{withHonorific(r.client_honorific || r.honorific, r.payer_name)}</ClientLink></p>
                     <div className="flex items-center gap-1 mt-0.5 text-slate-500 text-xs">
                       <Phone className="w-3 h-3" />
                       <span>{formatMobileNumber(r.payer_mobile)}</span>
@@ -343,7 +446,7 @@ const ServiceRequests = () => {
 
                   {/* Care Profile */}
                   <td className="px-4 py-3 align-top">
-                    <p className="font-medium text-slate-900">{r.patient_name || '—'}</p>
+                    <p className="font-medium text-slate-900"><PatientLink id={r.patient_id}>{r.patient_name || '—'}</PatientLink></p>
                     {(r.patient_age || r.relationship_to_client) && (
                       <p className="text-xs text-slate-500 mt-0.5">
                         {[r.patient_age && `Age ${r.patient_age}`, r.relationship_to_client].filter(Boolean).join(' · ')}
@@ -430,7 +533,7 @@ const ServiceRequests = () => {
                         const StageIcon = action.icon;
                         return (
                           <button
-                            onClick={() => navigate(action.path)}
+                            onClick={() => handleStageAction(r, action)}
                             title={action.title}
                             className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 hover:text-emerald-600 transition-colors"
                           >
@@ -452,6 +555,62 @@ const ServiceRequests = () => {
           </div>
         )}
       </div>
+
+      {paymentPicker && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setPaymentPicker(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-xl max-h-[85vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Record payment for which quotation?</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {paymentPicker.request.service_request_code || paymentPicker.request.payer_name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPaymentPicker(null)}
+                className="p-1 rounded text-slate-400 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto space-y-3">
+              {paymentPicker.loading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                </div>
+              ) : paymentPicker.error ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-red-600">Couldn't load this request's quotations: {paymentPicker.error}</p>
+                  <button
+                    type="button"
+                    onClick={() => { const p = paymentPicker.fallbackPath; setPaymentPicker(null); navigate(p); }}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  >
+                    Open the active quotation instead
+                  </button>
+                </div>
+              ) : paymentPicker.quotes.map(q => (
+                <QuoteOption
+                  key={q.quote_id}
+                  quote={q}
+                  isActive={q.quote_id === paymentPicker.request.active_quote_id}
+                  onSelect={sel => {
+                    setPaymentPicker(null);
+                    navigate(`/admin/quotations/${sel.quote_id}`);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <PresetManager
         isOpen={showPresetManager}

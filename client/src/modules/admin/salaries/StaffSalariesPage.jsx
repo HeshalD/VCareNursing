@@ -5,7 +5,7 @@ import {
   CreditCard, Calendar, TrendingUp, Eye, Download, FileSpreadsheet, FileText, ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { StaffLink } from '../components/EntityLinks';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import * as XLSX from 'xlsx';
 import AdminLayout from '../components/AdminLayout';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -167,7 +167,7 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                         <React.Fragment key={row.assignment_id}>
                           <tr className="hover:bg-slate-50/60 transition-colors">
                             <td className="px-4 py-3 font-mono text-xs text-slate-700 font-semibold">{row.booking_code || '—'}</td>
-                            <td className="px-4 py-3 text-slate-700">{row.patient_name || <span className="text-slate-400 italic">Not specified</span>}</td>
+                            <td className="px-4 py-3 text-slate-700"><PatientLink id={row.patient_id}>{row.patient_name || <span className="text-slate-400 italic">Not specified</span>}</PatientLink></td>
                             <td className="px-4 py-3 text-slate-600 text-xs">
                               {fmtDate(row.service_start_date)} → {row.service_end_date ? fmtDate(row.service_end_date) : <span className="text-emerald-600 font-medium">Ongoing</span>}
                             </td>
@@ -618,7 +618,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
         {/* Header */}
         <div className="p-6 border-b border-slate-200 flex items-center justify-between flex-shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">{done ? 'Payment Recorded' : `Pay ${staff.full_name}`}</h2>
+            <h2 className="text-lg font-bold text-slate-900">{done ? 'Payment Recorded' : <>Pay <StaffLink id={staff.staff_profile_id}>{staff.full_name}</StaffLink></>}</h2>
             <p className="text-sm text-slate-500 mt-0.5">{staff.designation}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
@@ -692,8 +692,8 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                             {preview.breakdown.map(row => (
                               <tr key={row.assignment_id} className="hover:bg-slate-50/60">
                                 <td className="px-3 py-2.5 font-mono text-xs font-semibold text-[#137A6B]">{row.booking_code || '—'}</td>
-                                <td className="px-3 py-2.5 text-slate-700 text-xs">{row.client_name || <span className="text-slate-400 italic">—</span>}</td>
-                                <td className="px-3 py-2.5 text-slate-700 text-xs">{row.patient_name || <span className="text-slate-400 italic">—</span>}</td>
+                                <td className="px-3 py-2.5 text-slate-700 text-xs"><ClientLink id={row.client_id}>{row.client_name || <span className="text-slate-400 italic">—</span>}</ClientLink></td>
+                                <td className="px-3 py-2.5 text-slate-700 text-xs"><PatientLink id={row.patient_id}>{row.patient_name || <span className="text-slate-400 italic">—</span>}</PatientLink></td>
                                 <td className="px-3 py-2.5 text-right text-slate-600">{(row.daily_entries || []).length}</td>
                                 <td className="px-3 py-2.5 text-right text-slate-600">{fmt(row.daily_rate)}</td>
                                 <td className="px-3 py-2.5 text-right font-semibold text-slate-900">{fmt(row.total_salary_earned)}</td>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { PatientLink } from '../components/EntityLinks';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import {
   Users, Search, Plus, Pencil, Trash2, X, ChevronRight,
   User, Shield, AlertCircle, Loader2,
@@ -393,7 +393,7 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
 
 // ─── Nested table: client row → care-profile sub-table ──────────────────────
 
-const ClientRow = ({ clientName, clientMobile, patients, proxyMode, selectMode, selectedIds, onToggleSelect, onEdit, onDelete, onView, colSpan }) => {
+const ClientRow = ({ clientId, clientName, clientMobile, patients, proxyMode, selectMode, selectedIds, onToggleSelect, onEdit, onDelete, onView, colSpan }) => {
   const [open, setOpen] = useState(false);
 
   return (
@@ -405,7 +405,7 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, selectMode, 
             <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
               <User className="w-3.5 h-3.5 text-slate-400" />
             </div>
-            <span className="font-semibold text-slate-900">{clientName || 'Unknown Client'}</span>
+            <span className="font-semibold text-slate-900"><ClientLink id={clientId}>{clientName || 'Unknown Client'}</ClientLink></span>
           </div>
         </td>
         <td className="px-4 py-3 text-slate-500">{formatMobileNumber(clientMobile) || '—'}</td>
@@ -698,7 +698,7 @@ export default function PatientsPage() {
   // Group current page's patients by client
   const grouped = patients.reduce((acc, p) => {
     const key = p.client_id || '__none__';
-    if (!acc[key]) acc[key] = { clientName: p.client_name, clientMobile: p.client_mobile, patients: [] };
+    if (!acc[key]) acc[key] = { clientId: p.client_id, clientName: p.client_name, clientMobile: p.client_mobile, patients: [] };
     acc[key].patients.push(p);
     return acc;
   }, {});
@@ -905,6 +905,7 @@ export default function PatientsPage() {
                     <ClientRow
                       key={key}
                       colSpan={3}
+                      clientId={group.clientId}
                       clientName={group.clientName}
                       clientMobile={group.clientMobile}
                       patients={group.patients}

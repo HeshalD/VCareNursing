@@ -18,6 +18,7 @@ import {
   DollarSign,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -716,7 +717,7 @@ const BookingDetailPage = () => {
           <div className="flex items-center gap-3 flex-wrap mb-2">
             <h1 className="text-2xl font-extrabold text-[#2A2722] tracking-tight">
               {heroProfilePath ? (
-                <Link to={heroProfilePath} onClick={(e) => e.stopPropagation()}
+                <Link target="_blank" rel="noopener noreferrer" to={heroProfilePath} onClick={(e) => e.stopPropagation()}
                   title={patientDetails.patient_id ? 'Open care profile' : 'Open client profile'}
                   className="hover:text-[#137A6B] hover:underline underline-offset-4 transition-colors"
                 >
@@ -744,7 +745,7 @@ const BookingDetailPage = () => {
                   <span key="client">
                     for{' '}
                     {clientProfilePath ? (
-                      <Link to={clientProfilePath} onClick={(e) => e.stopPropagation()}
+                      <Link target="_blank" rel="noopener noreferrer" to={clientProfilePath} onClick={(e) => e.stopPropagation()}
                         title="Open client profile"
                         className="font-semibold hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors"
                       >
@@ -1276,7 +1277,7 @@ const BookingDetailPage = () => {
                 <h3 className="text-[15px] font-bold text-[#2A2722]">Client</h3>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <DetailRow label="Name"      value={clientDetails.client_name} />
+                <DetailRow label="Name"      value={clientDetails.client_name ? <ClientLink id={statementClientId}>{clientDetails.client_name}</ClientLink> : clientDetails.client_name} />
                 <DetailRow label="Client ID" value={clientDetails.client_code || clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
                 <DetailRow label="Phone"     value={formatMobileNumber(clientDetails.client_mobile || clientDetails.mobile) || '-'} />
                 <DetailRow label="Email"     value={clientDetails.client_email  || clientDetails.email  || '-'} />
@@ -1295,7 +1296,7 @@ const BookingDetailPage = () => {
                 <h3 className="text-[15px] font-bold text-[#2A2722]">Care profile</h3>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <DetailRow label="Patient"      value={patientDetails.patient_name} />
+                <DetailRow label="Patient"      value={patientDetails.patient_name ? <PatientLink id={patientDetails.patient_id}>{patientDetails.patient_name}</PatientLink> : patientDetails.patient_name} />
                 <DetailRow label="Age"          value={patientDetails.patient_age || '-'} />
                 <DetailRow label="Relationship" value={patientDetails.relationship_to_client || '-'} />
                 <DetailRow label="Mobility"     value={patientDetails.mobility || '-'} />

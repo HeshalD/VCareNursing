@@ -175,13 +175,13 @@ const ClientPaymentsLedgerPage = () => {
                           <td colSpan={7} className="px-4 py-2.5">
                             <div className="flex items-center gap-2 text-slate-700">
                               <User className="w-4 h-4 text-slate-400" />
-                              <Link to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
+                              <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className="font-semibold hover:text-blue-600 hover:underline text-left"
                               >
                                 {withHonorific(r.honorific, r.client_name) || 'Unknown client'}
                               </Link>
                               {r.client_code && (
-                                <Link to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
+                                <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                                   className="font-mono text-xs text-slate-500 hover:text-blue-600 hover:underline"
                                 >
                                   {r.client_code}

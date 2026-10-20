@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
-import { ClientLink, PatientLink } from '../components/EntityLinks';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import {
   CalendarClock,
@@ -264,7 +264,7 @@ const UpcomingEvents = () => {
 
                     {event.source === 'PENDING_LEAVE' && (
                       <>
-                        <Detail label="Staff" value={<>{event.current_staff_name || '—'}{event.staff_code ? <> (<strong className="font-bold text-sm text-black">{event.staff_code}</strong>)</> : ''}</>} />
+                        <Detail label="Staff" value={<><StaffLink id={event.current_staff_id}>{event.current_staff_name || '—'}</StaffLink>{event.staff_code ? <> (<strong className="font-bold text-sm text-black">{event.staff_code}</strong>)</> : ''}</>} />
                         <Detail label="Leave Period" value={`${fmt(event.start_date)} → ${fmt(event.end_date)}`} tone="font-medium" />
                         <Detail label="Reason" value={event.reason} />
                         <Detail label="Requested On" value={fmt(event.created_at)} />
@@ -273,7 +273,7 @@ const UpcomingEvents = () => {
 
                     {event.source === 'EXPIRING_LEAVE' && (
                       <>
-                        <Detail label="Staff" value={<>{event.current_staff_name || '—'}{event.staff_code ? <> (<strong className="font-bold text-sm text-black">{event.staff_code}</strong>)</> : ''}</>} />
+                        <Detail label="Staff" value={<><StaffLink id={event.current_staff_id}>{event.current_staff_name || '—'}</StaffLink>{event.staff_code ? <> (<strong className="font-bold text-sm text-black">{event.staff_code}</strong>)</> : ''}</>} />
                         <Detail label="Leave Period" value={`${fmt(event.start_date)} → ${fmt(event.end_date)}`} />
                         <Detail label="Was Due Back" value={fmt(event.end_date)} tone="text-red-600 font-medium" />
                         <Detail label="Reason" value={event.reason} />
@@ -284,7 +284,7 @@ const UpcomingEvents = () => {
                       <>
                         <Detail label="Booking" value={<BookingLink event={event} navigate={navigate} />} />
                         <Detail label="Client / Care Profile" value={<><ClientLink id={event.client_id}>{event.client_name || '—'}</ClientLink> · <PatientLink id={event.patient_id}>{event.patient_name || '—'}</PatientLink></>} />
-                        <Detail label="Staff" value={event.current_staff_name} />
+                        <Detail label="Staff" value={<StaffLink id={event.current_staff_id}>{event.current_staff_name}</StaffLink>} />
                         <Detail label="Date" value={fmt(event.effective_date)} tone="font-medium" />
                       </>
                     )}
@@ -373,11 +373,11 @@ const UpcomingEvents = () => {
                       <td className="px-4 py-3 text-slate-700">
                         {event.incoming_staff_name ? (
                           <span>
-                            {event.current_staff_name || 'Unassigned'} <span className="text-slate-400">→</span>{' '}
-                            <span className="font-medium">{event.incoming_staff_name}</span>
+                            <StaffLink id={event.current_staff_id}>{event.current_staff_name || 'Unassigned'}</StaffLink> <span className="text-slate-400">→</span>{' '}
+                            <span className="font-medium"><StaffLink id={event.incoming_staff_id}>{event.incoming_staff_name}</StaffLink></span>
                           </span>
                         ) : (
-                          event.current_staff_name || '—'
+                          <StaffLink id={event.current_staff_id}>{event.current_staff_name || '—'}</StaffLink>
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">

@@ -231,7 +231,7 @@ exports.getRentalUnits = async (req, res) => {
     const result = await db.query(
       `SELECT ru.*, p.name as product_name,
               ra.rental_agreement_id, ra.billing_type as rental_billing_type,
-              ra.end_date as rental_end_date, ra.next_invoice_date as rental_next_invoice_date,
+              ra.end_date as rental_end_date, ra.next_invoice_date as rental_next_invoice_date, ra.client_id as rented_to_client_id,
               NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') as rented_to_client_name, wc.full_name as rented_to_walk_in_name
        FROM rental_units ru
        JOIN products p ON ru.product_id = p.product_id

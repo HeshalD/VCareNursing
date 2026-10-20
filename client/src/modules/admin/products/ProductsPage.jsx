@@ -10,6 +10,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
+import { ClientLink } from '../components/EntityLinks';
 import DateInput from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
@@ -695,7 +696,7 @@ function ProductPurchaseHistoryModal({ product, onClose }) {
                       <tr key={r.line_item_id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-3 py-2 whitespace-nowrap text-slate-700">{formatDate(r.quoted_at)}</td>
                         <td className="px-3 py-2 text-slate-800">
-                          {r.client_name || r.walk_in_name || '—'}
+                          {r.client_name ? <ClientLink id={r.client_id}>{r.client_name}</ClientLink> : (r.walk_in_name || '—')}
                           {r.walk_in_name && !r.client_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
                         </td>
                         <td className="px-3 py-2 font-mono text-xs text-slate-600 whitespace-nowrap">{r.estimate_number}</td>
@@ -857,7 +858,7 @@ function RentalProductPanel({ product, selected, onToggleSelect, units, onEdit, 
                         {u.status}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-700">{u.status === 'RENTED' ? rentedTo(u) : '—'}</td>
+                    <td className="px-4 py-2.5 text-slate-700">{u.status === 'RENTED' ? (u.rented_to_client_name ? <ClientLink id={u.rented_to_client_id}>{u.rented_to_client_name}</ClientLink> : rentedTo(u)) : '—'}</td>
                     <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
                       {formatDate(rentedUntilDate(u))}
                       {u.status === 'RENTED' && <DaysRemainingBadge date={rentedUntilDate(u)} />}
@@ -1607,7 +1608,7 @@ function QuotesTab() {
 
                     <div className="flex-1 min-w-0">
                       <p className="truncate text-sm text-slate-800">
-                        {recipientName(q)}
+                        {q.client_name ? <ClientLink id={q.client_id}>{q.client_name}</ClientLink> : recipientName(q)}
                         {q.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
                       </p>
                       {isRentalQuote && (
@@ -3145,7 +3146,7 @@ function RentalsTab() {
                           <span className="block text-xs text-slate-400">{a.unit_code || '—'}</span>
                         </td>
                         <td className="px-4 py-3 text-slate-700">
-                          {recipientName(a)}
+                          {a.client_name ? <ClientLink id={a.client_id}>{a.client_name}</ClientLink> : recipientName(a)}
                           {a.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -3310,7 +3311,7 @@ function DepositsPanel() {
                     <tr key={d.deposit_id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3 whitespace-nowrap text-slate-500">{formatDate(d.held_at)}</td>
                       <td className="px-4 py-3 text-slate-700">
-                        {recipientName(d)}
+                        {d.client_name ? <ClientLink id={d.client_id}>{d.client_name}</ClientLink> : recipientName(d)}
                         {d.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
                       </td>
                       <td className="px-4 py-3">
@@ -3809,7 +3810,7 @@ function RentalAgreementDetailModal({ rentalAgreementId, onClose, onChanged }) {
                 </div>
                 <div>
                   <p className="text-[11px] font-medium text-slate-400">Recipient</p>
-                  <p className="font-medium text-slate-800">{agreement.client_name || agreement.walk_in_name || '—'}</p>
+                  <p className="font-medium text-slate-800">{agreement.client_name ? <ClientLink id={agreement.client_id}>{agreement.client_name}</ClientLink> : (agreement.walk_in_name || '—')}</p>
                 </div>
                 <div>
                   <p className="text-[11px] font-medium text-slate-400">Billing</p>

@@ -160,7 +160,7 @@ const ServiceGrid = () => {
   const services = [
     { title: 'Elderly Care', img: elderyCareImg, link: '/services/elderly-care' },
     { title: 'Child Care', img: babyCareImg, link: '/services/child-care' },
-    { title: 'Home nursing', img: homeNursingImg, link: '/services/home-nursing' },
+    { title: 'Home Nursing', img: homeNursingImg, link: '/services/home-nursing' },
     { title: 'Doctor Visits', img: doctorVisitImg, link: '/services/doctor-visits' },
     { title: 'Ambulance Service', img: ambulanceImg, link: '/services/ambulance' },
   ];

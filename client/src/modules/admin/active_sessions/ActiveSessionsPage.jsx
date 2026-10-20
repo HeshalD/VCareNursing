@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { MonitorSmartphone, Loader2, LogOut, RefreshCw } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { InternalStaffLink } from '../components/EntityLinks';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -142,7 +143,7 @@ const ActiveSessionsPage = () => {
               <tbody className="divide-y divide-slate-100">
                 {filteredSessions.map((s) => (
                   <tr key={s.device_row_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 font-semibold text-slate-900">{s.staff_name || '—'}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900"><InternalStaffLink id={s.internal_staff_id}>{s.staff_name || '—'}</InternalStaffLink></td>
                     <td className="px-4 py-3 text-slate-600">{s.device_label || '—'}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${s.is_active ? 'text-emerald-700' : 'text-slate-500'}`}>

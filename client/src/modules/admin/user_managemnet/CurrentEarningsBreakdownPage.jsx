@@ -19,6 +19,7 @@ import * as XLSX from 'xlsx';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import EditedAmountBadge from '../components/EditedAmountBadge';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -122,10 +123,10 @@ const LedgerRow = ({ entry }) => {
         ) : isCredit ? (
           <div>
             <p className="text-sm font-medium text-slate-800">
-              {entry.client_name || 'Daily Salary'}
+              <ClientLink id={entry.client_id}>{entry.client_name || 'Daily Salary'}</ClientLink>
             </p>
             {entry.patient_name && (
-              <p className="text-xs text-slate-400">Care Profile: {entry.patient_name}</p>
+              <p className="text-xs text-slate-400">Care Profile: <PatientLink id={entry.patient_id}>{entry.patient_name}</PatientLink></p>
             )}
             {entry.service_type && (
               <p className="text-xs text-slate-400">{entry.service_type}</p>
@@ -382,7 +383,7 @@ export default function CurrentEarningsBreakdownPage() {
           <div>
             <h1 className="text-xl font-bold text-slate-900">Current Earnings Breakdown</h1>
             {data?.staff_name && (
-              <p className="text-sm text-slate-500">{data.staff_name}</p>
+              <p className="text-sm text-slate-500"><StaffLink id={staffProfileId}>{data.staff_name}</StaffLink></p>
             )}
           </div>
         </div>

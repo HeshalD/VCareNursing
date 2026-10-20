@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, FileText, CircleDollarSign, ArrowRight,
@@ -826,7 +827,7 @@ const ServiceRequestSummaryPage = () => {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5 mb-1">
                 <h2 className="text-lg font-bold text-slate-900 truncate">
-                  {editMode ? editForm.payer_name || '—' : withHonorific(request.client_honorific || request.honorific, request.payer_name)}
+                  {editMode ? editForm.payer_name || '—' : <ClientLink id={request.client_id}>{withHonorific(request.client_honorific || request.honorific, request.payer_name)}</ClientLink>}
                 </h2>
               </div>
               <p className="text-xs text-slate-400">
@@ -892,7 +893,7 @@ const ServiceRequestSummaryPage = () => {
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <Heart className="w-3.5 h-3.5 text-slate-400" />
-                <span>{request.patient_name || '—'}</span>
+                <span><PatientLink id={request.patient_id}>{request.patient_name || '—'}</PatientLink></span>
                 {request.patient_age && <span className="text-slate-400">· Age {request.patient_age}</span>}
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -1091,7 +1092,7 @@ const ServiceRequestSummaryPage = () => {
                         </div>
                         <div className="p-4 grid grid-cols-2 gap-3">
                           <div className="col-span-2">
-                            <InfoRow label="Full Name" value={request.patient_name} />
+                            <InfoRow label="Full Name" value={request.patient_name ? <PatientLink id={request.patient_id}>{request.patient_name}</PatientLink> : request.patient_name} />
                           </div>
                           <InfoRow label="Age" value={request.patient_age} />
                           <InfoRow label="Relationship" value={request.relationship_to_client} />

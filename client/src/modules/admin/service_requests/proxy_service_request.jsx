@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate } from 'react-router-dom';
 import {
   User, Phone, MapPin, Calendar, FileText, Plus, Save, X,
@@ -60,7 +61,7 @@ const BLANK_FORM = {
   payer_secondary_phones: [],
   patient_name: '', patient_age: '',
   patient_gender: '', relationship_to_client: '', patient_condition: '', service_type: '',
-  service_model: 'SHIFT_BASED', location_address: '', start_date: '',
+  service_model: 'LIVE_IN', location_address: '', start_date: '',
   remarks: '', preferred_gender: 'ANY', status: 'NEW_LEAD',
 };
 
@@ -1202,7 +1203,7 @@ const ProxyServiceRequest = () => {
               ) : filtered.map(r => (
                 <tr key={r.request_id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3 align-top">
-                    <p className="font-semibold text-slate-900 leading-tight">{r.payer_name}</p>
+                    <p className="font-semibold text-slate-900 leading-tight"><ClientLink id={r.client_id}>{r.payer_name}</ClientLink></p>
                     <div className="flex items-center gap-1 mt-0.5 text-slate-500 text-xs">
                       <Phone className="w-3 h-3" />
                       <span>{formatMobileNumber(r.payer_mobile)}</span>
@@ -1213,7 +1214,7 @@ const ProxyServiceRequest = () => {
                     <p className="text-xs text-slate-400 mt-0.5">{formatDateTime(r.created_at)}</p>
                   </td>
                   <td className="px-4 py-3 align-top">
-                    <p className="font-medium text-slate-900">{r.patient_name || '—'}</p>
+                    <p className="font-medium text-slate-900"><PatientLink id={r.patient_id}>{r.patient_name || '—'}</PatientLink></p>
                     {(r.patient_age || r.relationship_to_client) && (
                       <p className="text-xs text-slate-500 mt-0.5">
                         {[r.patient_age && `Age ${r.patient_age}`, r.relationship_to_client].filter(Boolean).join(' · ')}
