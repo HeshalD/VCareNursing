@@ -45,7 +45,7 @@ const SERVICE_MODELS = [
     value: 'LIVE_IN',
     label: 'Live In',
     icon: Home,
-    description: 'A caregiver stays in the home full-time for round-the-clock, hands-on care.'
+    description: 'A caregiver stays with the patient full-time for round-the-clock care.'
   },
   {
     value: 'VISITING',

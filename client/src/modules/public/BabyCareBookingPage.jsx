@@ -27,7 +27,7 @@ const SERVICE_MODELS = [
     value: 'LIVE_IN',
     label: 'Live In',
     icon: Home,
-    description: 'A nanny stays in the home full-time for round-the-clock care.'
+    description: 'A nanny stays with the child full-time for round-the-clock care.'
   },
   {
     value: 'SHIFT_BASED',

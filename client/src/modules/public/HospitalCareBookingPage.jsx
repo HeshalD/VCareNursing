@@ -45,7 +45,7 @@ const SERVICE_MODELS = [
     value: 'LIVE_IN',
     label: 'Live In',
     icon: Home,
-    description: 'An attendant stays with the patient at the hospital round the clock.'
+    description: 'An attendant stays with the patient full-time for round-the-clock care.'
   }
 ];
 

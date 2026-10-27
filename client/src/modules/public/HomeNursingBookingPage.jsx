@@ -29,7 +29,7 @@ const SERVICE_MODELS = [
     value: 'LIVE_IN',
     label: 'Live In',
     icon: Home,
-    description: 'A nurse stays in the home full-time for round-the-clock medical support.'
+    description: 'A nurse stays with the patient full-time for round-the-clock care.'
   },
   {
     value: 'SHIFT_BASED',
