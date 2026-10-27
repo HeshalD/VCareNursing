@@ -339,10 +339,10 @@ class ApiClient {
     });
   }
 
-  async updateRegFeeStatus(clientId, status, salespersonId = null) {
+  async updateRegFeeStatus(clientId, status, salespersonId = null, paymentDate = null) {
     return this.request(`/client/${clientId}/reg-fee-status`, {
       method: 'PATCH',
-      body: JSON.stringify({ status, salesperson_id: salespersonId }),
+      body: JSON.stringify({ status, salesperson_id: salespersonId, payment_date: paymentDate }),
     });
   }
   // invoice_id (optional) names the invoice being edited; the server only allows the current one.
@@ -353,10 +353,10 @@ class ApiClient {
     });
   }
 
-  async verifyRegFeePayment(clientId, salespersonId = null) {
+  async verifyRegFeePayment(clientId, salespersonId = null, paymentDate = null) {
     return this.request(`/client/${clientId}/verify-reg-fee-payment`, {
       method: 'POST',
-      body: JSON.stringify({ salesperson_id: salespersonId }),
+      body: JSON.stringify({ salesperson_id: salespersonId, payment_date: paymentDate }),
     });
   }
 
@@ -1350,7 +1350,7 @@ class ApiClient {
     });
   }
 
-  async bulkStaffPayouts(payouts, companyBankAccountId, paymentMethod, referenceNumber, notes) {
+  async bulkStaffPayouts(payouts, companyBankAccountId, paymentMethod, referenceNumber, notes, paymentDate = null) {
     return this.request('/staff/salaries/bulk-payouts', {
       method: 'POST',
       body: JSON.stringify({
@@ -1359,6 +1359,7 @@ class ApiClient {
         payment_method: paymentMethod,
         reference_number: referenceNumber,
         notes,
+        payment_date: paymentDate,
       }),
     });
   }
@@ -1373,6 +1374,81 @@ class ApiClient {
 
   async getStaffMissingBankDetails() {
     return this.request('/staff/missing-bank-details');
+  }
+
+  async getManagedDocuments() {
+    return this.request('/documents');
+  }
+
+  async replaceManagedDocument(documentKey, file, note) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (note) formData.append('note', note);
+    return this.request(`/documents/${documentKey}/replace`, { method: 'POST', body: formData });
+  }
+
+  async restoreManagedDocument(documentKey, version) {
+    return this.request(`/documents/${documentKey}/restore/${version}`, { method: 'POST' });
+  }
+
+  async getPublicAgreements() {
+    return this.request('/documents/public/agreements');
+  }
+
+  // ── WhatsApp inbox (admin) ──
+  async getWaConversations({ search, unreadOnly, before, limit } = {}) {
+    const q = new URLSearchParams();
+    if (search) q.set('search', search);
+    if (unreadOnly) q.set('unread', 'true');
+    if (before) q.set('before', before);
+    if (limit) q.set('limit', limit);
+    const qs = q.toString();
+    return this.request(`/whatsapp/conversations${qs ? `?${qs}` : ''}`);
+  }
+
+  async getWaUnreadCount() {
+    return this.request('/whatsapp/unread-count');
+  }
+
+  async getWaConversation(id) {
+    return this.request(`/whatsapp/conversations/${id}`);
+  }
+
+  async getWaMessages(id, before) {
+    return this.request(`/whatsapp/conversations/${id}/messages${before ? `?before=${encodeURIComponent(before)}` : ''}`);
+  }
+
+  async markWaConversationRead(id) {
+    return this.request(`/whatsapp/conversations/${id}/read`, { method: 'POST' });
+  }
+
+  // Free-form reply: text, or a file with the text as its caption.
+  async sendWaMessage(id, { text, file }) {
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (text) formData.append('text', text);
+      return this.request(`/whatsapp/conversations/${id}/messages`, { method: 'POST', body: formData });
+    }
+    return this.request(`/whatsapp/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async getWaTemplates(refresh = false) {
+    return this.request(`/whatsapp/templates${refresh ? '?refresh=true' : ''}`);
+  }
+
+  // Approved template to an existing conversation (conversationId) or a new number (phone).
+  async sendWaTemplate({ conversationId, phone, name, language, bodyParams, headerParams, buttonParams, file }) {
+    const formData = new FormData();
+    if (conversationId) formData.append('conversation_id', conversationId);
+    if (phone) formData.append('phone', phone);
+    formData.append('name', name);
+    formData.append('language', language);
+    formData.append('bodyParams', JSON.stringify(bodyParams || []));
+    formData.append('headerParams', JSON.stringify(headerParams || []));
+    formData.append('buttonParams', JSON.stringify(buttonParams || []));
+    if (file) formData.append('file', file);
+    return this.request('/whatsapp/send-template', { method: 'POST', body: formData });
   }
 
   async getNotificationSettings() {

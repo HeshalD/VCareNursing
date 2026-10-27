@@ -55,8 +55,14 @@ exports.submitServiceRequest = async (req, res) => {
             start_date,
             remarks,
             preferred_gender,
-            preferred_staff_id
+            preferred_staff_id,
+            hospital_name,
+            end_date
         } = req.body;
+
+        if (end_date && start_date && String(end_date) <= String(start_date)) {
+            return res.status(400).json({ message: 'The end date must be after the start date.' });
+        }
 
         if (!isValidPhone(req.body.payer_mobile)) {
             return res.status(400).json({ message: 'Enter a valid mobile number.' });
@@ -99,14 +105,16 @@ exports.submitServiceRequest = async (req, res) => {
                 remarks,
                 preferred_gender,
                 preferred_staff_id,
-                gender
+                gender,
+                hospital_name,
+                requested_end_date
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
                 CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL
                      THEN point($12::double precision, $11::double precision)
                      ELSE NULL
                 END,
-                $13, $14, $15::gender_preference_enum, $16, $17::gender_enum
+                $13, $14, $15::gender_preference_enum, $16, $17::gender_enum, $18, $19
             )
             RETURNING *;
         `;
@@ -128,7 +136,9 @@ exports.submitServiceRequest = async (req, res) => {
             remarks,            // $14
             preferred_gender || 'ANY', // $15 (default to ANY if not provided)
             preferred_staff_id || null,  // $16 (optional preferred staff)
-            patient_gender || null  // $17 (care profile's own gender, optional)
+            patient_gender || null,  // $17 (care profile's own gender, optional)
+            (hospital_name || '').trim() || null,  // $18 (Hospital Care: hospital the patient is admitted at)
+            end_date || null  // $19 (optional requested end date)
         ];
 
         const result = await db.query(query, values);
@@ -661,6 +671,7 @@ exports.updateServiceRequest = async (req, res) => {
         start_date,
         remarks,
         preferred_gender,
+        hospital_name,
         status
     } = req.body;
 
@@ -690,8 +701,9 @@ exports.updateServiceRequest = async (req, res) => {
                 start_date = $10,
                 remarks = $11,
                 preferred_gender = COALESCE($12::gender_preference_enum, preferred_gender),
-                status = COALESCE($13, status)
-             WHERE request_id = $14
+                status = COALESCE($13, status),
+                hospital_name = $14
+             WHERE request_id = $15
              RETURNING *`,
             [
                 payer_name || null,
@@ -707,6 +719,7 @@ exports.updateServiceRequest = async (req, res) => {
                 remarks !== undefined ? remarks : old.remarks,
                 preferred_gender || null,
                 status || null,
+                hospital_name !== undefined ? ((hospital_name || '').trim() || null) : old.hospital_name,
                 id
             ]
         );
@@ -724,7 +737,7 @@ exports.updateServiceRequest = async (req, res) => {
             'payer_name', 'payer_mobile', 'patient_name', 'patient_age',
             'relationship_to_client', 'patient_condition', 'service_type',
             'service_model', 'location_address', 'start_date', 'remarks',
-            'preferred_gender', 'status'
+            'preferred_gender', 'hospital_name', 'status'
         ];
         for (const field of fields) {
             const oldVal = String(old[field] ?? '');

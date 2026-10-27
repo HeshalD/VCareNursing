@@ -11,7 +11,8 @@ import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import babyCareBg from '../../assets/images/BabyCare.webp';
-import DateInput, { todayISO } from '../../components/common/DateInput';
+import DateRangePicker from '../../components/common/DateRangePicker';
+import { todayISO } from '../../components/common/DateInput';
 import PhoneInput from '../../components/common/PhoneInput';
 
 // Selectable options for the Service Details step
@@ -54,6 +55,7 @@ const BabyCareBookingPage = () => {
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [stepError, setStepError] = useState('');
   const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
@@ -72,16 +74,17 @@ const BabyCareBookingPage = () => {
     patient_name: '',
     patient_age: '',
     patient_gender: '',
-    relationship: 'Child',
+    relationship: '',
     patient_condition: '',
 
     // Service Details
     service_type: '{NANNY}',
-    service_model: 'VISITING',
+    service_model: '',
     home_address: '',
     latitude: '',
     longitude: '',
     start_date: '',
+    end_date: '',
     remarks: '',
     preferred_gender: 'ANY',
     preferred_staff_id: null
@@ -211,7 +214,7 @@ const BabyCareBookingPage = () => {
         patient_name: '',
         patient_age: '',
         patient_gender: '',
-        relationship: 'Child',
+        relationship: '',
         patient_condition: ''
       }));
       setSelectedPatientId(null);
@@ -280,6 +283,7 @@ const BabyCareBookingPage = () => {
         const staffResponse = await apiClient.getStaffByGender(genderPreference, {
           status: 'AVAILABLE',
           limit: 20,
+          public_only: true,
           ...(search && { search })
         });
         if (requestId !== staffRequestIdRef.current) return;
@@ -313,6 +317,7 @@ const BabyCareBookingPage = () => {
         const nanniesResponse = await apiClient.getStaffByRole('NANNY', {
           status: 'AVAILABLE',
           limit: 20,
+          public_only: true,
           ...(search && { search })
         });
         if (requestId !== staffRequestIdRef.current) return;
@@ -361,8 +366,41 @@ const BabyCareBookingPage = () => {
     setFormData({ ...formData, preferred_staff_id: staff.id });
   };
 
+  // Returns an error message when the given step is incomplete, otherwise ''
+  const validateStep = (step) => {
+    const filled = (v) => String(v ?? '').trim().length > 0;
+    if (step === 1) {
+      if (!filled(formData.payer_name)) return 'Please enter the payer name.';
+      if (!filled(formData.payer_mobile)) return 'Please enter a mobile number.';
+      if (filled(formData.payer_email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.payer_email.trim())) {
+        return 'Please enter a valid email address.';
+      }
+    }
+    if (step === 2) {
+      if (!filled(formData.patient_name)) return 'Please enter the patient name or select a care profile.';
+      if (!filled(formData.patient_age) || Number(formData.patient_age) <= 0) return 'Please enter a valid patient age.';
+      if (!filled(formData.patient_gender)) return 'Please select the patient gender.';
+      if (!filled(formData.relationship)) return 'Please select the relationship to the client.';
+    }
+    if (step === 3) {
+      if (!filled(formData.home_address)) return 'Please enter the service address.';
+      if (!filled(formData.start_date)) return 'Please select a start date.';
+      if (formData.start_date < todayISO()) return 'The start date cannot be in the past.';
+      if (filled(formData.end_date) && formData.end_date <= formData.start_date) return 'The end date must be after the start date.';
+      if (!filled(formData.service_type)) return 'Please choose the type of caregiver.';
+      if (!SERVICE_MODELS.some(opt => opt.value === formData.service_model)) return 'Please choose a service model.';
+    }
+    return '';
+  };
+
   const nextStep = () => {
     console.log('nextStep called, currentStep:', currentStep, 'totalSteps:', totalSteps);
+    const stepProblem = validateStep(currentStep);
+    if (stepProblem) {
+      setStepError(stepProblem);
+      return;
+    }
+    setStepError('');
     if (currentStep < totalSteps) {
       const newStep = currentStep + 1;
       console.log('Advancing to step:', newStep);
@@ -374,6 +412,7 @@ const BabyCareBookingPage = () => {
 
   const prevStep = () => {
     console.log('prevStep called, currentStep:', currentStep);
+    setStepError('');
     if (currentStep > 1) setCurrentStep(prev => prev - 1);
   };
 
@@ -398,6 +437,14 @@ const BabyCareBookingPage = () => {
   const handleSubmit = async (e) => {
     console.log('handleSubmit called on step:', currentStep);
     if (e) e.preventDefault();
+    for (let step = 1; step <= 3; step++) {
+      const stepProblem = validateStep(step);
+      if (stepProblem) {
+        setCurrentStep(step);
+        setStepError(stepProblem);
+        return;
+      }
+    }
     setIsSubmitting(true);
     setSubmitError('');
 
@@ -671,7 +718,8 @@ const BabyCareBookingPage = () => {
                           value={formData.patient_gender}
                           onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          disabled={isPatientLocked || isSelfLocked}
+                          required
+                          disabled={(isPatientLocked || isSelfLocked) && !!formData.patient_gender}
                         >
                           <option value="">— Select —</option>
                           <option value="MALE">Male</option>
@@ -689,6 +737,7 @@ const BabyCareBookingPage = () => {
                           required
                           disabled={isPatientLocked}
                         >
+                          <option value="">Select relationship</option>
                           {RELATIONSHIP_OPTIONS.map(opt => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
@@ -732,15 +781,13 @@ const BabyCareBookingPage = () => {
                           required
                         />
                       </div>
-                      <div>
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Start Date</label>
-                        <DateInput
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
-                          value={formData.start_date}
-                          onChange={e => setFormData({ ...formData, start_date: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          min={todayISO()}
-                          required
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-600 block mb-1">Service Dates <span className="font-normal text-slate-400">(end date is optional)</span></label>
+                        <DateRangePicker
+                          theme="rose"
+                          startDate={formData.start_date}
+                          endDate={formData.end_date}
+                          onChange={({ startDate, endDate }) => setFormData({ ...formData, start_date: startDate, end_date: endDate })}
                         />
                       </div>
                       <div>
@@ -956,6 +1003,12 @@ const BabyCareBookingPage = () => {
                 )}
 
               </AnimatePresence>
+
+              {stepError && (
+                <div role="alert" className="mt-6 px-4 py-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-medium">
+                  {stepError}
+                </div>
+              )}
 
               {/* Navigation Buttons */}
               <div className="flex justify-between mt-8">

@@ -4,13 +4,14 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare
+  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare, MessageCircle
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { subscribeWhatsApp, disconnectWhatsApp } from '../whatsapp/waSocket';
 
 const ROLE_LABELS = {
   SUPER_ADMIN: 'Super Admin',
@@ -117,7 +118,9 @@ const NAV_SECTIONS = [
     section: 'System',
     icon: Settings,
     items: [
+      { icon: MessageCircle, label: 'WhatsApp Inbox', path: '/admin/whatsapp', permKey: 'VIEW_WHATSAPP', badgeKey: 'whatsapp' },
       { icon: MessageSquare, label: 'Notifications & Messages', path: '/admin/notifications', permKey: 'VIEW_NOTIFICATIONS' },
+      { icon: FileText, label: 'Documents', path: '/admin/documents', permKey: 'VIEW_DOCUMENTS' },
       { icon: Lock, label: 'Permissions', path: '/admin/permissions', permKey: 'PERMISSIONS_MANAGE' },
       { icon: KeySquare, label: 'Roles', path: '/admin/roles', permKey: 'PERMISSIONS_MANAGE' },
       { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions', permKey: 'VIEW_ACTIVE_SESSIONS' },
@@ -216,13 +219,27 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   };
   const canAccess = (item) => hasPermission(item.permKey);
 
+  // Unread WhatsApp count for the sidebar badge: fetched once, then refreshed whenever the live
+  // connection reports a new message or a chat being read.
+  const [waUnread, setWaUnread] = useState(0);
+  const canSeeWhatsApp = permissionsLoaded && hasPermission('VIEW_WHATSAPP');
+  useEffect(() => {
+    if (!adminToken || !canSeeWhatsApp) return undefined;
+    let alive = true;
+    const refresh = () => apiClient.getWaUnreadCount().then((r) => { if (alive) setWaUnread(r.total_unread || 0); }).catch(() => {});
+    refresh();
+    const unsubscribe = subscribeWhatsApp(adminToken, { 'wa:message': refresh, 'wa:read': refresh });
+    return () => { alive = false; unsubscribe(); };
+  }, [adminToken, canSeeWhatsApp]);
+
   // Hide sidebar items/sections the current user has no permission for; SUPER_ADMIN sees everything.
   const visibleNavSections = useMemo(() => {
+    const withBadge = (item) => (item.badgeKey === 'whatsapp' && waUnread > 0 ? { ...item, badge: waUnread > 99 ? '99+' : waUnread } : item);
     return NAV_SECTIONS
-      .map((group) => ({ ...group, items: group.items.filter(canAccess) }))
+      .map((group) => ({ ...group, items: group.items.filter(canAccess).map(withBadge) }))
       .filter((group) => group.items.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperAdmin, hasPermission]);
+  }, [isSuperAdmin, hasPermission, waUnread]);
 
   // Client-side guard for direct navigation to a page the current user isn't permissioned for.
   const routeRule = findRouteRule(location.pathname);
@@ -239,6 +256,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
     } catch {
       // best-effort - still log the user out locally even if this fails
     }
+    disconnectWhatsApp();
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
     navigate('/admin');
@@ -427,6 +445,7 @@ const SidebarSection = ({ section, sectionIcon, items, itemActive, collapsed, is
         label={item.label}
         path={item.path}
         active={itemActive(item)}
+        badge={item.badge}
         collapsed={collapsed}
       />
     ));
@@ -476,6 +495,7 @@ const SidebarSection = ({ section, sectionIcon, items, itemActive, collapsed, is
               label={item.label}
               path={item.path}
               active={itemActive(item)}
+              badge={item.badge}
               collapsed={collapsed}
               nested
             />

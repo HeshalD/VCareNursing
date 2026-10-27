@@ -4,7 +4,7 @@ import {
   ArrowLeft, ArrowRight, Search, UserCheck, UserX, Home, User, Clock,
   AlertCircle, Stethoscope, Star, ChevronDown, ChevronUp,
   BadgeCheck, Send, Check, Loader2, X, CheckCircle, CalendarClock,
-  TriangleAlert, FileText,
+  TriangleAlert, FileText, Hospital,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
@@ -61,6 +61,7 @@ const BookingStaffRosterPage = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [genderFilter, setGenderFilter] = useState('all');
   const [liveInFilter, setLiveInFilter] = useState('all');
+  const [hospitalFilter, setHospitalFilter] = useState('all');
   const [roleFilter,   setRoleFilter]   = useState('all');
 
   const STAFF_PAGE_SIZE = 12;
@@ -104,6 +105,9 @@ const BookingStaffRosterPage = () => {
       }
       if (serviceModel === 'LIVE_IN' && m.willing_to_live_in === false) {
         warnings.push(`${m.full_name} is not willing to live-in, but this is a live-in booking.`);
+      }
+      if (booking?.is_hospitalized && m.willing_to_stay_at_hospital === false) {
+        warnings.push(`${m.full_name} is not okay to stay at a hospital, but the patient is currently hospitalized${booking.hospital_name ? ` (${booking.hospital_name})` : ''}.`);
       }
     }
     return warnings;
@@ -182,6 +186,7 @@ const BookingStaffRosterPage = () => {
       const params = { page: targetPage, limit: STAFF_PAGE_SIZE };
       if (statusFilter !== 'all') params.status = statusFilter;
       if (roleFilter   !== 'all') params.role   = roleFilter;
+      if (hospitalFilter !== 'all') params.hospital = hospitalFilter;
       if (debouncedSearch) params.search = debouncedSearch;
       const res = await apiClient.getAllStaff(params);
       setStaff(res.data || []);
@@ -205,7 +210,7 @@ const BookingStaffRosterPage = () => {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  useEffect(() => { fetchStaff(page); }, [page, statusFilter, roleFilter, debouncedSearch]);
+  useEffect(() => { fetchStaff(page); }, [page, statusFilter, roleFilter, hospitalFilter, debouncedSearch]);
 
   // Batched schedule lookup for whoever's on the current page — lets the admin see
   // each candidate's existing/upcoming commitments before picking them for this booking.
@@ -225,6 +230,7 @@ const BookingStaffRosterPage = () => {
 
   const changeStatusFilter = (v) => { setStatusFilter(v); setPage(1); };
   const changeRoleFilter   = (v) => { setRoleFilter(v);   setPage(1); };
+  const changeHospitalFilter = (v) => { setHospitalFilter(v); setPage(1); };
 
   const filteredStaff = useMemo(() =>
     staff.filter((m) => {
@@ -235,8 +241,8 @@ const BookingStaffRosterPage = () => {
     }),
   [staff, genderFilter, liveInFilter]);
 
-  const activeFilters = [statusFilter, genderFilter, liveInFilter, roleFilter].filter((f) => f !== 'all').length;
-  const clearFilters  = () => { setStatusFilter('all'); setRoleFilter('all'); setGenderFilter('all'); setLiveInFilter('all'); setSearchTerm(''); setDebouncedSearch(''); setPage(1); };
+  const activeFilters = [statusFilter, genderFilter, liveInFilter, hospitalFilter, roleFilter].filter((f) => f !== 'all').length;
+  const clearFilters  = () => { setStatusFilter('all'); setRoleFilter('all'); setGenderFilter('all'); setLiveInFilter('all'); setHospitalFilter('all'); setSearchTerm(''); setDebouncedSearch(''); setPage(1); };
 
   // Derived display values
   const clientName   = request?.payer_name       || booking?.client_name   || '—';
@@ -459,6 +465,11 @@ const BookingStaffRosterPage = () => {
             <option value="yes">Willing to live-in</option>
             <option value="no">Not willing</option>
           </FilterSelect>
+          <FilterSelect value={hospitalFilter} onChange={changeHospitalFilter}>
+            <option value="all">Any hospital stay</option>
+            <option value="yes">Okay to stay at hospital</option>
+            <option value="no">Not okay at hospital</option>
+          </FilterSelect>
           {activeFilters > 0 && (
             <button onClick={clearFilters} className="text-sm font-medium text-blue-600 hover:underline">
               Clear ({activeFilters})
@@ -604,6 +615,11 @@ const BookingStaffRosterPage = () => {
                             {member.willing_to_live_in && (
                               <span className="flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
                                 <Home className="h-2.5 w-2.5" /> Live-in
+                              </span>
+                            )}
+                            {member.willing_to_stay_at_hospital && (
+                              <span className="flex items-center gap-1 rounded bg-teal-50 px-1.5 py-0.5 text-[11px] font-medium text-teal-700">
+                                <Hospital className="h-2.5 w-2.5" /> Hospital OK
                               </span>
                             )}
                           </div>

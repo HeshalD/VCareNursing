@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import BankSelect from '../../../components/common/BankSelect';
@@ -177,6 +178,7 @@ const StaffDetailPage = () => {
     company_bank_account_id: '',
     staff_bank_account_id: '',
     payment_method: 'BANK_TRANSFER',
+    payment_date: todayISO(),
     reference_number: '',
     notes: '',
   });
@@ -452,6 +454,7 @@ const StaffDetailPage = () => {
         payment_method: payoutForm.payment_method,
         reference_number: payoutForm.reference_number,
         notes: payoutForm.notes,
+        payment_date: payoutForm.payment_date || null,
       }));
 
       setPayoutSubmitSuccess('Payout recorded successfully.');
@@ -460,6 +463,7 @@ const StaffDetailPage = () => {
         company_bank_account_id: '',
         staff_bank_account_id: '',
         payment_method: 'BANK_TRANSFER',
+        payment_date: todayISO(),
         reference_number: '',
         notes: '',
       });
@@ -985,6 +989,16 @@ const StaffDetailPage = () => {
                 onWheel={(e) => e.target.blur()}
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500"
                 placeholder="0.00"
+                required
+              />
+            </label>
+            <label className="space-y-2 text-sm font-medium text-slate-700">
+              <span>Payment Date *</span>
+              <DateInput
+                value={payoutForm.payment_date}
+                max={todayISO()}
+                onChange={handlePayoutFieldChange('payment_date')}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500"
                 required
               />
             </label>

@@ -11,6 +11,7 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { parsePaymentDate } = require('../utils/paymentDate');
 const { toE164, isValidPhone } = require('../utils/phone');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -345,7 +346,7 @@ exports.createVendorBill = async (req, res) => {
 // inside an open transaction; caller owns BEGIN/COMMIT/ROLLBACK.
 async function applyVendorBillPayment(pgClient, {
   bill, vendor, amount, payment_method, bank_account_id, cheque_number, cheque_date,
-  reference_number, notes, actorUserId,
+  reference_number, notes, actorUserId, ledgerTimestamp = null,
 }) {
   const paidSoFarResult = await pgClient.query(
     `SELECT COALESCE(SUM(amount), 0) as paid FROM vendor_bill_payments WHERE vendor_bill_id = $1`,
@@ -366,12 +367,12 @@ async function applyVendorBillPayment(pgClient, {
   const txResult = await pgClient.query(
     `INSERT INTO transactions
        (category, transaction_type, amount, payment_method, bank_account_id,
-        cheque_number, cheque_date, reference_number, notes, status, verified_by, external_party)
-     VALUES ('VENDOR_PAYMENT','DEBIT',$1,$2,$3,$4,$5,$6,$7,'COMPLETED',$8,$9)
+        cheque_number, cheque_date, reference_number, notes, status, verified_by, external_party, created_at)
+     VALUES ('VENDOR_PAYMENT','DEBIT',$1,$2,$3,$4,$5,$6,$7,'COMPLETED',$8,$9,COALESCE($10::timestamptz, NOW()))
      RETURNING transaction_id`,
     [
       amount, payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
-      reference_number || null, finalNotes, actorUserId, vendor.name,
+      reference_number || null, finalNotes, actorUserId, vendor.name, ledgerTimestamp,
     ]
   );
   const transaction_id = txResult.rows[0].transaction_id;
@@ -379,11 +380,12 @@ async function applyVendorBillPayment(pgClient, {
   await pgClient.query(
     `INSERT INTO vendor_bill_payments
        (vendor_bill_id, transaction_id, amount, payment_method, bank_account_id,
-        cheque_number, cheque_date, reference_number, notes, verified_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        cheque_number, cheque_date, reference_number, notes, verified_by, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::timestamptz, NOW()))`,
     [
       bill.vendor_bill_id, transaction_id, amount, payment_method, resolvedBankAccountId,
       cheque_number || null, cheque_date || null, reference_number || null, finalNotes, actorUserId,
+      ledgerTimestamp,
     ]
   );
 
@@ -404,7 +406,7 @@ exports.recordVendorBillPayment = async (req, res) => {
   const { billId } = req.params;
 
   try {
-    const { payment_method, bank_account_id, cheque_number, cheque_date, reference_number, notes, amount } = req.body;
+    const { payment_method, bank_account_id, cheque_number, cheque_date, reference_number, notes, amount, payment_date } = req.body;
 
     if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
       return res.status(400).json({ message: `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}` });
@@ -415,6 +417,8 @@ exports.recordVendorBillPayment = async (req, res) => {
     if (payment_method === 'CHEQUE' && (!cheque_number || !cheque_date)) {
       return res.status(400).json({ message: 'cheque_number and cheque_date are required for CHEQUE payments' });
     }
+    const parsedDate = parsePaymentDate(payment_date);
+    if (parsedDate.error) return res.status(400).json({ message: parsedDate.error });
 
     await pgClient.query('BEGIN');
 
@@ -452,6 +456,7 @@ exports.recordVendorBillPayment = async (req, res) => {
         reference_number,
         notes,
         actorUserId: req.user?.user_id || null,
+        ledgerTimestamp: parsedDate.ledgerTimestamp,
       });
     } catch (err) {
       await pgClient.query('ROLLBACK');

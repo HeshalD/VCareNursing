@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StaffLink } from '../components/EntityLinks';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff, ArrowDown, ArrowUpDown, Home, Hospital } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import FilterableTh from '../components/FilterableTh';
 import apiClient from '../../../api/api';
@@ -93,6 +93,8 @@ const StaffManagement = () => {
   const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
   const [portalFilter, setPortalFilter] = useState('all'); // 'all' | 'enabled' | 'disabled'
+  const [liveInFilter, setLiveInFilter] = useState('all'); // 'all' | 'yes' | 'no'
+  const [hospitalFilter, setHospitalFilter] = useState('all'); // 'all' | 'yes' | 'no'
   const [sortEarningsDesc, setSortEarningsDesc] = useState(false);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
@@ -130,12 +132,12 @@ const StaffManagement = () => {
   }, [actionsOpen]);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
-  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, sortEarningsDesc]);
+  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc]);
 
-  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, sortEarningsDesc, page]);
+  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc, page]);
 
   // Clear selection whenever the underlying list changes to avoid acting on stale rows.
-  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, sortEarningsDesc, page]);
+  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc, page]);
 
   const buildFilters = () => ({
     page,
@@ -144,6 +146,8 @@ const StaffManagement = () => {
     ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
     ...(portalFilter !== 'all' ? { portal_access: portalFilter } : {}),
+    ...(liveInFilter !== 'all' ? { live_in: liveInFilter } : {}),
+    ...(hospitalFilter !== 'all' ? { hospital: hospitalFilter } : {}),
     ...(sortEarningsDesc ? { sort_earnings: 'desc' } : {}),
   });
 
@@ -473,6 +477,52 @@ const StaffManagement = () => {
           ))}
         </div>
 
+        {/* Live-in (at a client's home) willingness filter */}
+        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 self-start sm:self-auto" role="group" aria-label="Live-in filter">
+          {[
+            { key: 'all', label: 'Any live-in', count: null },
+            { key: 'yes', label: 'Live-in', count: counts.live_in },
+            { key: 'no', label: 'Not live-in', count: counts.not_live_in },
+          ].map(opt => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setLiveInFilter(opt.key)}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
+                liveInFilter === opt.key
+                  ? (opt.key === 'no' ? 'bg-slate-200 text-slate-700' : 'bg-indigo-100 text-indigo-700')
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {opt.label}
+              {opt.count != null && <span className="ml-1 tabular-nums opacity-70">{opt.count}</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Hospital-stay willingness filter */}
+        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 self-start sm:self-auto" role="group" aria-label="Hospital stay filter">
+          {[
+            { key: 'all', label: 'Any hospital', count: null },
+            { key: 'yes', label: 'Hospital OK', count: counts.hospital },
+            { key: 'no', label: 'No hospital', count: counts.not_hospital },
+          ].map(opt => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setHospitalFilter(opt.key)}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
+                hospitalFilter === opt.key
+                  ? (opt.key === 'no' ? 'bg-slate-200 text-slate-700' : 'bg-teal-100 text-teal-700')
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {opt.label}
+              {opt.count != null && <span className="ml-1 tabular-nums opacity-70">{opt.count}</span>}
+            </button>
+          ))}
+        </div>
+
         <div className="relative sm:ml-auto">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -599,6 +649,20 @@ const StaffManagement = () => {
                         </p>
                         {worker.staff_code && (
                           <p className="text-sm text-black font-mono font-bold">{worker.staff_code}</p>
+                        )}
+                        {(worker.willing_to_live_in || worker.willing_to_stay_at_hospital) && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {worker.willing_to_live_in && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">
+                                <Home className="w-2.5 h-2.5" /> Live-in
+                              </span>
+                            )}
+                            {worker.willing_to_stay_at_hospital && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-700 bg-teal-50 border border-teal-100 px-1.5 py-0.5 rounded">
+                                <Hospital className="w-2.5 h-2.5" /> Hospital OK
+                              </span>
+                            )}
+                          </div>
                         )}
                         {worker.portal_access_disabled && (
                           <span className="inline-flex items-center gap-1 mt-0.5 mr-1 text-[10px] font-semibold text-red-700 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded">

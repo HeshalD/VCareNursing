@@ -544,6 +544,7 @@ const ServiceRequestSummaryPage = () => {
       service_type:           request.service_type || '',
       service_model:          request.service_model || 'SHIFT_BASED',
       location_address:       request.location_address || '',
+      hospital_name:          request.hospital_name || '',
       start_date:             request.start_date ? request.start_date.slice(0, 10) : '',
       remarks:                request.remarks || '',
       preferred_gender:       request.preferred_gender || 'ANY',
@@ -904,13 +905,19 @@ const ServiceRequestSummaryPage = () => {
               {request.start_date && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-500">
                   <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Starts {fmt(request.start_date)}</span>
+                  <span>Starts {fmt(request.start_date)}{request.requested_end_date ? ` · Ends ${fmt(request.requested_end_date)}` : ''}</span>
                 </div>
               )}
               {request.location_address && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-500">
                   <MapPin className="w-3.5 h-3.5 text-slate-400" />
                   <span className="truncate max-w-[220px]">{request.location_address}</span>
+                </div>
+              )}
+              {request.hospital_name && (
+                <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+                  <MapPin className="w-3.5 h-3.5" />
+                  <span className="truncate max-w-[220px]">Admitted at {request.hospital_name}</span>
                 </div>
               )}
             </div>
@@ -974,6 +981,10 @@ const ServiceRequestSummaryPage = () => {
                           <div className="sm:col-span-2">
                             <label className={labelCls}>Service Address</label>
                             <textarea value={editForm.location_address} onChange={e => set('location_address')(e.target.value)} rows={2} className={inputCls} />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className={labelCls}>Hospital (if patient is admitted)</label>
+                            <input type="text" maxLength={255} value={editForm.hospital_name} onChange={e => set('hospital_name')(e.target.value)} className={inputCls} />
                           </div>
                         </div>
                       </div>
@@ -1079,6 +1090,12 @@ const ServiceRequestSummaryPage = () => {
                             <div>
                               <p className="text-xs text-slate-400 mb-0.5">Service Address</p>
                               <p className="text-sm font-medium text-slate-900 leading-relaxed">{request.location_address}</p>
+                            </div>
+                          )}
+                          {request.hospital_name && (
+                            <div>
+                              <p className="text-xs text-slate-400 mb-0.5">Hospital (patient admitted)</p>
+                              <p className="text-sm font-medium text-slate-900 leading-relaxed">{request.hospital_name}</p>
                             </div>
                           )}
                         </div>

@@ -11,6 +11,7 @@ import AdminLayout from '../components/AdminLayout';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import apiClient from '../../../api/api';
 import EditedAmountBadge from '../components/EditedAmountBadge';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const fmt = (v) => money.format(Number(v || 0));
@@ -407,6 +408,7 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
   );
   const [companyAccountId, setCompanyAccountId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('BANK_TRANSFER');
+  const [paymentDate, setPaymentDate] = useState(todayISO());
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -419,6 +421,7 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!paymentDate) return;
     setSubmitting(true);
     try {
       const payouts = staffList.map(s => ({
@@ -427,7 +430,7 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
         staff_bank_account_id: s.staff_bank_account_id || null,
       }));
       const res = await apiClient.bulkStaffPayouts(
-        payouts, companyAccountId || null, paymentMethod, reference || null, notes || null
+        payouts, companyAccountId || null, paymentMethod, reference || null, notes || null, paymentDate
       );
       const resultMap = Object.fromEntries((res.results || []).map(r => [r.staff_profile_id, r]));
       setResults(staffList.map(s => ({
@@ -501,6 +504,10 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
                 </select>
               </div>
               <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-slate-700">Payment Date</label>
+                <DateInput required value={paymentDate} max={todayISO()} onChange={e => setPaymentDate(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+              </div>
+              <div className="space-y-1.5">
                 <label className="text-sm font-semibold text-slate-700">Payment Method</label>
                 <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]">
                   <option value="BANK_TRANSFER">Bank Transfer</option>
@@ -549,6 +556,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
   const [amount, setAmount] = useState(String(parseFloat(staff.current_earnings || 0).toFixed(2)));
   const [companyAccountId, setCompanyAccountId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('BANK_TRANSFER');
+  const [paymentDate, setPaymentDate] = useState(todayISO());
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -592,6 +600,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!paymentDate) { setError('Please enter the payment date.'); return; }
     setSubmitting(true);
     setError(null);
     try {
@@ -600,6 +609,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
         company_bank_account_id: companyAccountId || null,
         staff_bank_account_id: staffBankAccountId || null,
         payment_method: paymentMethod,
+        payment_date: paymentDate,
         reference_number: reference || null,
         notes: notes || null,
         month_year: { year: selectedMonth.year, month: selectedMonth.month },
@@ -828,6 +838,10 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                       <option value="">Select (optional)</option>
                       {companyAccounts.map(a => <option key={a.account_id} value={a.account_id}>{a.account_nickname || a.bank_name} — {a.account_number}</option>)}
                     </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Payment Date</label>
+                    <DateInput required value={paymentDate} max={todayISO()} onChange={e => setPaymentDate(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-sm font-semibold text-slate-700">Payment Method</label>

@@ -3,6 +3,7 @@ import {
   X, Loader2, Check, Download, SendHorizontal, RotateCcw,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const fmt = (v) => money.format(Number(v || 0));
@@ -36,6 +37,7 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pdfUrl, setPdfUrl] = useState(null);
+  const [paymentDate, setPaymentDate] = useState(todayISO());
 
   const feeStatus = clientProfile?.reg_fee_status || 'PENDING';
   const badge = STATUS_META[feeStatus] || STATUS_META.PENDING;
@@ -48,6 +50,7 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
     setAmount(String(clientProfile?.reg_fee_amount || '10000.00'));
     setError('');
     setPdfUrl(null);
+    setPaymentDate(todayISO());
 
     const loadAccounts = async () => {
       try {
@@ -89,7 +92,10 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
     });
 
   const handleVerify = () =>
-    run(() => apiClient.verifyRegFeePayment(clientId));
+    run(async () => {
+      if (!paymentDate) throw new Error('Please enter the payment date.');
+      await apiClient.verifyRegFeePayment(clientId, null, paymentDate);
+    });
 
   const handleStatusUpdate = (status) =>
     run(() => apiClient.updateRegFeeStatus(clientId, status));
@@ -163,6 +169,14 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
           {canViewReceipt && (
             <div className="rounded-lg border border-violet-200 bg-violet-50 p-4 space-y-3">
               <p className="text-xs font-semibold text-violet-700">Receipt submitted — review before verifying</p>
+              <Field label="Payment Date">
+                <DateInput
+                  value={paymentDate}
+                  max={todayISO()}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white text-gray-800"
+                />
+              </Field>
               <div className="flex flex-wrap gap-2">
                 <a
                   href={clientProfile.reg_fee_receipt_url}

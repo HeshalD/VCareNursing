@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText, FileStack, FileCheck2, Trash2, Undo2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import Popup from '../../../components/common/Popup';
 
 const paymentMethodOptions = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -103,6 +103,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [overdueBookingsLoading, setOverdueBookingsLoading] = useState(false);
 
   const [paymentMethod, setPaymentMethod] = useState('BANK_TRANSFER');
+  const [paymentDate, setPaymentDate] = useState(todayISO());
   const [bankAccountId, setBankAccountId] = useState('');
   const [chequeNumber, setChequeNumber] = useState('');
   const [chequeDate, setChequeDate] = useState('');
@@ -495,6 +496,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
 
   const validateStep1 = () => {
     if (!parsedAmount || parsedAmount <= 0) return 'Enter the amount received';
+    if (!paymentDate) return 'Enter the payment date';
     if (requiresBankAccount && !bankAccountId) return 'Please select a bank account';
     if (isCheque && (!chequeNumber || !chequeDate)) return 'Cheque number and date are required';
     return '';
@@ -624,6 +626,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
             : { type: 'WALLET' })
           : undefined,
         payment_method: paymentMethod,
+        payment_date: paymentDate || null,
         bank_account_id: bankAccountId || null,
         cheque_number: chequeNumber || null,
         cheque_date: chequeDate || null,
@@ -704,6 +707,10 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                 <div>
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Payment Details</p>
                   <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-slate-500">Payment Date</label>
+                      <DateInput value={paymentDate} max={todayISO()} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls} />
+                    </div>
                     <div>
                       <label className="mb-1 block text-[11px] font-medium text-slate-500">Payment Method</label>
                       <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputCls}>

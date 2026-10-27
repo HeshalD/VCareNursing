@@ -33,6 +33,8 @@ const Footer = () => {
             <h4 className="font-bold text-slate-900 text-lg mb-6">Our Services</h4>
             <ul className="space-y-4 text-sm text-slate-600">
               <li><Link to="/services/home-nursing" className="hover:text-blue-400 transition-colors">Home Nursing</Link></li>
+              <li><Link to="/services/patient-care" className="hover:text-blue-400 transition-colors">Patient Care</Link></li>
+              <li><Link to="/services/hospital-care" className="hover:text-blue-400 transition-colors">Hospital Care</Link></li>
               <li><a href="#" className="hover:text-blue-400 transition-colors">Hospital Staffing</a></li>
               <li><a href="#" className="hover:text-blue-400 transition-colors">Child Care</a></li>
               <li><a href="#" className="hover:text-blue-400 transition-colors">Elderly Care</a></li>

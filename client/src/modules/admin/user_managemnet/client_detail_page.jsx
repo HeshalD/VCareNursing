@@ -331,6 +331,8 @@ const ClientDetailPage = () => {
   const [showBackdateRegFeeForm, setShowBackdateRegFeeForm] = useState(false);
   const [backdateRegFeeAmount, setBackdateRegFeeAmount] = useState('10000.00');
   const [backdateRegFeeDate, setBackdateRegFeeDate] = useState('');
+  // Date the registration fee money was received — used by "Mark as Paid" / "Confirm Payment".
+  const [regFeePaymentDate, setRegFeePaymentDate] = useState(todayISO());
   const [backdateRegFeeSalespersonId, setBackdateRegFeeSalespersonId] = useState('');
   const [backdateRegFeeLoading, setBackdateRegFeeLoading] = useState(false);
   const [backdateRegFeeError, setBackdateRegFeeError] = useState('');
@@ -1037,7 +1039,17 @@ const ClientDetailPage = () => {
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      await apiClient.updateRegFeeStatus(clientId, status, status === 'PAID' ? (salespersonForCredit || null) : null);
+      if (status === 'PAID' && !regFeePaymentDate) {
+        setRegFeeError('Please enter the payment date.');
+        setRegFeeLoading(false);
+        return;
+      }
+      await apiClient.updateRegFeeStatus(
+        clientId,
+        status,
+        status === 'PAID' ? (salespersonForCredit || null) : null,
+        status === 'PAID' ? regFeePaymentDate : null,
+      );
       await refreshAfterPaymentChange();
       if (status === 'PAID' && salespersonForCredit) await reloadClientSalesperson();
       setRegFeeMoreOpen(false);
@@ -1049,10 +1061,11 @@ const ClientDetailPage = () => {
   };
 
   const handleVerifyRegFeePayment = async () => {
+    if (!regFeePaymentDate) { setRegFeeError('Please enter the payment date.'); return; }
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      await apiClient.verifyRegFeePayment(clientId, salespersonForCredit || null);
+      await apiClient.verifyRegFeePayment(clientId, salespersonForCredit || null, regFeePaymentDate);
       await refreshAfterPaymentChange();
       if (salespersonForCredit) await reloadClientSalesperson();
     } catch (err) {
@@ -3180,6 +3193,19 @@ const ClientDetailPage = () => {
                             Cancel
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {['INVOICED', 'RECEIPT_UPLOADED'].includes(feeStatus) && (
+                      <div className="mb-3 max-w-xs">
+                        <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Payment Date</label>
+                        <DateInput
+                          value={regFeePaymentDate}
+                          max={todayISO()}
+                          onChange={(e) => setRegFeePaymentDate(e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                        <p className="mt-1 text-[11px] text-gray-400">When the fee was received. Membership expiry counts 365 days from this date.</p>
                       </div>
                     )}
 

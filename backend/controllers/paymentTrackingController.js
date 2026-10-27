@@ -10,6 +10,7 @@ const { applyInvoicePayment, lineItemDuplicateSql } = require('./invoiceControll
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { parsePaymentDate } = require('../utils/paymentDate');
 const { creditClientWallet, settleQuoteBookingFromWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -635,9 +636,16 @@ const recordAllocatedPayment = async (req, res) => {
       cheque_date,
       reference_number,
       slip_url,
-      notes
+      notes,
+      payment_date
     } = req.body;
     const paymentSlipUrl = uploadedSlipUrl || slip_url || null;
+
+    const parsedDate = parsePaymentDate(payment_date);
+    if (parsedDate.error) {
+      return res.status(400).json({ status: 'error', message: parsedDate.error });
+    }
+    const ledgerTimestamp = parsedDate.ledgerTimestamp;
 
     let parsedAllocations;
     try {
@@ -895,12 +903,12 @@ const recordAllocatedPayment = async (req, res) => {
           quote_id, client_id, amount_received, payment_method, bank_account_id,
           cheque_number, cheque_date, reference_number, slip_url, status,
           verified_by, notes, payment_date, verified_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VERIFIED', $10, $11, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VERIFIED', $10, $11, COALESCE($12::timestamptz, NOW()), NOW())
         RETURNING payment_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at
       `, [
         quote_id, client_id, svcAmount, payment_method, resolvedBankAccountId,
         cheque_number || null, cheque_date || null, reference_number || null,
-        paymentSlipUrl, verified_by, notes || null
+        paymentSlipUrl, verified_by, notes || null, ledgerTimestamp
       ]);
       payment = paymentResult.rows[0];
 
@@ -926,11 +934,12 @@ const recordAllocatedPayment = async (req, res) => {
             payment_tracking_id, booking_id, quote_id, client_id, category, amount,
             payment_method, bank_account_id, cheque_number, cheque_date, reference_number,
             receipt_url, verified_by, status, notes, transaction_type, created_at
-          ) VALUES ($1, $2, $3, $4, 'REGISTRATION_FEE', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'CREDIT', NOW())
+          ) VALUES ($1, $2, $3, $4, 'REGISTRATION_FEE', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'CREDIT', COALESCE($15::timestamptz, NOW()))
         `, [
           payment.payment_id, quotation.booking_id || null, quote_id, client_id, regFeeAlloc,
           payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
           reference_number || null, paymentSlipUrl, verified_by, 'COMPLETED', notes || null,
+          ledgerTimestamp,
         ]);
         receiptLineItems.push({ label: 'Registration Fee', description: 'Payment toward registration fee', amount: regFeeAlloc });
       }
@@ -960,6 +969,7 @@ const recordAllocatedPayment = async (req, res) => {
           receipt_url: paymentSlipUrl,
           notes: notes || 'Service charges credited to wallet',
           verified_by,
+          created_at: ledgerTimestamp,
         });
         // Clear charges already invoiced on the booking before this money arrived.
         await settleQuoteBookingFromWallet(client, { quote_id, client_id, verified_by });
@@ -1001,6 +1011,7 @@ const recordAllocatedPayment = async (req, res) => {
           slip_url: paymentSlipUrl,
           notes,
           actorUserId: verified_by,
+          ledgerTimestamp,
         });
         productPaymentResults.push({ invoice_id: inv.invoice_id, invoice_code: inv.invoice_code, amount: applyAmt, newlyFullyPaid: result.newlyFullyPaid });
         receiptLineItems.push({ label: 'Products & Rentals', description: inv.invoice_code, amount: applyAmt });
@@ -1027,6 +1038,7 @@ const recordAllocatedPayment = async (req, res) => {
           receipt_url: paymentSlipUrl,
           notes: notes || 'Overpayment credited to wallet',
           verified_by,
+          created_at: ledgerTimestamp,
         });
         receiptLineItems.push({ label: 'Wallet Top-up', description: 'Overpayment credited to client wallet', amount: overflowAmount });
         overflowResult = { type: 'WALLET', amount: overflowAmount };
@@ -1069,28 +1081,31 @@ const recordAllocatedPayment = async (req, res) => {
           `INSERT INTO booking_payment_tracking (
              booking_id, client_id, amount_received, payment_method, bank_account_id,
              cheque_number, cheque_date, reference_number, slip_url, notes,
-             status, verified_at, verified_by
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'VERIFIED',NOW(),$11)`,
+             status, verified_at, verified_by, payment_date
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'VERIFIED',NOW(),$11,COALESCE($12::timestamptz, NOW()))`,
           [
             targetBooking.booking_id, client_id, overflowAmount, payment_method, resolvedBankAccountId,
             cheque_number || null, cheque_date || null, reference_number || null,
             paymentSlipUrl, notes || `Overpayment applied to booking ${targetBooking.booking_code}`, verified_by,
+            ledgerTimestamp,
           ]
         );
         await client.query(
-          `UPDATE bookings SET amount_paid = COALESCE(amount_paid, 0) + $1, last_payment_date = NOW() WHERE booking_id = $2`,
-          [overflowAmount, targetBooking.booking_id]
+          `UPDATE bookings SET amount_paid = COALESCE(amount_paid, 0) + $1,
+             last_payment_date = GREATEST(COALESCE(last_payment_date, COALESCE($3::timestamptz, NOW())), COALESCE($3::timestamptz, NOW()))
+           WHERE booking_id = $2`,
+          [overflowAmount, targetBooking.booking_id, ledgerTimestamp]
         );
         await client.query(
           `INSERT INTO transactions (
              client_id, booking_id, category, transaction_type, amount, payment_method,
              bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-             notes, status, verified_by
-           ) VALUES ($1,$2,'BOOKING_PAYMENT','CREDIT',$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED',$11)`,
+             notes, status, verified_by, created_at
+           ) VALUES ($1,$2,'BOOKING_PAYMENT','CREDIT',$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED',$11,COALESCE($12::timestamptz, NOW()))`,
           [
             client_id, targetBooking.booking_id, overflowAmount, payment_method, resolvedBankAccountId,
             cheque_number || null, cheque_date || null, reference_number || null,
-            paymentSlipUrl, notes || null, verified_by,
+            paymentSlipUrl, notes || null, verified_by, ledgerTimestamp,
           ]
         );
         receiptLineItems.push({ label: 'Overdue Booking Payoff', description: targetBooking.booking_code, amount: overflowAmount });
@@ -1223,9 +1238,16 @@ const recordBookingPayment = async (req, res) => {
       cheque_date,
       reference_number,
       slip_url,
-      notes
+      notes,
+      payment_date
     } = req.body;
     const paymentSlipUrl = uploadedSlipUrl || slip_url || null;
+
+    const parsedDate = parsePaymentDate(payment_date);
+    if (parsedDate.error) {
+      return res.status(400).json({ status: 'error', message: parsedDate.error });
+    }
+    const ledgerTimestamp = parsedDate.ledgerTimestamp;
 
     await client.query('BEGIN');
 
@@ -1329,7 +1351,7 @@ const recordBookingPayment = async (req, res) => {
          notes,
          payment_date,
          verified_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamptz, NOW()), NOW())
        RETURNING
          booking_payment_id,
          booking_id,
@@ -1353,7 +1375,8 @@ const recordBookingPayment = async (req, res) => {
         paymentSlipUrl,
         'VERIFIED',
         verified_by,
-        notes || null
+        notes || null,
+        ledgerTimestamp
       ]
     );
 
@@ -1367,9 +1390,9 @@ const recordBookingPayment = async (req, res) => {
            FROM booking_payment_tracking
            WHERE booking_id = $1 AND status = 'VERIFIED'
          ),
-         last_payment_date = NOW()
+         last_payment_date = GREATEST(COALESCE(last_payment_date, COALESCE($2::timestamptz, NOW())), COALESCE($2::timestamptz, NOW()))
        WHERE booking_id = $1`,
-      [booking_id]
+      [booking_id, ledgerTimestamp]
     );
 
     await client.query(
@@ -1390,7 +1413,7 @@ const recordBookingPayment = async (req, res) => {
          notes,
          transaction_type,
          created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16::timestamptz, NOW()))`,
       [
         booking.client_id,
         booking_id,
@@ -1406,7 +1429,8 @@ const recordBookingPayment = async (req, res) => {
         verified_by,
         'COMPLETED',
         notes || null,
-        'CREDIT'
+        'CREDIT',
+        ledgerTimestamp
       ]
     );
 

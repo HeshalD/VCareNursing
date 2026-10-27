@@ -39,6 +39,20 @@ const FeaturedCaregivers = ({
       text: "text-amber-600",
       border: "hover:border-amber-200",
       icon: "text-amber-500"
+    },
+    violet: {
+      badge: "bg-violet-100 text-violet-700",
+      button: "bg-violet-600 hover:bg-violet-700 shadow-violet-600/20",
+      text: "text-violet-600",
+      border: "hover:border-violet-200",
+      icon: "text-violet-500"
+    },
+    sky: {
+      badge: "bg-sky-100 text-sky-700",
+      button: "bg-sky-600 hover:bg-sky-700 shadow-sky-600/20",
+      text: "text-sky-600",
+      border: "hover:border-sky-200",
+      icon: "text-sky-500"
     }
   };
 

@@ -176,7 +176,7 @@ const ProxyUserManagement = () => {
     designation: '', qualifications: '', documents: [],
     home_address: '', location: '', city_id: '', profile_picture: null,
     gender: '', role: [], experience_level: '',
-    willing_to_live_in: false, date_of_birth: '',
+    willing_to_live_in: false, willing_to_stay_at_hospital: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
     staff_code: '', admin_remarks: '', recruiter_id: '',
     languages: [...DEFAULT_LANGUAGES], youtube_links: [], secondary_phone_numbers: []
@@ -230,7 +230,7 @@ const ProxyUserManagement = () => {
     designation: '', qualifications: '', documents: [],
     home_address: '', location: '', city_id: '', profile_picture: null,
     gender: '', role: [], experience_level: '',
-    willing_to_live_in: false, date_of_birth: '',
+    willing_to_live_in: false, willing_to_stay_at_hospital: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
     staff_code: '', admin_remarks: '', recruiter_id: '',
     languages: [...DEFAULT_LANGUAGES], youtube_links: [], secondary_phone_numbers: []
@@ -273,6 +273,7 @@ const ProxyUserManagement = () => {
       role: parseRoles(worker.role),
       experience_level: worker.experience_level || '',
       willing_to_live_in: worker.willing_to_live_in || false,
+      willing_to_stay_at_hospital: worker.willing_to_stay_at_hospital || false,
       date_of_birth: worker.date_of_birth ? String(worker.date_of_birth).slice(0, 10) : '',
       nic_number: worker.nic_number || '',
       nic_front: null,
@@ -410,6 +411,7 @@ const ProxyUserManagement = () => {
     fd.append('gender', formData.gender);
     if (formData.experience_level) fd.append('experience_level', formData.experience_level);
     fd.append('willing_to_live_in', formData.willing_to_live_in);
+    fd.append('willing_to_stay_at_hospital', formData.willing_to_stay_at_hospital);
     fd.append('date_of_birth', formData.date_of_birth);
     fd.append('nic_number', formData.nic_number);
     if (formData.staff_code) fd.append('staff_code', formData.staff_code);
@@ -492,6 +494,7 @@ const ProxyUserManagement = () => {
     police_report_url: staff.police_report_url || null,
     gender: staff.gender || '',
     willing_to_live_in: staff.willing_to_live_in || false,
+    willing_to_stay_at_hospital: staff.willing_to_stay_at_hospital || false,
     experience_level: staff.experience_level || '',
     date_of_birth: staff.date_of_birth || null,
     location_city: staff.location || '',
@@ -771,6 +774,11 @@ const ProxyUserManagement = () => {
                   <input type="checkbox" name="willing_to_live_in" checked={formData.willing_to_live_in}
                     onChange={handleInputChange} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                   <span className="text-xs text-slate-700">Willing to live in with clients</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" name="willing_to_stay_at_hospital" checked={formData.willing_to_stay_at_hospital}
+                    onChange={handleInputChange} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                  <span className="text-xs text-slate-700">Okay to stay at a hospital to look after patients</span>
                 </label>
               </div>
 

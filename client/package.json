@@ -23,6 +23,7 @@
     "react-phone-number-input": "^3.4.17",
     "react-router-dom": "^7.13.0",
     "recharts": "^3.8.1",
+    "socket.io-client": "^4.8.4",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

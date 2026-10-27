@@ -782,6 +782,7 @@ const ModularQuoteBuilder = () => {
             {/* Location */}
             <div className="px-5 py-4">
               <InfoRow label="Location" value={serviceRequest?.location_address} />
+              {serviceRequest?.hospital_name && <InfoRow label="Hospital" value={serviceRequest.hospital_name} />}
             </div>
 
             {/* Additional remarks */}

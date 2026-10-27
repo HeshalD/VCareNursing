@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
@@ -25,6 +25,8 @@ import {
   Eye,
   FileText,
   History,
+  Home,
+  Hospital,
   Landmark,
   LayoutGrid,
   Loader2,
@@ -607,7 +609,7 @@ const StaffDetailPageV2 = () => {
   const [companyBankAccounts, setCompanyBankAccounts] = useState([]);
   const [payoutForm, setPayoutForm] = useState({
     amount: '', company_bank_account_id: '', staff_bank_account_id: '',
-    payment_method: 'BANK_TRANSFER', reference_number: '', notes: '',
+    payment_method: 'BANK_TRANSFER', reference_number: '', notes: '', payment_date: todayISO(),
   });
   const [bankModal, setBankModal] = useState({
     isOpen: false, mode: 'add', editing: null,
@@ -1037,9 +1039,10 @@ const StaffDetailPageV2 = () => {
         payment_method: payoutForm.payment_method,
         reference_number: payoutForm.reference_number,
         notes: payoutForm.notes,
+        payment_date: payoutForm.payment_date || null,
       }));
       setPayoutSubmitSuccess('Payout recorded successfully.');
-      setPayoutForm({ amount: '', company_bank_account_id: '', staff_bank_account_id: '', payment_method: 'BANK_TRANSFER', reference_number: '', notes: '' });
+      setPayoutForm({ amount: '', company_bank_account_id: '', staff_bank_account_id: '', payment_method: 'BANK_TRANSFER', reference_number: '', notes: '', payment_date: todayISO() });
       await loadPage();
     } catch (err) {
       setPayoutSubmitError(err?.message || 'Failed to record payout');
@@ -1207,6 +1210,7 @@ const StaffDetailPageV2 = () => {
       gender: (profile.gender || '').toUpperCase(),
       date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : '',
       willing_to_live_in: profile.willing_to_live_in ? 'true' : 'false',
+      willing_to_stay_at_hospital: profile.willing_to_stay_at_hospital ? 'true' : 'false',
       roles: parseRoles(profile.role),
       languages: Array.isArray(profile.languages) ? profile.languages : [],
       youtube_links: Array.isArray(profile.youtube_links) ? profile.youtube_links : [],
@@ -1471,6 +1475,7 @@ const StaffDetailPageV2 = () => {
                 color={String(profile.verification_status || '').toLowerCase() === 'verified' ? '#059669' : undefined}
               />
               <Field label="Willing to live in" value={profile.willing_to_live_in ? 'Yes' : 'No'} />
+              <Field label="Okay to stay at hospital" value={profile.willing_to_stay_at_hospital ? 'Yes' : 'No'} />
               <Field label="Experience" value={EXPERIENCE_LEVEL_LABELS[profile.experience_level] || '-'} />
               <Field label="Qualifications" value={profile.qualifications} />
               <Field label="Languages" value={safeArray(profile.languages).join(', ')} />
@@ -2059,6 +2064,10 @@ const StaffDetailPageV2 = () => {
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Amount</label>
                 <input type="number" min="0" step="0.01" value={payoutForm.amount} onChange={handlePayoutFieldChange('amount')} onWheel={(e) => e.target.blur()} placeholder="0.00" className={inputCls} required />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Payment date</label>
+                <DateInput value={payoutForm.payment_date} max={todayISO()} onChange={handlePayoutFieldChange('payment_date')} className={inputCls} required />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Company bank account</label>
@@ -3002,6 +3011,12 @@ const StaffDetailPageV2 = () => {
                 </select>
               </EditField>
             </div>
+            <EditField label="Okay to Stay at a Hospital">
+              <select value={editModal.form.willing_to_stay_at_hospital} onChange={e => editField('willing_to_stay_at_hospital', e.target.value)} className={editInputCls}>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </EditField>
             <EditField label="Experience Level">
               <select value={editModal.form.experience_level} onChange={e => editField('experience_level', e.target.value)} className={editInputCls}>
                 <option value="">— Not specified —</option>
@@ -3338,6 +3353,28 @@ const StaffDetailPageV2 = () => {
                   Pending Migration
                 </span>
               )}
+              <span
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
+                  profile.willing_to_live_in
+                    ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+                    : 'bg-slate-50 text-slate-400 ring-slate-200'
+                }`}
+                title={profile.willing_to_live_in ? 'Willing to live in with a client' : 'Not willing to live in with a client'}
+              >
+                <Home className="h-3 w-3" />
+                {profile.willing_to_live_in ? 'Live-in OK' : 'No live-in'}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
+                  profile.willing_to_stay_at_hospital
+                    ? 'bg-teal-50 text-teal-700 ring-teal-200'
+                    : 'bg-slate-50 text-slate-400 ring-slate-200'
+                }`}
+                title={profile.willing_to_stay_at_hospital ? 'Okay to stay at a hospital to look after patients' : 'Not willing to stay at a hospital'}
+              >
+                <Hospital className="h-3 w-3" />
+                {profile.willing_to_stay_at_hospital ? 'Hospital stay OK' : 'No hospital stay'}
+              </span>
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-slate-500">
               <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{profile.designation || 'Staff member'}</span>

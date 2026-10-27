@@ -13,6 +13,7 @@ const { createPaymentReceipt } = require('../services/receiptService');
 const { ensureCombinedInvoice } = require('./quoteController');
 const { sendClientInvoice } = require('../utils/metaWhatsapp');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { parsePaymentDate } = require('../utils/paymentDate');
 const { editInvoiceAmount: editInvoiceAmountCore, editQuoteLineAmounts, getQuoteLinesForEdit } = require('../services/invoiceAmountEdits');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -620,7 +621,7 @@ exports.resendInvoice = async (req, res) => {
 // of a single admin-recorded payment.
 async function applyInvoicePayment(pgClient, {
   invoice, amount, payment_method, bank_account_id, cheque_number, cheque_date,
-  reference_number, slip_url, notes, actorUserId,
+  reference_number, slip_url, notes, actorUserId, ledgerTimestamp = null,
 }) {
   const paidSoFarResult = await pgClient.query(
     `SELECT COALESCE(SUM(amount), 0) as paid FROM invoice_payments WHERE invoice_id = $1`,
@@ -652,13 +653,13 @@ async function applyInvoicePayment(pgClient, {
     `INSERT INTO transactions
        (client_id, quote_id, category, transaction_type, amount, payment_method,
         bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-        notes, status, verified_by)
-     VALUES ($1,$2,$3,'CREDIT',$4,$5,$6,$7,$8,$9,$10,$11,'COMPLETED',$12)
+        notes, status, verified_by, created_at)
+     VALUES ($1,$2,$3,'CREDIT',$4,$5,$6,$7,$8,$9,$10,$11,'COMPLETED',$12,COALESCE($13::timestamptz, NOW()))
      RETURNING transaction_id`,
     [
       invoice.client_id, invoice.quote_id, transactionCategory, amount, payment_method,
       resolvedBankAccountId, cheque_number || null, cheque_date || null,
-      reference_number || null, slip_url || null, finalNotes, actorUserId,
+      reference_number || null, slip_url || null, finalNotes, actorUserId, ledgerTimestamp,
     ]
   );
   const transaction_id = txResult.rows[0].transaction_id;
@@ -681,8 +682,8 @@ async function applyInvoicePayment(pgClient, {
   let updatedInvoice = invoice;
   if (newlyFullyPaid) {
     const updateResult = await pgClient.query(
-      `UPDATE invoices SET status = 'PAID', transaction_id = $1, paid_at = NOW() WHERE invoice_id = $2 RETURNING *`,
-      [transaction_id, invoice.invoice_id]
+      `UPDATE invoices SET status = 'PAID', transaction_id = $1, paid_at = COALESCE($3::timestamptz, NOW()) WHERE invoice_id = $2 RETURNING *`,
+      [transaction_id, invoice.invoice_id, ledgerTimestamp]
     );
     updatedInvoice = updateResult.rows[0];
   }
@@ -770,8 +771,11 @@ exports.recordInvoicePayment = async (req, res) => {
 
   try {
     const uploadedSlipUrl = req.file?.location || null;
-    const { payment_method, bank_account_id, cheque_number, cheque_date, reference_number, slip_url, notes, amount } = req.body;
+    const { payment_method, bank_account_id, cheque_number, cheque_date, reference_number, slip_url, notes, amount, payment_date } = req.body;
     const finalSlipUrl = uploadedSlipUrl || slip_url || null;
+
+    const parsedDate = parsePaymentDate(payment_date);
+    if (parsedDate.error) return res.status(400).json({ message: parsedDate.error });
 
     if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
       return res.status(400).json({ message: `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}` });
@@ -819,6 +823,7 @@ exports.recordInvoicePayment = async (req, res) => {
         slip_url: finalSlipUrl,
         notes,
         actorUserId,
+        ledgerTimestamp: parsedDate.ledgerTimestamp,
       });
     } catch (err) {
       await pgClient.query('ROLLBACK');
@@ -851,7 +856,7 @@ exports.recordInvoicePayment = async (req, res) => {
         reference_number: reference_number || null,
         cheque_number: cheque_number || null,
         bank_account_id: resolvedBankAccountId,
-        payment_date: new Date(),
+        payment_date: parsedDate.ledgerTimestamp || new Date(),
         line_items: [{ label: 'Product Invoice', description: invoice.invoice_code, amount: parsedAmount }],
         generated_by: actorUserId,
       }).catch(e => console.error('[Receipt] Generation error (recordInvoicePayment):', e.message));

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { parsePaymentDate } = require('../utils/paymentDate');
 const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
@@ -2149,12 +2150,17 @@ exports.updateRegFeeAmount = async (req, res) => {
 // Admin: manually update reg_fee_status to PAID or WAIVED.
 exports.updateRegFeeStatus = async (req, res) => {
   const { client_id } = req.params;
-  const { status, salesperson_id } = req.body;
+  const { status, salesperson_id, payment_date } = req.body;
 
   const allowed = ['PENDING', 'PAID', 'WAIVED'];
   if (!allowed.includes(status)) {
     return res.status(400).json({ message: `Status must be one of: ${allowed.join(', ')}.` });
   }
+
+  // Only a PAID status represents money received on a particular day.
+  const parsedDate = status === 'PAID' ? parsePaymentDate(payment_date) : { ledgerTimestamp: null };
+  if (parsedDate.error) return res.status(400).json({ message: parsedDate.error });
+  const ledgerTimestamp = parsedDate.ledgerTimestamp;
 
   if (status === 'WAIVED' && !(await userHasPermission(req.user, 'CLIENT_WAIVE_REG_FEE'))) {
     return res.status(403).json({ message: 'Permission Denied: You do not have access to waive registration fees.' });
@@ -2175,8 +2181,8 @@ exports.updateRegFeeStatus = async (req, res) => {
 
     // PAID and WAIVED both start the 365-day membership countdown; PENDING clears it.
     const startsCountdown = status === 'PAID' || status === 'WAIVED';
-    const paidAt = startsCountdown ? new Date() : null;
-    const expiresAt = startsCountdown ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null;
+    const paidAt = startsCountdown ? (ledgerTimestamp || new Date()) : null;
+    const expiresAt = startsCountdown ? new Date(paidAt.getTime() + 365 * 24 * 60 * 60 * 1000) : null;
 
     const updated = await db.query(
       `UPDATE client_profiles
@@ -2207,9 +2213,9 @@ exports.updateRegFeeStatus = async (req, res) => {
     if (status === 'PAID' && !wasAlreadyPaid) {
       try {
         await db.query(
-          `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes)
-           VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)')`,
-          [client_id, current.rows[0].reg_fee_amount]
+          `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
+           VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)', COALESCE($3::timestamptz, NOW()))`,
+          [client_id, current.rows[0].reg_fee_amount, ledgerTimestamp]
         );
       } catch (txErr) {
         console.error('Failed to record registration fee transaction:', txErr.message);
@@ -2269,7 +2275,11 @@ exports.updateRegFeeStatus = async (req, res) => {
 // Distinct from updateRegFeeStatus so the audit trail captures the receipt-review action separately.
 exports.verifyRegFeePayment = async (req, res) => {
   const { client_id } = req.params;
-  const { salesperson_id } = req.body;
+  const { salesperson_id, payment_date } = req.body;
+
+  const parsedDate = parsePaymentDate(payment_date);
+  if (parsedDate.error) return res.status(400).json({ message: parsedDate.error });
+  const ledgerTimestamp = parsedDate.ledgerTimestamp;
 
   try {
     const clientResult = await db.query(
@@ -2293,19 +2303,20 @@ exports.verifyRegFeePayment = async (req, res) => {
     const updated = await db.query(
       `UPDATE client_profiles
        SET reg_fee_status = 'PAID', is_registration_fee_paid = true,
-           reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
+           reg_fee_paid_at = COALESCE($2::timestamptz, NOW()),
+           reg_fee_expires_at = COALESCE($2::timestamptz, NOW()) + INTERVAL '365 days'
        WHERE client_profile_id = $1
        RETURNING reg_fee_status, is_registration_fee_paid, reg_fee_expires_at`,
-      [client_id]
+      [client_id, ledgerTimestamp]
     );
 
     // Real cash was just confirmed received — record it as a client payment
     // transaction so it appears on the Transactions ledger and counts as Money In.
     try {
       await db.query(
-        `INSERT INTO transactions (client_id, category, amount, transaction_type, status, receipt_url, notes)
-         VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', $3, 'Registration fee payment (receipt verified)')`,
-        [client_id, client.reg_fee_amount, client.reg_fee_receipt_url || null]
+        `INSERT INTO transactions (client_id, category, amount, transaction_type, status, receipt_url, notes, created_at)
+         VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', $3, 'Registration fee payment (receipt verified)', COALESCE($4::timestamptz, NOW()))`,
+        [client_id, client.reg_fee_amount, client.reg_fee_receipt_url || null, ledgerTimestamp]
       );
     } catch (txErr) {
       console.error('Failed to record registration fee transaction:', txErr.message);

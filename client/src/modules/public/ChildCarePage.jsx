@@ -32,7 +32,7 @@ const ChildCarePage = () => {
       setError(null);
 
       // Fetch NANNY staff
-      const nanniesResponse = await apiClient.getStaffByRole('NANNY', { status: 'AVAILABLE', limit: 20 });
+      const nanniesResponse = await apiClient.getStaffByRole('NANNY', { status: 'AVAILABLE', limit: 20, public_only: true });
       const nannies = nanniesResponse.data || [];
 
       // Transform API data to match expected format (real data only)

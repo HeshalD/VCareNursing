@@ -53,8 +53,8 @@ const HomeNursingPage = () => {
 
       // Fetch both NURSE and CARETAKER staff who are willing to live in
       const [nursesResponse, caretakersResponse] = await Promise.all([
-        apiClient.getStaffWillingToLiveIn({ role: 'NURSE', status: 'AVAILABLE', limit: 10 }),
-        apiClient.getStaffWillingToLiveIn({ role: 'CARETAKER', status: 'AVAILABLE', limit: 10 })
+        apiClient.getStaffWillingToLiveIn({ role: 'NURSE', status: 'AVAILABLE', limit: 10, public_only: true }),
+        apiClient.getStaffWillingToLiveIn({ role: 'CARETAKER', status: 'AVAILABLE', limit: 10, public_only: true })
       ]);
 
       const nurses = nursesResponse.data || [];
@@ -94,18 +94,18 @@ const HomeNursingPage = () => {
               >
                 <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold uppercase tracking-wider mb-6">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  ICU • Post-Surgery • Vitals
+                  Clinical • Skilled • Recovery
                 </div>
 
                 <h1 className="text-4xl xs:text-5xl sm:text-6xl md:text-7xl font-bold tracking-tighter text-slate-900 mb-6 leading-[1.0] md:leading-[0.9]">
-                  Healing <br />
+                  Professional <br />
                   <span className="text-emerald-500">
-                    at Home.
+                    Home Nursing.
                   </span>
                 </h1>
 
                 <p className="text-lg md:text-xl text-slate-600 mb-8 max-w-lg leading-relaxed">
-                  Hospital-grade care doesn't need a hospital bed. We bring the ICU to your living room with certified professionals and live monitoring.
+                  Qualified nurses delivering expert medical care, wound management, and post-surgical recovery in the comfort of your home.
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4">
@@ -130,12 +130,12 @@ const HomeNursingPage = () => {
       </section>
 
       {/* Sticky Scroll Section - "The VCare Standard" */}
-      <section className="py-32 bg-white relative">
+      <section className="py-16 lg:py-32 bg-white relative">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-24">
-            <div className="sticky top-32 h-fit">
+          <div className="grid lg:grid-cols-2 gap-12 lg:gap-24">
+            <div className="lg:sticky lg:top-32 h-fit">
               <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6 text-slate-900">Not an Agency. <br />A Medical Partner.</h2>
-              <p className="text-xl text-slate-600 leading-relaxed mb-8">
+              <p className="text-lg md:text-xl text-slate-600 leading-relaxed mb-8">
                 Most agencies just send a person. We send a managed care protocol.
                 Every nurse is connected to our Command OS, ensuring vitals are recorded,
                 medicines are tracked, and doctors are kept in the loop.
@@ -143,20 +143,20 @@ const HomeNursingPage = () => {
 
             </div>
 
-            <div className="space-y-32 pt-12">
+            <div className="space-y-12 lg:space-y-32 lg:pt-12">
               <div className="group">
-                <div className="h-64 bg-slate-50 rounded-2xl mb-6 flex items-center justify-center border border-slate-200 group-hover:border-emerald-500/30 transition-colors">
+                <div className="h-48 sm:h-64 bg-slate-50 rounded-2xl mb-6 flex items-center justify-center border border-slate-200 group-hover:border-emerald-500/30 transition-colors">
                   <Stethoscope className="w-24 h-24 text-slate-400 group-hover:text-emerald-500 transition-colors" />
                 </div>
-                <h3 className="text-3xl font-bold text-slate-900 mb-2">Clinical Expertise</h3>
+                <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">Clinical Expertise</h3>
                 <p className="text-slate-600 text-lg">ICU trained staff capable of handling ventilators, tracheostomy, and post-stroke recovery.</p>
               </div>
 
               <div className="group">
-                <div className="h-64 bg-slate-50 rounded-2xl mb-6 flex items-center justify-center border border-slate-200 group-hover:border-emerald-500/30 transition-colors">
+                <div className="h-48 sm:h-64 bg-slate-50 rounded-2xl mb-6 flex items-center justify-center border border-slate-200 group-hover:border-emerald-500/30 transition-colors">
                   <ShieldCheck className="w-24 h-24 text-slate-400 group-hover:text-emerald-500 transition-colors" />
                 </div>
-                <h3 className="text-3xl font-bold text-slate-900 mb-2">Background Verified</h3>
+                <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">Background Verified</h3>
                 <p className="text-slate-600 text-lg">Police verification, aadhaar validation, and previous employer checks are mandatory.</p>
               </div>
 

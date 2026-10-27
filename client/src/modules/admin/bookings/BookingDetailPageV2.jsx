@@ -28,10 +28,11 @@ import { ClientLink, PatientLink } from '../components/EntityLinks';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-const initialPaymentForm = {
+const makeInitialPaymentForm = () => ({
   amount_received: '', payment_method: 'BANK_TRANSFER', bank_account_id: '',
   cheque_number: '', cheque_date: '', reference_number: '', notes: '',
-};
+  payment_date: todayISO(),
+});
 
 const moneyFmt = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney  = (v) => moneyFmt.format(Number(v || 0));
@@ -404,7 +405,7 @@ const BookingDetailPageV2 = () => {
   const [activityExpandedRow, setActivityExpandedRow] = useState(null);
 
   // payment form
-  const [paymentForm, setPaymentForm]         = useState(initialPaymentForm);
+  const [paymentForm, setPaymentForm]         = useState(makeInitialPaymentForm);
   const [paymentSlipFile, setPaymentSlipFile] = useState(null);
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 
@@ -2088,8 +2089,9 @@ const BookingDetailPageV2 = () => {
         amount_received: parseFloat(paymentForm.amount_received), payment_method: paymentForm.payment_method,
         bank_account_id: paymentForm.bank_account_id || null, cheque_number: paymentForm.cheque_number || null,
         cheque_date: paymentForm.cheque_date || null, reference_number: paymentForm.reference_number || null, notes: paymentForm.notes || null,
+        payment_date: paymentForm.payment_date || null,
       }, paymentSlipFile);
-      setPaymentForm(initialPaymentForm); setPaymentSlipFile(null);
+      setPaymentForm(makeInitialPaymentForm()); setPaymentSlipFile(null);
       setShowReceiptSendPopup(true);
       await fetchDetail();
       // Receipt is generated asynchronously server-side; refetch shortly after.
@@ -3774,6 +3776,10 @@ const BookingDetailPageV2 = () => {
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Amount</label>
                       <input required type="number" min="0" step="0.01" placeholder="0.00" value={paymentForm.amount_received} onChange={e => setPaymentForm({ ...paymentForm, amount_received: e.target.value })} onWheel={e => e.currentTarget.blur()} style={inp} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Payment date</label>
+                      <DateInput required max={todayISO()} value={paymentForm.payment_date} onChange={e => setPaymentForm({ ...paymentForm, payment_date: e.target.value })} style={inp} />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Method</label>

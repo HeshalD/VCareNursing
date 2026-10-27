@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(graphify query *)",
+      "Bash(ssh -o StrictHostKeyChecking=accept-new -i \"D:\\\\Projects\\\\VCareDocumentation\\\\AWS\\\\EC2\\\\vcarenursing-key.pem\" ubuntu@13.63.182.241 \"ls /etc/nginx/sites-enabled/ 2>&1; echo ---; sudo grep -rhE 'server_name|listen|location|proxy_pass|ssl_certificate |upgrade|proxy_buffering' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>&1 | head -60; echo ---; pm2 list 2>&1 | head -15\")",
+      "Bash(python /tmp/p.py)",
+      "Bash(node -e \"require\\('./utils/metaWhatsapp'\\);require\\('./routes/documentRoutes'\\);console.log\\('ok'\\)\")",
+      "Bash(ssh -i \"D:\\\\Projects\\\\VCareDocumentation\\\\AWS\\\\EC2\\\\vcarenursing-key.pem\" ubuntu@13.63.182.241 \"tail -n 400 /home/ubuntu/*/backend/nohup.out 2>/dev/null | grep -i webhook | tail -5; ls /home/ubuntu 2>&1 | head; sudo -n true 2>&1 | head -1; sudo ls /root 2>&1 | head -3\")",
+      "Bash(node --check utils/metaWhatsapp.js)",
+      "Bash(node --check controllers/documentController.js)",
+      "Bash(node --check routes/documentRoutes.js)",
+      "Bash(node --check migrate.js)",
+      "Bash(node --check server.js)",
+      "Bash(node -e ' *)",
+      "Bash(sed -i '/const realPost = /d; /const http = axios.create/d; /^  const real = require/d' C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-inbox-test.js)",
+      "Bash(sed -i 's/real\\\\.get\\(/get\\(/g; s/real\\\\.post\\(/post\\(/g' C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-inbox-test.js)",
+      "Bash(sed -i 's#^const PHONE = '\\\\''94700000002'\\\\''#const get = \\(u, c\\) => axios.request\\({ method: '\\\\''get'\\\\'', url: u, ...c }\\);\\\\nconst post = \\(u, b, c\\) => axios.request\\({ method: '\\\\''post'\\\\'', url: u, data: b, ...c }\\);\\\\nconst PHONE = '\\\\''94700000002'\\\\''#' C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-inbox-test.js)",
+      "Bash(node C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-inbox-test.js)",
+      "Bash(node \"C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-template-test.js\")",
+      "Bash(node --check realtime/whatsappSocket.js)",
+      "Bash(node \"C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-socket-test.js\")",
+      "Bash(node ./.wa-ui-smoke.tmp.mjs)",
+      "Bash(sed -i 's#^import { createServer } from '\\\\''vite'\\\\'';#globalThis.localStorage = { getItem: \\(\\) => null, setItem\\(\\) {}, removeItem\\(\\) {} };\\\\nimport { createServer } from '\\\\''vite'\\\\'';#' C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-ui-smoke.mjs)",
+      "Bash(sed -i 's#^const html = \\(el\\) => renderToString\\(React.createElement\\(MemoryRouter, null, el\\)\\);#const html = \\(el\\) => renderToString\\(React.createElement\\(MemoryRouter, null, el\\)\\).replace\\(/<!-- -->/g, '\\\\'''\\\\''\\).replace\\(/\\\\&\\\\#x27;/g, \"'\\\\''\"\\);#' C:/Users/HESHAL/AppData/Local/Temp/claude/d--Projects-VCareNursing/a986d1b0-556c-4ef0-91a7-208a28608bb6/scratchpad/wa-ui-smoke.mjs)"
+    ]
+  }
+}

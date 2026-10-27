@@ -7,6 +7,7 @@ const { transactionEditColumns } = require('../utils/editedAmount');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { parsePaymentDate } = require('../utils/paymentDate');
 const { toE164, toE164ListWithNames, isValidPhone } = require('../utils/phone');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 const { resolveCity } = require('../utils/cityHelper');
@@ -353,6 +354,7 @@ exports.getStaffByID = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -419,6 +421,7 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.gender,
                 sp.advance_threshold_amount,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -1510,7 +1513,7 @@ exports.setStaffPublicVisibility = async (req, res) => {
 exports.getAllStaff = async (req, res) => {
     try {
         // Optional query parameters for filtering
-        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', sort_earnings = '', page = 1, limit = 10 } = req.query;
+        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', live_in = '', hospital = '', sort_earnings = '', page = 1, limit = 10 } = req.query;
 
         // Opt-in sort by current earnings (highest first); default is newest first.
         const orderBy = sort_earnings === 'desc'
@@ -1550,6 +1553,14 @@ exports.getAllStaff = async (req, res) => {
             whereClause += ` AND sp.portal_access_disabled = false`;
         } else if (portal_access === 'disabled') {
             whereClause += ` AND sp.portal_access_disabled = true`;
+        }
+
+        // Care-setting preferences: 'yes' = willing, 'no' = not willing.
+        if (live_in === 'yes' || live_in === 'no') {
+            whereClause += ` AND COALESCE(sp.willing_to_live_in, false) = ${live_in === 'yes' ? 'true' : 'false'}`;
+        }
+        if (hospital === 'yes' || hospital === 'no') {
+            whereClause += ` AND sp.willing_to_stay_at_hospital = ${hospital === 'yes' ? 'true' : 'false'}`;
         }
 
         if (search) {
@@ -1599,7 +1610,11 @@ exports.getAllStaff = async (req, res) => {
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'on_leave') AS on_leave_count,
               COUNT(*) FILTER (WHERE sp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count,
               COUNT(*) FILTER (WHERE sp.portal_access_disabled = false) AS portal_enabled_count,
-              COUNT(*) FILTER (WHERE sp.portal_access_disabled = true) AS portal_disabled_count
+              COUNT(*) FILTER (WHERE sp.portal_access_disabled = true) AS portal_disabled_count,
+              COUNT(*) FILTER (WHERE sp.willing_to_live_in = true) AS live_in_count,
+              COUNT(*) FILTER (WHERE COALESCE(sp.willing_to_live_in, false) = false) AS not_live_in_count,
+              COUNT(*) FILTER (WHERE sp.willing_to_stay_at_hospital = true) AS hospital_count,
+              COUNT(*) FILTER (WHERE sp.willing_to_stay_at_hospital = false) AS not_hospital_count
             FROM staff_profiles sp
             JOIN users u ON sp.user_id = u.user_id
         `);
@@ -1627,6 +1642,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -1708,6 +1724,10 @@ exports.getAllStaff = async (req, res) => {
                 pending_migration: parseInt(c.pending_migration_count, 10),
                 portal_enabled: parseInt(c.portal_enabled_count, 10),
                 portal_disabled: parseInt(c.portal_disabled_count, 10),
+                live_in: parseInt(c.live_in_count, 10),
+                not_live_in: parseInt(c.not_live_in_count, 10),
+                hospital: parseInt(c.hospital_count, 10),
+                not_hospital: parseInt(c.not_hospital_count, 10),
             }
         });
 
@@ -1739,6 +1759,7 @@ exports.getAvailableStaff = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -1906,11 +1927,18 @@ exports.createStaffPayout = async (req, res) => {
             reference_number,
             notes,
             month_year,
+            payment_date,
         } = req.body;
 
         if (!amount || isNaN(amount) || Number(amount) <= 0) {
             return res.status(400).json({ status: 'error', message: 'Invalid amount' });
         }
+
+        const parsedDate = parsePaymentDate(payment_date);
+        if (parsedDate.error) {
+            return res.status(400).json({ status: 'error', message: parsedDate.error });
+        }
+        const ledgerTimestamp = parsedDate.ledgerTimestamp;
 
         if (payment_method && !_VALID_PAYOUT_METHODS.includes(payment_method)) {
             return res.status(400).json({ status: 'error', message: `payment_method must be one of: ${_VALID_PAYOUT_METHODS.join(', ')}` });
@@ -1958,8 +1986,8 @@ exports.createStaffPayout = async (req, res) => {
             // Insert into transactions ledger
             const insertTrans = await client.query(
                 `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
-                 VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', NOW()) RETURNING transaction_id`,
-                [staff_profile_id, payoutAmount, resolvedCompanyBankAccountId, payment_method || null, reference_number || null, req.user.user_id]
+                 VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', COALESCE($7::timestamptz, NOW())) RETURNING transaction_id`,
+                [staff_profile_id, payoutAmount, resolvedCompanyBankAccountId, payment_method || null, reference_number || null, req.user.user_id, ledgerTimestamp]
             );
 
             const transaction_id = insertTrans.rows[0].transaction_id;
@@ -1967,9 +1995,9 @@ exports.createStaffPayout = async (req, res) => {
             // Insert into staff_payments_tracking for audit
             const insertPayment = await client.query(
                 `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, NOW()), 'COMPLETED', NOW())
                  RETURNING staff_payment_id`,
-                [staff_profile_id, resolvedCompanyBankAccountId, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || null, reference_number || null, notes || null, req.user.user_id]
+                [staff_profile_id, resolvedCompanyBankAccountId, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || null, reference_number || null, notes || null, req.user.user_id, ledgerTimestamp]
             );
             const staffPaymentId = insertPayment.rows[0].staff_payment_id;
 
@@ -2457,6 +2485,11 @@ exports.getStaffByRole = async (req, res) => {
         const queryParams = [roles];
         let paramIndex = 2;
 
+        // Public pages only list staff the admin has chosen to show on the public site.
+        if (req.query.public_only === 'true') {
+            whereClause += ' AND sp.show_on_public_site = true';
+        }
+
         const search = String(req.query.search || '').trim();
         if (search) {
             queryParams.push(`%${search}%`);
@@ -2499,6 +2532,7 @@ exports.getStaffByRole = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.created_at,
                 sp.location,
@@ -2566,6 +2600,11 @@ exports.getStaffByGender = async (req, res) => {
         const queryParams = [gender];
         let paramIndex = 2;
 
+        // Public pages only list staff the admin has chosen to show on the public site.
+        if (req.query.public_only === 'true') {
+            whereClause += ' AND sp.show_on_public_site = true';
+        }
+
         const genderRoles = parsePickerRoles(req.query.role);
         if (genderRoles.length > 0) {
             queryParams.push(genderRoles);
@@ -2615,6 +2654,7 @@ exports.getStaffByGender = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.created_at,
                 sp.location,
@@ -2681,6 +2721,11 @@ exports.getStaffWillingToLiveIn = async (req, res) => {
         const queryParams = [];
         let paramIndex = 1;
 
+        // Public pages only list staff the admin has chosen to show on the public site.
+        if (req.query.public_only === 'true') {
+            whereClause += ' AND sp.show_on_public_site = true';
+        }
+
         const search = String(req.query.search || '').trim();
         if (search) {
             queryParams.push(`%${search}%`);
@@ -2729,6 +2774,7 @@ exports.getStaffWillingToLiveIn = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.created_at,
                 sp.location,
@@ -2930,6 +2976,7 @@ exports.updateStaffProfile = async (req, res) => {
         location,
         gender,
         willing_to_live_in,
+        willing_to_stay_at_hospital,
         date_of_birth,
         email,
         mobile_number: rawMobileNumber,
@@ -3196,6 +3243,7 @@ exports.updateStaffProfile = async (req, res) => {
                 youtube_links = COALESCE($20, youtube_links),
                 secondary_phone_numbers = COALESCE($21::jsonb, secondary_phone_numbers),
                 city_id = COALESCE($22, city_id),
+                willing_to_stay_at_hospital = COALESCE($23, willing_to_stay_at_hospital),
                 onboarding_status = CASE
                     WHEN onboarding_status = 'PENDING_MIGRATION'
                      AND (SELECT is_complete FROM completeness)
@@ -3227,6 +3275,7 @@ exports.updateStaffProfile = async (req, res) => {
                 profile_picture_url,
                 gender,
                 willing_to_live_in,
+                willing_to_stay_at_hospital,
                 date_of_birth,
                 grama_niladhari_url,
                 police_report_url,
@@ -3262,7 +3311,10 @@ exports.updateStaffProfile = async (req, res) => {
             languagesToSet,
             youtubeLinksToSet,
             secondaryPhonesToSet === null ? null : JSON.stringify(secondaryPhonesToSet),
-            city ? city.city_id : null
+            city ? city.city_id : null,
+            willing_to_stay_at_hospital !== undefined && willing_to_stay_at_hospital !== ''
+                ? (willing_to_stay_at_hospital === true || willing_to_stay_at_hospital === 'true')
+                : null
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -3336,6 +3388,7 @@ exports.createStaffProfile = async (req, res) => {
         gps_coordinates,
         gender,
         willing_to_live_in,
+        willing_to_stay_at_hospital,
         date_of_birth,
         email,
         mobile_number: rawMobileNumber,
@@ -3539,11 +3592,12 @@ exports.createStaffProfile = async (req, res) => {
                 youtube_links,
                 secondary_phone_numbers,
                 city_id,
+                willing_to_stay_at_hospital,
                 current_status,
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, $24, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING
                 staff_profile_id,
@@ -3569,6 +3623,7 @@ exports.createStaffProfile = async (req, res) => {
                 nic_back_url,
                 gender,
                 willing_to_live_in,
+                willing_to_stay_at_hospital,
                 date_of_birth,
                 current_status,
                 verification_status,
@@ -3598,7 +3653,8 @@ exports.createStaffProfile = async (req, res) => {
             createLanguages,
             createYoutubeLinks,
             JSON.stringify(createSecondaryPhones),
-            city ? city.city_id : null
+            city ? city.city_id : null,
+            willing_to_stay_at_hospital === true || willing_to_stay_at_hospital === 'true'
         ];
 
         const result = await db.query(insertQuery, insertValues);
@@ -4018,6 +4074,7 @@ exports.getTopRatedStaff = async (req, res) => {
                 sp.verification_status,
                 sp.gender,
                 sp.willing_to_live_in,
+                sp.willing_to_stay_at_hospital,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -4417,11 +4474,17 @@ exports.getSalarySheetLedger = async (req, res) => {
 
 // Admin: Bulk payout for multiple staff members
 exports.bulkStaffPayouts = async (req, res) => {
-    const { payouts, company_bank_account_id, payment_method, reference_number, notes } = req.body;
+    const { payouts, company_bank_account_id, payment_method, reference_number, notes, payment_date } = req.body;
 
     if (!Array.isArray(payouts) || payouts.length === 0) {
         return res.status(400).json({ status: 'error', message: 'payouts array is required' });
     }
+
+    const parsedDate = parsePaymentDate(payment_date);
+    if (parsedDate.error) {
+        return res.status(400).json({ status: 'error', message: parsedDate.error });
+    }
+    const ledgerTimestamp = parsedDate.ledgerTimestamp;
 
     const bulkPaymentMethod = payment_method || 'BANK_TRANSFER';
     if (!_VALID_PAYOUT_METHODS.includes(bulkPaymentMethod)) {
@@ -4481,18 +4544,18 @@ exports.bulkStaffPayouts = async (req, res) => {
 
             const insertTrans = await client.query(
                 `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
-                 VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', NOW())
+                 VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', COALESCE($7::timestamptz, NOW()))
                  RETURNING transaction_id`,
-                [staff_profile_id, payoutAmount, resolvedCompanyBankAccountId, bulkPaymentMethod, reference_number || null, req.user.user_id]
+                [staff_profile_id, payoutAmount, resolvedCompanyBankAccountId, bulkPaymentMethod, reference_number || null, req.user.user_id, ledgerTimestamp]
             );
 
             const transaction_id = insertTrans.rows[0].transaction_id;
 
             const insertBulkPayment = await client.query(
                 `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, NOW()), 'COMPLETED', NOW())
                  RETURNING staff_payment_id`,
-                [staff_profile_id, resolvedCompanyBankAccountId, staff_bank_account_id || null, transaction_id, payoutAmount, bulkPaymentMethod, reference_number || null, notes || null, req.user.user_id]
+                [staff_profile_id, resolvedCompanyBankAccountId, staff_bank_account_id || null, transaction_id, payoutAmount, bulkPaymentMethod, reference_number || null, notes || null, req.user.user_id, ledgerTimestamp]
             );
             const bulkStaffPaymentId = insertBulkPayment.rows[0].staff_payment_id;
 

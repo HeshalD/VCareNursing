@@ -1,12 +1,29 @@
 import React from 'react';
 import ReactPhoneInput from 'react-phone-number-input';
 import flags from 'react-phone-number-input/flags';
-import { isValidPhoneNumber } from 'libphonenumber-js';
+import { isValidPhoneNumber, getCountries, getCountryCallingCode } from 'libphonenumber-js';
 import SearchableCountrySelect from './SearchableCountrySelect';
 import 'react-phone-number-input/style.css';
 import './PhoneInput.css';
 
 export { isValidPhoneNumber };
+
+// Calling codes are prefix-free, so the code at the start of a "+..." value is unambiguous.
+const CALLING_CODES = new Set(getCountries().map(c => getCountryCallingCode(c)));
+
+// Local-format entry like 076 XXX XXXX arrives as "+94 076 ..." — drop the national trunk
+// "0" so it becomes +9476.... Italy (+39) is skipped: its numbers genuinely start with 0.
+const stripTrunkZero = (val) => {
+  if (!val || val[0] !== '+') return val;
+  for (let len = 1; len <= 3; len++) {
+    const code = val.slice(1, 1 + len);
+    if (CALLING_CODES.has(code)) {
+      if (code !== '39' && val[1 + len] === '0') return `+${code}${val.slice(2 + len)}`;
+      return val;
+    }
+  }
+  return val;
+};
 
 /**
  * Drop-in phone number input with a country-code dropdown (defaults to +94 / LK).
@@ -37,7 +54,7 @@ export default function PhoneInput({
         countrySelectComponent={SearchableCountrySelect}
         defaultCountry={defaultCountry}
         value={value || undefined}
-        onChange={(val) => onChange && onChange({ target: { name, value: val || '' } })}
+        onChange={(val) => onChange && onChange({ target: { name, value: stripTrunkZero(val) || '' } })}
         name={name}
         id={id}
         placeholder={placeholder}

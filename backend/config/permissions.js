@@ -28,6 +28,8 @@ const PERMISSIONS = {
   VIEW_STAFF_REVIEWS:          { label: 'View Staff Reviews',               module: 'Staff Reviews',        category: 'page' },
   VIEW_SETTINGS:               { label: 'View Settings',                    module: 'Settings',             category: 'page' },
   VIEW_NOTIFICATIONS:          { label: 'View Notifications & Messages',    module: 'Notifications',        category: 'page' },
+  VIEW_DOCUMENTS:              { label: 'View Documents',                   module: 'Documents',            category: 'page' },
+  VIEW_WHATSAPP:               { label: 'View WhatsApp Inbox',              module: 'WhatsApp Inbox',       category: 'page' },
   VIEW_INVOICES:               { label: 'View Invoices',                    module: 'Invoices',             category: 'page' },
   VIEW_RECEIPTS:               { label: 'View Receipts',                    module: 'Receipts',             category: 'page' },
   VIEW_PRODUCTS:               { label: 'View Products',                    module: 'Products',             category: 'page' },
@@ -231,6 +233,8 @@ const PERMISSIONS = {
   PRODUCT_CREATE:              { label: 'Create Product',                   module: 'Products', entity: 'Product',          verb: 'Create', category: 'action' },
   PRODUCT_EDIT:                { label: 'Edit Product',                     module: 'Products', entity: 'Product',          verb: 'Edit',   category: 'action' },
   NOTIFICATION_SETTINGS_EDIT:  { label: 'Toggle SMS / WhatsApp Sending',    module: 'Notifications', entity: 'Messaging Switch', verb: 'Toggle', category: 'action' },
+  DOCUMENT_REPLACE:            { label: 'Replace Official Documents',       module: 'Documents', entity: 'Document', verb: 'Replace', category: 'action' },
+  WHATSAPP_REPLY:              { label: 'Reply on WhatsApp',                module: 'WhatsApp Inbox', entity: 'WhatsApp Message', verb: 'Send', category: 'action' },
   PRODUCT_CATEGORY_MANAGE:     { label: 'Manage Product Categories',        module: 'Products', entity: 'Product Category', verb: 'Manage', category: 'action' },
 
   // ── Rentals ───────────────────────────────────────────────────────────────

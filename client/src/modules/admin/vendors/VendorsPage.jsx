@@ -16,7 +16,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 
 const VENDOR_TYPES = [
@@ -676,6 +676,7 @@ function PayVendorBillModal({ bill, onClose, onPaid }) {
 	const remaining = parseFloat(bill.amount) - parseFloat(bill.amount_paid || 0);
 	const [amount, setAmount] = useState(remaining.toFixed(2));
 	const [paymentMethod, setPaymentMethod] = useState('CASH');
+	const [paymentDate, setPaymentDate] = useState(todayISO());
 	const [bankAccountId, setBankAccountId] = useState('');
 	const [chequeNumber, setChequeNumber] = useState('');
 	const [chequeDate, setChequeDate] = useState('');
@@ -692,6 +693,10 @@ function PayVendorBillModal({ bill, onClose, onPaid }) {
 		e.preventDefault();
 		setError('');
 
+		if (!paymentDate) {
+			setError('Please enter the payment date');
+			return;
+		}
 		if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && !bankAccountId) {
 			setError('Please select a bank account');
 			return;
@@ -705,6 +710,7 @@ function PayVendorBillModal({ bill, onClose, onPaid }) {
 		try {
 			await apiClient.payVendorBill(bill.vendor_bill_id, {
 				amount,
+				payment_date: paymentDate,
 				payment_method: paymentMethod,
 				bank_account_id: bankAccountId || undefined,
 				cheque_number: chequeNumber || undefined,
@@ -749,6 +755,10 @@ function PayVendorBillModal({ bill, onClose, onPaid }) {
 							onWheel={(e) => e.target.blur()}
 							className={inputCls}
 						/>
+					</Field>
+
+					<Field label="Payment Date" required>
+						<DateInput value={paymentDate} max={todayISO()} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls} />
 					</Field>
 
 					<Field label="Payment Method" required>

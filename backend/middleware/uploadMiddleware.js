@@ -92,4 +92,24 @@ const uploadPaymentReceipt = multer({
   },
 }).single('receipt');
 
-module.exports = { uploadApplicationFiles, uploadDocReportFiles, uploadPaymentReceipt };
+// Official documents (contractor agreement, ...) replaced from the admin panel. PDF only.
+// Every upload gets a fresh key so earlier versions stay reachable for history/rollback.
+const uploadManagedDocument = multer({
+  storage: multerS3({
+    s3,
+    bucket: BUCKET,
+    contentType: multerS3.AUTO_CONTENT_TYPE,
+    key: (req, file, cb) => {
+      const docKey = String(req.params.key || 'document').toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+      cb(null, `contracts/${docKey}_${Date.now()}.pdf`);
+    },
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname !== 'file') return cb(new Error('Unexpected field: ' + file.fieldname));
+    if (file.mimetype !== 'application/pdf') return cb(new Error('Only PDF files are allowed.'));
+    cb(null, true);
+  },
+}).single('file');
+
+module.exports = { uploadApplicationFiles, uploadDocReportFiles, uploadPaymentReceipt, uploadManagedDocument };

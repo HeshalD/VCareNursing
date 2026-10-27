@@ -23,6 +23,10 @@ async function getActorName(userId) {
   return result.rows[0]?.full_name || 'Admin';
 }
 
+// Multipart form fields arrive as strings ('true'/'false'); JSON bodies carry real booleans.
+// `undefined` is preserved (-> null) so callers can treat an absent field as "leave unchanged".
+const toBool = (v) => (v === undefined || v === null || v === '' ? null : v === true || v === 'true');
+
 exports.submitApplication = async (req, res) => {
   try {
     const {
@@ -140,12 +144,12 @@ exports.submitApplication = async (req, res) => {
 
     const query = `
       INSERT INTO staff_applications
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages, secondary_phone_numbers, city_id)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages, secondary_phone_numbers, city_id, willing_to_live_in, willing_to_stay_at_hospital)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL
              THEN point($10::float, $9::float)
              ELSE NULL
-        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19::jsonb, $20)
+        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19::jsonb, $20, $21, $22)
       RETURNING *;
     `;
 
@@ -169,7 +173,9 @@ exports.submitApplication = async (req, res) => {
       experience_level || null,
       languagesArray,
       JSON.stringify(secondaryPhoneNumbers),
-      city.city_id
+      city.city_id,
+      toBool(req.body.willing_to_live_in) === true,
+      toBool(req.body.willing_to_stay_at_hospital) === true
     ]);
 
     const application = result.rows[0];
@@ -504,8 +510,8 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages, secondary_phone_numbers, city_id)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21::jsonb, $22)
+          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages, secondary_phone_numbers, city_id, willing_to_stay_at_hospital)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21::jsonb, $22, $23)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -530,7 +536,8 @@ exports.acceptApplication = async (req, res) => {
           app.experience_level || null,
           app.languages || [],
           JSON.stringify(app.secondary_phone_numbers || []),
-          app.city_id || null
+          app.city_id || null,
+          app.willing_to_stay_at_hospital || false
         ]);
 
         // Auto-create staff wallet on approval
@@ -949,13 +956,16 @@ exports.updateApplication = async (req, res) => {
            profile_picture_url = $11, experience_level = $12,
            languages = COALESCE($14, languages),
            secondary_phone_numbers = COALESCE($15::jsonb, secondary_phone_numbers),
-           city_id = COALESCE($16, city_id)
+           city_id = COALESCE($16, city_id),
+           willing_to_live_in = COALESCE($17, willing_to_live_in),
+           willing_to_stay_at_hospital = COALESCE($18, willing_to_stay_at_hospital)
        WHERE application_id = $13`,
       [full_name, email, mobile_number, rolesArray, qualifications,
        home_address, locationToStore, nicToStore, gender, date_of_birth,
        profilePictureUrl, experience_level || null, applicationId, languagesArray,
        secondaryPhoneNumbers === null ? null : JSON.stringify(secondaryPhoneNumbers),
-       city ? city.city_id : null]
+       city ? city.city_id : null,
+       toBool(req.body.willing_to_live_in), toBool(req.body.willing_to_stay_at_hospital)]
     );
 
     const updated = await db.query(
@@ -979,6 +989,11 @@ exports.updateApplication = async (req, res) => {
     diff('nic_number',       current.nic_number,        nicToStore);
     diff('gender',           current.gender,            gender);
     diff('experience_level', current.experience_level,  experience_level || null);
+
+    const newLiveIn = toBool(req.body.willing_to_live_in);
+    if (newLiveIn !== null) diff('willing_to_live_in', !!current.willing_to_live_in, newLiveIn);
+    const newHospital = toBool(req.body.willing_to_stay_at_hospital);
+    if (newHospital !== null) diff('willing_to_stay_at_hospital', !!current.willing_to_stay_at_hospital, newHospital);
 
     if (newProfilePicture && current.profile_picture_url !== profilePictureUrl) {
       changes['profile_picture'] = { from: current.profile_picture_url, to: profilePictureUrl };

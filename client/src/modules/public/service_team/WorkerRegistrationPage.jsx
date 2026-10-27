@@ -19,7 +19,8 @@ import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { DEFAULT_LANGUAGES } from '../../../data/languages';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
-const CONTRACT_URLS = {
+// Fallbacks only — the live links come from the admin-managed Documents page (see useEffect below).
+const DEFAULT_CONTRACT_URLS = {
   en: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Final+(1).pdf',
   si: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Sinhala+(1).pdf',
 };
@@ -50,13 +51,21 @@ const APPLIED_ROLES = [
 const APPLIED_ROLE_LABELS = APPLIED_ROLES.reduce((acc, r) => ({ ...acc, [r.value]: r.label }), {});
 
 const WorkerRegistrationPage = () => {
+  // Agreement links are managed in the admin Documents page; fall back to the originals if the lookup fails.
+  const [CONTRACT_URLS, setContractUrls] = useState(DEFAULT_CONTRACT_URLS);
+  useEffect(() => {
+    apiClient.getPublicAgreements()
+      .then(res => setContractUrls(prev => ({ en: res?.data?.en || prev.en, si: res?.data?.si || prev.si })))
+      .catch(() => {});
+  }, []);
+
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     full_name: '', email: '', mobile_number: '', secondary_phone_numbers: [], applied_roles: [],
     qualifications: '', home_address: '', location: '', city_id: '', latitude: '', longitude: '',
-    documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: '',
+    documents: [], profile_picture: null, gender: '', willing_to_live_in: false, willing_to_stay_at_hospital: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null, experience_level: '', languages: [...DEFAULT_LANGUAGES]
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -470,6 +479,7 @@ const WorkerRegistrationPage = () => {
         longitude: formData.longitude,
         gender: formData.gender,
         willing_to_live_in: formData.willing_to_live_in,
+        willing_to_stay_at_hospital: formData.willing_to_stay_at_hospital,
         date_of_birth: formData.date_of_birth,
         nic_number: formData.nic_number,
         experience_level: formData.experience_level || '',
@@ -819,7 +829,7 @@ const WorkerRegistrationPage = () => {
                             </p>
                           )}
                         </div>
-                        <div className="md:col-span-2">
+                        <div className="md:col-span-2 space-y-3">
                           <label className="flex items-center gap-3 text-sm font-semibold text-slate-600">
                             <input
                               type="checkbox"
@@ -828,6 +838,15 @@ const WorkerRegistrationPage = () => {
                               onChange={e => setFormData({ ...formData, willing_to_live_in: e.target.checked })}
                             />
                             Willing to live in with client
+                          </label>
+                          <label className="flex items-center gap-3 text-sm font-semibold text-slate-600">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 text-indigo-600 bg-slate-50 border-slate-200 rounded focus:ring-indigo-500"
+                              checked={formData.willing_to_stay_at_hospital}
+                              onChange={e => setFormData({ ...formData, willing_to_stay_at_hospital: e.target.checked })}
+                            />
+                            Okay to stay at a hospital to look after patients
                           </label>
                         </div>
                       </div>
@@ -1322,6 +1341,9 @@ const WorkerRegistrationPage = () => {
                             <p className="text-sm text-slate-500">{formData.home_address || "No address provided"}</p>
                             {formData.willing_to_live_in && (
                               <p className="text-xs text-emerald-600 mt-1">✓ Willing to live in with client</p>
+                            )}
+                            {formData.willing_to_stay_at_hospital && (
+                              <p className="text-xs text-emerald-600 mt-1">✓ Okay to stay at a hospital</p>
                             )}
                           </div>
                         </div>

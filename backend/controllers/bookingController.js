@@ -1067,6 +1067,21 @@ const convertToBookingInternal = async (req, res) => {
         const bookingId = newBooking.rows[0].booking_id;
         const bookingCode = newBooking.rows[0].booking_code;
 
+        // Hospital Care request: the patient is admitted, so open the booking as
+        // hospitalized at that hospital (same state the Hospitalized toggle produces,
+        // including the history row the care timeline reads).
+        if (reqData.hospital_name) {
+            await client.query(
+                `UPDATE bookings SET is_hospitalized = TRUE, hospital_name = $1 WHERE booking_id = $2`,
+                [reqData.hospital_name, bookingId]
+            );
+            await client.query(
+                `INSERT INTO booking_hospitalizations (booking_id, hospital_name, started_date)
+                 VALUES ($1, $2, $3)`,
+                [bookingId, reqData.hospital_name, reqData.start_date]
+            );
+        }
+
         // The registration fee is its own obligation, separate from the service charges:
         // book it on this booking, link what was paid toward it on the quote, cover any
         // shortfall from the client's free wallet, and only mark the client PAID if it is

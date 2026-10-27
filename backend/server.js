@@ -1,3 +1,4 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
@@ -33,6 +34,7 @@ const internalStaffRoutes = require('./routes/internalStaffRoutes');
 const internalStaffSalaryRoutes = require('./routes/internalStaffSalaryRoutes');
 const deviceRoutes = require('./routes/deviceRoutes');
 const notificationSettingsRoutes = require('./routes/notificationSettingsRoutes');
+const documentRoutes = require('./routes/documentRoutes');
 const priorityMembershipRoutes = require('./routes/priorityMembershipRoutes');
 const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
 const salespersonRoutes = require('./routes/salespersonRoutes');
@@ -44,13 +46,14 @@ const clientReceiptUploadRoutes = require('./routes/clientReceiptUploadRoutes');
 const walkInCustomerRoutes = require('./routes/walkInCustomerRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const rentalRoutes = require('./routes/rentalRoutes');
+const whatsappWebhookRoutes = require('./routes/whatsappWebhookRoutes');
+const whatsappInboxRoutes = require('./routes/whatsappInboxRoutes');
+const { initWhatsappSocket } = require('./realtime/whatsappSocket');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 const startRentalInvoicing = require('./cron/rentalInvoicing');
 const startRegFeeExpiry = require('./cron/regFeeExpiry');
 const startStaffLeaveStatus = require('./cron/staffLeaveStatus');
-
-const VERIFY_TOKEN = "nursing_verify_token";
 
 require('dotenv').config();
 
@@ -116,7 +119,13 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(compression()); // gzip large JSON list responses
-app.use(express.json()); // Body parser
+// Body parser. The WhatsApp webhook's HMAC signature is computed over the exact bytes Meta
+// sent, so keep the raw buffer for that path only.
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.originalUrl.startsWith('/api/whatsapp/webhook')) req.rawBody = buf;
+  },
+}));
 
 // Request Logger
 app.use((req, res, next) => {
@@ -158,6 +167,7 @@ app.use('/api/internal-staff', internalStaffRoutes);
 app.use('/api/internal-staff-salary', internalStaffSalaryRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/notification-settings', notificationSettingsRoutes);
+app.use('/api/documents', documentRoutes);
 app.use('/api/priority-membership', priorityMembershipRoutes);
 app.use('/api/scheduled-actions', scheduledActionsRoutes);
 app.use('/api/salespersons', salespersonRoutes);
@@ -179,39 +189,10 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  console.log("Webhook verification request received");
-
-  // Check token matches
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook verified successfully");
-
-    return res.status(200).send(challenge);
-  }
-
-  console.log("Webhook verification failed");
-
-  return res.sendStatus(403);
-});
-
-app.post("/webhook", (req, res) => {
-  console.log("Incoming WhatsApp event:");
-
-  console.dir(req.body, { depth: null });
-
-  /*
-    Example payload structure you will receive:
-    - messages
-    - statuses (delivered/read)
-  */
-
-  // IMPORTANT: Always respond 200 quickly
-  res.sendStatus(200);
-});
+// Meta WhatsApp webhook (inbound messages + delivery receipts) — public, signature-checked.
+app.use('/api/whatsapp/webhook', whatsappWebhookRoutes);
+// Admin inbox (permission-gated; mounted after the webhook so that path is never auth-checked).
+app.use('/api/whatsapp', whatsappInboxRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
@@ -220,6 +201,9 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+// An explicit http server so Socket.IO (live WhatsApp inbox) can share the port with Express.
+const httpServer = http.createServer(app);
+initWhatsappSocket(httpServer, (origin) => allowedOrigins.includes(origin));
+httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

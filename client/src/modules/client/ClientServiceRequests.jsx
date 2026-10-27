@@ -199,6 +199,11 @@ const TimelineItem = ({ item, type, isLast }) => {
                     <DetailItem label="Address" value={item.location_address} icon={<MapPin size={12} />} />
                   </div>
                 )}
+                {item.hospital_name && (
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <DetailItem label="Hospital" value={item.hospital_name} icon={<MapPin size={12} />} />
+                  </div>
+                )}
                 {item.patient_condition && (
                   <div style={{ gridColumn: '1 / -1' }}>
                     <DetailItem label="Condition" value={item.patient_condition} />

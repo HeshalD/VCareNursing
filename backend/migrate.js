@@ -2144,6 +2144,11 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS experience_level VARCHAR(20)`);
   await db.query(`ALTER TABLE staff_profiles ALTER COLUMN designation TYPE VARCHAR(200)`);
 
+  // Whether the staff member is OK to stay at a hospital to look after patients
+  // (distinct from willing_to_live_in, which is about living in at a client's home).
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS willing_to_stay_at_hospital BOOLEAN NOT NULL DEFAULT false`);
+  await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS willing_to_stay_at_hospital BOOLEAN NOT NULL DEFAULT false`);
+
   // Compliance documents — Grama Niladhari Report and Police Report uploaded by staff post-acceptance.
   // doc_upload_token is a stable UUID used as the public upload portal key (no login required).
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS doc_upload_token UUID UNIQUE DEFAULT gen_random_uuid()`);
@@ -3862,6 +3867,10 @@ async function runMigration() {
   // holds those one-off codes (one live row per mobile). The guest's city rides
   // on the request so the client profile created at payment time can use it.
   await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
+  // Hospital Care requests: the hospital the patient is admitted at
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS hospital_name VARCHAR(255)`);
+  // Optional end date the client asked for on the public booking forms
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS requested_end_date DATE`);
   await db.query(`
     CREATE TABLE IF NOT EXISTS priority_membership_otps (
       mobile_number VARCHAR(20) PRIMARY KEY,
@@ -3900,6 +3909,110 @@ async function runMigration() {
       updated_by UUID,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+  `);
+
+  // WhatsApp inbox: one conversation per phone number, plus every message in or out.
+  // contact_type/contact_id link a number back to a client / staff / applicant when one matches.
+  // last_inbound_at drives Meta's 24-hour window for free-form replies.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS wa_conversations (
+      conversation_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      phone_e164 VARCHAR(20) NOT NULL UNIQUE,
+      contact_type VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN',
+      contact_id UUID,
+      display_name VARCHAR(255),
+      wa_profile_name VARCHAR(255),
+      last_message_at TIMESTAMP WITH TIME ZONE,
+      last_message_preview TEXT,
+      last_inbound_at TIMESTAMP WITH TIME ZONE,
+      unread_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`ALTER TABLE wa_conversations ADD COLUMN IF NOT EXISTS last_message_direction VARCHAR(3)`);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS wa_messages (
+      message_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      conversation_id UUID NOT NULL REFERENCES wa_conversations(conversation_id) ON DELETE CASCADE,
+      wamid VARCHAR(255) UNIQUE,
+      direction VARCHAR(3) NOT NULL CHECK (direction IN ('IN', 'OUT')),
+      msg_type VARCHAR(20) NOT NULL,
+      body TEXT,
+      template_name VARCHAR(100),
+      template_params JSONB,
+      media_id VARCHAR(100),
+      media_url TEXT,
+      media_mime VARCHAR(100),
+      media_filename VARCHAR(255),
+      status VARCHAR(15) NOT NULL DEFAULT 'sent',
+      error_code VARCHAR(20),
+      error_message TEXT,
+      sent_by_user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      status_updated_at TIMESTAMP WITH TIME ZONE
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_wa_messages_conversation
+    ON wa_messages (conversation_id, created_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_wa_conversations_last_message
+    ON wa_conversations (last_message_at DESC NULLS LAST)
+  `);
+
+  // Managed documents: the fixed PDFs the system sends out (contractor agreement, ...),
+  // editable from the admin panel. One current file per document_key, plus full history.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS managed_documents (
+      document_key VARCHAR(60) PRIMARY KEY,
+      title VARCHAR(150) NOT NULL,
+      description TEXT,
+      audience VARCHAR(30) NOT NULL,
+      language VARCHAR(10),
+      sent_via TEXT,
+      file_url TEXT NOT NULL,
+      file_name VARCHAR(200) NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      updated_by UUID,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS managed_document_versions (
+      id SERIAL PRIMARY KEY,
+      document_key VARCHAR(60) NOT NULL REFERENCES managed_documents(document_key) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      file_url TEXT NOT NULL,
+      file_name VARCHAR(200) NOT NULL,
+      note TEXT,
+      uploaded_by UUID,
+      uploaded_by_name VARCHAR(150),
+      uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (document_key, version)
+    );
+  `);
+  await db.query(`
+    INSERT INTO managed_documents (document_key, title, description, audience, language, sent_via, file_url, file_name, sort_order)
+    VALUES
+      ('STAFF_AGREEMENT_EN', 'Independent Contractor Agreement (English)',
+       'Terms & conditions of engagement for service-team staff.', 'STAFF', 'en',
+       'WhatsApp when an approved applicant is sent the agreement; linked on the public worker registration page.',
+       'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Final+(1).pdf',
+       'VCare_Independent_Contractor_Agreement_English.pdf', 1),
+      ('STAFF_AGREEMENT_SI', 'Independent Contractor Agreement (Sinhala)',
+       'Sinhala version of the contractor agreement.', 'STAFF', 'si',
+       'WhatsApp when an approved applicant is sent the agreement; linked on the public worker registration page.',
+       'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Sinhala+(1).pdf',
+       'VCare_Independent_Contractor_Agreement_Sinhala.pdf', 2)
+    ON CONFLICT (document_key) DO NOTHING
+  `);
+  await db.query(`
+    INSERT INTO managed_document_versions (document_key, version, file_url, file_name, note, uploaded_by_name)
+    SELECT document_key, 1, file_url, file_name, 'Original file', 'System'
+    FROM managed_documents
+    ON CONFLICT (document_key, version) DO NOTHING
   `);
 
   console.log('Migration completed successfully!');

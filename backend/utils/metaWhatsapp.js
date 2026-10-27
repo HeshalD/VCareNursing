@@ -5,6 +5,17 @@ const API_URL = `https://graph.facebook.com/v21.0/${process.env.META_WA_PHONE_NU
 
 const { isWhatsAppEnabled, isMessageEnabled } = require('./systemSettings');
 const { EVENT_BY_TEMPLATE } = require('./messageEvents');
+const { getCurrentDocument, AGREEMENT_KEY_BY_LANGUAGE } = require('../services/managedDocuments');
+const { logOutbound } = require('./waStore');
+
+// Templates whose variables are secrets (login codes / passwords). The admin inbox records that
+// they were sent, but never their variables.
+const SENSITIVE_TEMPLATES = new Set(['vcare_otp', 'vcare_staff_account_created']);
+
+const failureDetails = (err) => ({
+  errorCode: err.response?.data?.error?.code,
+  errorMessage: err.response?.data?.error?.message || err.message,
+});
 
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
   if (!(await isWhatsAppEnabled())) {
@@ -12,28 +23,36 @@ const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') =
     return { blocked: true };
   }
   const to = formatNumber(mobileNumber);
-  const response = await axios.post(
-    API_URL,
-    {
-      messaging_product: 'whatsapp',
-      to,
-      type: 'document',
-      document: {
-        link: documentUrl,
-        filename,
-        caption
+  const doc = { msgType: 'document', body: caption || null, mediaUrl: documentUrl, mediaFilename: filename };
+  let response;
+  try {
+    response = await axios.post(
+      API_URL,
+      {
+        messaging_product: 'whatsapp',
+        to,
+        type: 'document',
+        document: {
+          link: documentUrl,
+          filename,
+          caption
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
+    );
+  } catch (err) {
+    await logOutbound({ to, ...doc, status: 'failed', ...failureDetails(err) });
+    throw err;
+  }
 
   const msgId = response.data?.messages?.[0]?.id;
   console.log(`[Meta WA] Document "${filename}" sent to ${to}. Message ID: ${msgId}`);
+  await logOutbound({ to, wamid: msgId, ...doc });
   return response.data;
 };
 
@@ -84,11 +103,103 @@ const sendTemplate = async (to, templateName, languageCode, bodyParams, headerPa
 
     const msgId = response.data?.messages?.[0]?.id;
     console.log(`[Meta WA] "${templateName}" sent to ${to}. Message ID: ${msgId}`);
+    await logOutbound({ to, wamid: msgId, ...describeTemplate(templateName, bodyParams, headerParams) });
     return response.data;
   } catch (err) {
     console.error(`[Meta WA] "${templateName}" failed (${err.response?.status}):`, JSON.stringify(err.response?.data ?? err.message));
+    await logOutbound({ to, ...describeTemplate(templateName, bodyParams, headerParams), status: 'failed', ...failureDetails(err) });
     throw err;
   }
+};
+
+// What the inbox stores for a template send: its name, its variables (unless secret) and, for a
+// document-header template (receipts, quotations...), the attached file.
+const describeTemplate = (templateName, bodyParams, headerParams) => {
+  const header = (headerParams || []).find((h) => h.type === 'document')?.document;
+  return {
+    msgType: 'template',
+    templateName,
+    templateParams: SENSITIVE_TEMPLATES.has(templateName) ? null : (bodyParams || []),
+    mediaUrl: header?.link,
+    mediaFilename: header?.filename,
+  };
+};
+
+// ── Free-form messages (admin inbox replies) ─────────────────────────────────
+// Meta only delivers these inside the 24-hour window after the customer's last message;
+// outside it only approved templates go through. The inbox checks the window before calling.
+// Unlike sendTemplate these aren't tied to an event, so only the global WhatsApp switch applies.
+const graphPost = (payload) =>
+  axios.post(API_URL, { messaging_product: 'whatsapp', ...payload }, {
+    headers: { Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' }
+  });
+
+// Sends one free-form message and records it (success or failure) in the inbox.
+const sendFreeForm = async (mobileNumber, apiPayload, logFields, sentByUserId) => {
+  if (!(await isWhatsAppEnabled())) {
+    console.log(`[Meta WA] BLOCKED (WhatsApp disabled in admin settings): ${apiPayload.type} to ${mobileNumber}`);
+    return { blocked: true };
+  }
+  const to = formatNumber(mobileNumber);
+  try {
+    const response = await graphPost({ to, ...apiPayload });
+    const msgId = response.data?.messages?.[0]?.id;
+    console.log(`[Meta WA] ${apiPayload.type} sent to ${to}. Message ID: ${msgId}`);
+    await logOutbound({ to, wamid: msgId, sentByUserId, ...logFields });
+    return response.data;
+  } catch (err) {
+    console.error(`[Meta WA] ${apiPayload.type} to ${to} failed (${err.response?.status}):`, JSON.stringify(err.response?.data ?? err.message));
+    await logOutbound({ to, sentByUserId, ...logFields, status: 'failed', ...failureDetails(err) });
+    throw err;
+  }
+};
+
+const sendText = (mobileNumber, text, { sentByUserId } = {}) =>
+  sendFreeForm(
+    mobileNumber,
+    { type: 'text', text: { body: text, preview_url: false } },
+    { msgType: 'text', body: text },
+    sentByUserId
+  );
+
+// An admin sending any approved template from the inbox (the only message allowed outside the
+// 24-hour window). `built` comes from services/waTemplates.buildSend, already validated.
+// Only the global WhatsApp switch applies; the per-event switches are for automated sends.
+const sendAdminTemplate = (mobileNumber, { name, language }, built, { sentByUserId } = {}) =>
+  sendFreeForm(
+    mobileNumber,
+    { type: 'template', template: { name, language: { code: language }, components: built.components } },
+    {
+      msgType: 'template',
+      body: built.renderedBody,
+      templateName: name,
+      templateParams: built.bodyParams,
+      mediaUrl: built.headerMedia?.url,
+      mediaFilename: built.headerMedia?.filename,
+    },
+    sentByUserId
+  );
+
+// Which WhatsApp message type a file travels as. Captions aren't supported on audio.
+const mediaTypeFor = (mime) => {
+  if (/^image\/(jpeg|png)$/.test(mime)) return 'image';
+  if (/^video\/(mp4|3gpp)$/.test(mime)) return 'video';
+  if (/^audio\/(aac|amr|mpeg|mp4|ogg)/.test(mime)) return 'audio';
+  return 'document';
+};
+
+// media: { url, mime, filename } for a file already on S3.
+const sendMedia = (mobileNumber, media, caption = '', { sentByUserId } = {}) => {
+  const type = mediaTypeFor(media.mime);
+  const object = { link: media.url };
+  if (caption && type !== 'audio') object.caption = caption;
+  if (type === 'document') object.filename = media.filename;
+  return sendFreeForm(
+    mobileNumber,
+    { type, [type]: object },
+    { msgType: type, body: type === 'audio' ? null : (caption || null), mediaUrl: media.url, mediaMime: media.mime, mediaFilename: media.filename },
+    sentByUserId
+  );
 };
 
 // Verification code (OTP). eventKey picks which admin toggle governs it (otp_auth / otp_staff_applicant /
@@ -402,19 +513,8 @@ const sendInternalStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPay
     [{ type: 'document', document: { link: pdfUrl, filename: `Payslip_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
   );
 
-// The company's Independent Contractor Agreement (terms & conditions) PDF.
-// Two versions (English / Sinhala), hosted on S3; sent as a real PDF document attachment (not a text link).
-const STAFF_AGREEMENT_PDFS = {
-  en: {
-    url: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Final+(1).pdf',
-    filename: 'VCare_Independent_Contractor_Agreement_English.pdf',
-  },
-  si: {
-    url: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Sinhala+(1).pdf',
-    filename: 'VCare_Independent_Contractor_Agreement_Sinhala.pdf',
-  },
-};
-
+// The Independent Contractor Agreement PDFs (English / Sinhala) are managed from the admin
+// Documents page; the current file is looked up at send time (services/managedDocuments).
 // Sent to an approved applicant — header: agreement PDF. No body variables: the
 // approved Meta template has a static body (no {{1}}), so we pass no body params.
 // META TEMPLATE SPEC — vcare_staff_agreement (UTILITY, en)
@@ -427,9 +527,11 @@ const STAFF_AGREEMENT_PDFS = {
 //
 //   Thank you for choosing to work with VCare Nursing.
 // eslint-disable-next-line no-unused-vars -- fullName kept for call-site compatibility
-const sendStaffAgreement = (mobileNumber, fullName, language = 'en') => {
-  const pdf = STAFF_AGREEMENT_PDFS[language];
-  if (!pdf) throw new Error(`Unknown agreement language: ${language}`);
+const sendStaffAgreement = async (mobileNumber, fullName, language = 'en') => {
+  const docKey = AGREEMENT_KEY_BY_LANGUAGE[language];
+  if (!docKey) throw new Error(`Unknown agreement language: ${language}`);
+  const doc = await getCurrentDocument(docKey);
+  const pdf = { url: doc.file_url, filename: doc.file_name };
   return sendTemplate(
     formatNumber(mobileNumber),
     'vcare_staff_agreement',
@@ -579,4 +681,4 @@ const sendRegFeeInvoice = (mobileNumber, clientName, amount, bankName, accountHo
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendOtp, sendStaffAccountCreated, sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };
+module.exports = { sendText, sendMedia, sendAdminTemplate, mediaTypeFor,sendOtp,sendStaffAccountCreated, sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };

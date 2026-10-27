@@ -18,6 +18,8 @@ import elderyCareImg from '../../assets/images/eldery_care.webp';
 import babyCareImg from '../../assets/images/baby_care.webp';
 import homeNursingImg from '../../assets/images/home_nursing.webp';
 import doctorVisitImg from '../../assets/images/doctor_visit.PNG';
+import hospitalCareImg from '../../assets/images/hospital_care.png';
+import patientCareImg from '../../assets/images/patient_care.png';
 import ambulanceImg from '../../assets/images/ambulance.PNG';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 import patternBg from '../../assets/images/abstract-seamless-geometric-shape-lines-pattern-design-background_84443-23990.png';
@@ -161,6 +163,8 @@ const ServiceGrid = () => {
     { title: 'Elderly Care', img: elderyCareImg, link: '/services/elderly-care' },
     { title: 'Child Care', img: babyCareImg, link: '/services/child-care' },
     { title: 'Home Nursing', img: homeNursingImg, link: '/services/home-nursing' },
+    { title: 'Patient Care', img: patientCareImg, link: '/services/patient-care' },
+    { title: 'Hospital Care', img: hospitalCareImg, link: '/services/hospital-care' },
     { title: 'Doctor Visits', img: doctorVisitImg, link: '/services/doctor-visits' },
     { title: 'Ambulance Service', img: ambulanceImg, link: '/services/ambulance' },
   ];

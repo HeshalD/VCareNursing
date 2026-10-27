@@ -11,7 +11,7 @@ import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
 import { ClientLink } from '../components/EntityLinks';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
 
@@ -2577,6 +2577,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
 function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
   const [bankAccounts, setBankAccounts] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('CASH');
+  const [paymentDate, setPaymentDate] = useState(todayISO());
   const [bankAccountId, setBankAccountId] = useState('');
   const [chequeNumber, setChequeNumber] = useState('');
   const [chequeDate, setChequeDate] = useState('');
@@ -2594,6 +2595,11 @@ function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
     e.preventDefault();
     setError('');
 
+    if (!paymentDate) {
+      setError('Please enter the payment date');
+      return;
+    }
+
     if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && !bankAccountId) {
       setError('Please select a bank account');
       return;
@@ -2609,6 +2615,7 @@ function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
         invoice.invoice_id,
         {
           payment_method: paymentMethod,
+          payment_date: paymentDate,
           bank_account_id: bankAccountId || undefined,
           cheque_number: chequeNumber || undefined,
           cheque_date: chequeDate || undefined,
@@ -2642,6 +2649,16 @@ function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
               <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
             </div>
           )}
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Payment Date</label>
+            <DateInput
+              value={paymentDate}
+              max={todayISO()}
+              onChange={(e) => setPaymentDate(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
 
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-1">Payment Method</label>

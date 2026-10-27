@@ -18,6 +18,10 @@ import DoctorVisitsPage from './modules/public/DoctorVisitsPage';
 import AmbulanceServicePage from './modules/public/AmbulanceServicePage';
 import PriorityMembershipPage from './modules/public/PriorityMembershipPage';
 import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
+import PatientCarePage from './modules/public/PatientCarePage';
+import PatientCareBookingPage from './modules/public/PatientCareBookingPage';
+import HospitalCarePage from './modules/public/HospitalCarePage';
+import HospitalCareBookingPage from './modules/public/HospitalCareBookingPage';
 import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
@@ -50,6 +54,8 @@ import BalanceSheet from './modules/admin/reports/balance_sheet';
 import Settings from './modules/admin/settings/settings';
 import StaffMissingBankDetails from './modules/admin/user_managemnet/staff_missing_bank_details';
 import NotificationsMessages from './modules/admin/notifications/notifications_messages';
+import DocumentsPage from './modules/admin/documents/documents_page';
+import WhatsAppInboxPage from './modules/admin/whatsapp/whatsapp_inbox_page';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
 import DeviceActivationPage from './modules/admin/DeviceActivationPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
@@ -162,6 +168,10 @@ function App() {
             <Route path="/services/ambulance" element={<AmbulanceServicePage />} />
             <Route path="/priority-membership" element={<PriorityMembershipPage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
+            <Route path="/services/patient-care" element={<PatientCarePage />} />
+            <Route path="/services/patient-care/book" element={<PatientCareBookingPage />} />
+            <Route path="/services/hospital-care" element={<HospitalCarePage />} />
+            <Route path="/services/hospital-care/book" element={<HospitalCareBookingPage />} />
             <Route path="/services/view-staff" element={<ViewStaffPage />} />
             <Route path="/services/staff-profile/:id" element={<StaffProfile/>}/>
             <Route path="/booking-success" element={<BookingSuccessPage />} />
@@ -521,6 +531,16 @@ function App() {
             <Route path="/admin/staff-missing-bank-details" element={
               <AdminAuthProvider>
                 <StaffMissingBankDetails />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/documents" element={
+              <AdminAuthProvider>
+                <DocumentsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/whatsapp" element={
+              <AdminAuthProvider>
+                <WhatsAppInboxPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/notifications" element={

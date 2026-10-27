@@ -251,6 +251,8 @@ const WorkerVerificationDetailsPage = () => {
         gender: data.gender || '',
         date_of_birth: data.date_of_birth ? data.date_of_birth.substring(0, 10) : '',
         experience_level: data.experience_level || '',
+        willing_to_live_in: !!data.willing_to_live_in,
+        willing_to_stay_at_hospital: !!data.willing_to_stay_at_hospital,
         languages: Array.isArray(data.languages) ? data.languages : [],
         secondary_phone_numbers: Array.isArray(data.secondary_phone_numbers) ? data.secondary_phone_numbers : [],
       });
@@ -308,6 +310,8 @@ const WorkerVerificationDetailsPage = () => {
       gender: application.gender || '',
       date_of_birth: application.date_of_birth ? application.date_of_birth.substring(0, 10) : '',
       experience_level: application.experience_level || '',
+      willing_to_live_in: !!application.willing_to_live_in,
+      willing_to_stay_at_hospital: !!application.willing_to_stay_at_hospital,
       languages: Array.isArray(application.languages) ? application.languages : [],
       secondary_phone_numbers: Array.isArray(application.secondary_phone_numbers) ? application.secondary_phone_numbers : [],
     });
@@ -829,6 +833,20 @@ const WorkerVerificationDetailsPage = () => {
                       onChange={(langs) => setEditData(p => ({ ...p, languages: langs }))}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2.5 text-sm text-slate-700">
+                      <input type="checkbox" checked={!!editData.willing_to_live_in}
+                        onChange={e => setEditData(p => ({ ...p, willing_to_live_in: e.target.checked }))}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      Willing to live in with client
+                    </label>
+                    <label className="flex items-center gap-2.5 text-sm text-slate-700">
+                      <input type="checkbox" checked={!!editData.willing_to_stay_at_hospital}
+                        onChange={e => setEditData(p => ({ ...p, willing_to_stay_at_hospital: e.target.checked }))}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      Okay to stay at a hospital to look after patients
+                    </label>
+                  </div>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-50">
@@ -846,6 +864,8 @@ const WorkerVerificationDetailsPage = () => {
                   </div>
                   <InfoRow label="Qualifications" value={application.qualifications} />
                   <InfoRow label="Experience Level" value={experienceLevelLabel(application.experience_level)} />
+                  <InfoRow label="Live-in" value={application.willing_to_live_in ? 'Willing' : 'Not willing'} />
+                  <InfoRow label="Hospital stay" value={application.willing_to_stay_at_hospital ? 'Okay to stay at hospital' : 'Not willing'} />
                   <div className="grid grid-cols-[140px_1fr] py-2.5 gap-4 items-start">
                     <span className="text-xs text-slate-500">Languages</span>
                     <div className="flex flex-wrap gap-1.5">

@@ -39,8 +39,8 @@ const ElderlyCarePage = () => {
 
       // Fetch both NURSE and CARETAKER staff
       const [nursesResponse, caretakersResponse] = await Promise.all([
-        apiClient.getStaffByRole('NURSE', { status: 'AVAILABLE', limit: 20 }),
-        apiClient.getStaffByRole('CARETAKER', { status: 'AVAILABLE', limit: 20 })
+        apiClient.getStaffByRole('NURSE', { status: 'AVAILABLE', limit: 20, public_only: true }),
+        apiClient.getStaffByRole('CARETAKER', { status: 'AVAILABLE', limit: 20, public_only: true })
       ]);
 
       const nurses = nursesResponse.data || [];
