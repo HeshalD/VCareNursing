@@ -455,10 +455,11 @@ const ModularQuoteBuilder = () => {
 
   const hasRegistrationFeeItem = lineItems.some(i => i.is_registration_fee);
   const registrationFeeAlreadySettled = ['PAID', 'WAIVED'].includes(clientProfile?.reg_fee_status);
-  // Priority Membership requests are registration-fee-only leads. A guest one has no client
-  // account yet (it is created when the fee payment is recorded), so the fee must still be quotable.
+  // Priority Membership requests are registration-fee-only leads (the fee line is auto-added).
   const isPriorityMembership = serviceRequest?.service_type === 'PRIORITY_MEMBERSHIP';
-  const canAddRegistrationFee = (!!serviceRequest?.client_id || isPriorityMembership) && !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
+  // A guest lead (public form) has no client account yet — it is created when the first payment
+  // is recorded — but is by definition unregistered, so the fee must still be quotable.
+  const canAddRegistrationFee = !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
 
   // Dedicated rate line items — item_subtype is what quoteController reads to
   // populate quotations.daily_rate/per_shift_rate; one of each per quote.

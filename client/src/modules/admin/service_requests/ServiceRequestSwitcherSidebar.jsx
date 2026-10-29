@@ -56,7 +56,7 @@ const ServiceRequestSwitcherSidebar = ({ activeRequestId, onNavigate }) => {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl">
       <div className="border-b border-gray-100 p-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
@@ -68,7 +68,7 @@ const ServiceRequestSwitcherSidebar = ({ activeRequestId, onNavigate }) => {
           />
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-8 text-gray-400">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -84,15 +84,15 @@ const ServiceRequestSwitcherSidebar = ({ activeRequestId, onNavigate }) => {
                 key={r.request_id}
                 type="button"
                 onClick={() => handleSelect(r.request_id)}
-                className={`flex w-full flex-col gap-0.5 border-l-2 px-3 py-2.5 text-left transition-colors ${
+                className={`flex w-full min-w-0 flex-col gap-0.5 border-l-2 px-3 py-2.5 text-left transition-colors ${
                   active ? 'border-blue-600 bg-blue-50' : 'border-transparent hover:bg-gray-50'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className={`truncate text-[13px] font-semibold ${active ? 'text-blue-700' : 'text-gray-800'}`}>
+                  <p className={`min-w-0 truncate text-[13px] font-semibold ${active ? 'text-blue-700' : 'text-gray-800'}`}>
                     {withHonorific(r.client_honorific || r.honorific, r.payer_name) || 'Client'}
                   </p>
-                  <span className={`flex items-center gap-1 text-[10px] font-semibold ${meta.text}`}>
+                  <span className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] font-semibold ${meta.text}`}>
                     <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
                     {(r.status || '—').replace(/_/g, ' ')}
                   </span>
