@@ -290,6 +290,17 @@ class ApiClient {
     });
   }
 
+  async getClientDeleteImpact(clientId) {
+    return this.request(`/client/${clientId}/delete-impact`);
+  }
+
+  async forceDeleteClientProfile(clientId, password) {
+    return this.request(`/client/${clientId}/force`, {
+      method: 'DELETE',
+      body: JSON.stringify({ password }),
+    });
+  }
+
   async createClientProfile(data) {
     return this.request('/client/proxy-create', {
       method: 'POST',

@@ -27,6 +27,9 @@ router.get('/:client_id/detail', protect, requirePermission('VIEW_USER_MANAGEMEN
 router.patch('/:client_id/deactivate', protect, requirePermission('CLIENT_DEACTIVATE'), clientController.deactivateClientProfile);
 router.patch('/:client_id/reactivate', protect, requirePermission('CLIENT_DEACTIVATE'), clientController.reactivateClientProfile);
 router.delete('/:client_id', protect, requirePermission('CLIENT_DELETE'), clientController.deleteClientProfile);
+// SUPER_ADMIN-only override of the delete block (hard-deletes the client and everything attached)
+router.get('/:client_id/delete-impact', protect, restrictTo('SUPER_ADMIN'), clientController.getClientDeleteImpact);
+router.delete('/:client_id/force', protect, restrictTo('SUPER_ADMIN'), clientController.forceDeleteClientProfile);
 router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientCompanyName);
 router.patch('/:client_id/profile', protect, requirePermission('CLIENT_EDIT'), requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientProfile);
 router.post('/:client_id/send-reg-fee-invoice', protect, requirePermission('CLIENT_SEND_REG_FEE_INVOICE'), clientController.sendRegFeeInvoice);

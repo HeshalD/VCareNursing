@@ -1,5 +1,7 @@
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const db = require('../config/db');
+const { purgeClient } = require('../services/clientHardDelete');
 const { logActivity } = require('../utils/activityLogger');
 const { parsePaymentDate } = require('../utils/paymentDate');
 const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
@@ -239,6 +241,72 @@ exports.deleteClientProfile = async (req, res) => {
     }
     console.error('Error deleting client profile:', error);
     res.status(500).json({ message: 'Error deleting client profile' });
+  }
+};
+
+// SUPER_ADMIN: preview what an override delete would remove (dry run, nothing is committed)
+exports.getClientDeleteImpact = async (req, res) => {
+  try {
+    const impact = await purgeClient(req.params.client_id, { dryRun: true });
+    if (!impact) return res.status(404).json({ message: 'Client profile not found' });
+    res.status(200).json({ status: 'success', data: impact });
+  } catch (error) {
+    console.error('Error previewing client delete:', error);
+    res.status(500).json({ message: 'Could not work out what is attached to this client.' });
+  }
+};
+
+// SUPER_ADMIN: delete a client and every record attached to it. Requires the
+// caller's own password as re-auth.
+exports.forceDeleteClientProfile = async (req, res) => {
+  const { client_id } = req.params;
+  const { password } = req.body || {};
+
+  if (!password) {
+    return res.status(400).json({ message: 'Password is required to confirm this action.' });
+  }
+
+  try {
+    const userRes = await db.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+    const passwordHash = userRes.rows[0]?.password_hash;
+    if (!passwordHash || !(await bcrypt.compare(password, passwordHash))) {
+      return res.status(401).json({ message: 'Incorrect password.' });
+    }
+
+    const clientAccount = await getClientUserAccount(client_id);
+    if (!clientAccount) return res.status(404).json({ message: 'Client profile not found' });
+
+    const result = await purgeClient(client_id);
+    if (!result) return res.status(404).json({ message: 'Client profile not found' });
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_ACCOUNT_FORCE_DELETED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: {
+          client_name: clientAccount.full_name,
+          client_code: clientAccount.client_code,
+          deleted_records: result.deleted,
+          unlinked_records: result.unlinked,
+        },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (forceDeleteClientProfile):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Client profile and all attached records deleted',
+      data: result,
+    });
+  } catch (error) {
+    console.error('Error force-deleting client profile:', error);
+    res.status(500).json({ message: 'Error deleting client profile. Nothing was changed.' });
   }
 };
 

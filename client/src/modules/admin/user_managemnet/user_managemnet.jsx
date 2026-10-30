@@ -5,6 +5,7 @@ import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X, Trash2
 import AdminLayout from '../components/AdminLayout';
 import FilterableTh from '../components/FilterableTh';
 import apiClient from '../../../api/api';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import PhoneInput from '../../../components/common/PhoneInput';
@@ -106,6 +107,12 @@ const ClientManagement = () => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  // SUPER_ADMIN override of the "has bookings/invoices" block
+  const { isSuperAdmin } = useAdminAuth();
+  const [blockedClients, setBlockedClients] = useState([]);
+  const [overrideImpact, setOverrideImpact] = useState(null);
+  const [overridePassword, setOverridePassword] = useState('');
+  const [overrideLoading, setOverrideLoading] = useState(false);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
   useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly]);
@@ -192,14 +199,71 @@ const ClientManagement = () => {
   const openDeleteConfirm = () => {
     setDeleteConfirmText('');
     setDeleteError(null);
+    resetOverride();
     setShowDeleteConfirm(true);
   };
 
+  const resetOverride = () => {
+    setBlockedClients([]);
+    setOverrideImpact(null);
+    setOverridePassword('');
+  };
+
   const closeDeleteConfirm = () => {
-    if (deleteLoading) return;
+    if (deleteLoading || overrideLoading) return;
     setShowDeleteConfirm(false);
     setDeleteConfirmText('');
     setDeleteError(null);
+    resetOverride();
+  };
+
+  // SUPER_ADMIN only: ask the server what deleting the blocked clients would take with it.
+  const handleStartOverride = async () => {
+    setOverrideLoading(true);
+    setDeleteError(null);
+    try {
+      const impacts = await Promise.all(blockedClients.map(c => apiClient.getClientDeleteImpact(c.id)));
+      const deleted = {};
+      impacts.forEach(r => {
+        Object.entries(r.data?.deleted || {}).forEach(([table, n]) => {
+          deleted[table] = (deleted[table] || 0) + n;
+        });
+      });
+      setOverrideImpact(deleted);
+    } catch (err) {
+      setDeleteError(err.message || 'Could not work out what is attached to these clients.');
+    } finally {
+      setOverrideLoading(false);
+    }
+  };
+
+  const handleOverrideDelete = async () => {
+    if (!overridePassword) return;
+    setOverrideLoading(true);
+    setDeleteError(null);
+    try {
+      const results = await Promise.allSettled(
+        blockedClients.map(c => apiClient.forceDeleteClientProfile(c.id, overridePassword))
+      );
+      const failedIdx = results.map((r, i) => (r.status === 'rejected' ? i : -1)).filter(i => i >= 0);
+      await fetchClients();
+      if (failedIdx.length === 0) {
+        setShowDeleteConfirm(false);
+        setDeleteConfirmText('');
+        resetOverride();
+      } else {
+        const wrongPassword = failedIdx.some(i => results[i].reason?.status === 401);
+        setDeleteError(
+          wrongPassword
+            ? 'Incorrect password.'
+            : (results[failedIdx[0]].reason?.message || 'Failed to delete the selected client(s).')
+        );
+        // Keep only the ones that are still there so a retry doesn't re-target deleted clients.
+        if (!wrongPassword) setBlockedClients(prev => failedIdx.map(i => prev[i]));
+      }
+    } finally {
+      setOverrideLoading(false);
+    }
   };
 
   const handleDeleteConfirmed = async () => {
@@ -210,6 +274,17 @@ const ClientManagement = () => {
       const ids = Array.from(selectedIds);
       const results = await Promise.allSettled(ids.map(id => apiClient.deleteClientProfile(id)));
       const failed = results.filter(r => r.status === 'rejected');
+      if (isSuperAdmin) {
+        setBlockedClients(
+          results
+            .map((r, i) => ({ r, id: ids[i] }))
+            .filter(({ r }) => r.status === 'rejected' && r.reason?.status === 409)
+            .map(({ id }) => {
+              const c = clients.find(x => x.client_profile_id === id);
+              return { id, name: c ? `${c.honorific ? `${c.honorific} ` : ''}${c.full_name ?? 'Client'}` : 'Client' };
+            })
+        );
+      }
       if (failed.length > 0) {
         setDeleteError(
           failed.length === ids.length
@@ -743,35 +818,97 @@ const ClientManagement = () => {
               </div>
             )}
 
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Type <span className="font-semibold text-slate-800">confirm</span> to proceed
-            </label>
-            <input
-              type="text"
-              value={deleteConfirmText}
-              onChange={(e) => setDeleteConfirmText(e.target.value)}
-              placeholder="confirm"
-              autoFocus
-              className={inputCls(false)}
-            />
+            {blockedClients.length === 0 ? (
+              <>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Type <span className="font-semibold text-slate-800">confirm</span> to proceed
+                </label>
+                <input
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="confirm"
+                  autoFocus
+                  className={inputCls(false)}
+                />
+              </>
+            ) : !isSuperAdmin ? null : !overrideImpact ? (
+              <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                <p className="font-semibold mb-0.5">Blocked: {blockedClients.map(c => c.name).join(', ')}</p>
+                <p>As Super Admin you can override this block and delete the client together with everything attached to it.</p>
+              </div>
+            ) : (
+              <div>
+                <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 mb-3">
+                  <p className="font-semibold mb-1">
+                    This permanently deletes {blockedClients.map(c => c.name).join(', ')} and:
+                  </p>
+                  {Object.keys(overrideImpact).length === 0 ? (
+                    <p>No other records.</p>
+                  ) : (
+                    <ul className="max-h-40 overflow-y-auto space-y-0.5">
+                      {Object.entries(overrideImpact)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([table, n]) => (
+                          <li key={table} className="flex justify-between gap-3">
+                            <span>{table.replace(/"/g, '').replace(/_/g, ' ')}</span>
+                            <span className="tabular-nums font-semibold">{n}</span>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                  <p className="mt-1.5">This cannot be undone.</p>
+                </div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Enter your password to confirm</label>
+                <input
+                  type="password"
+                  value={overridePassword}
+                  onChange={(e) => setOverridePassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleOverrideDelete(); }}
+                  autoFocus
+                  autoComplete="current-password"
+                  className={inputCls(false)}
+                />
+              </div>
+            )}
 
             <div className="flex items-center gap-2 mt-4">
               <button
                 type="button"
                 onClick={closeDeleteConfirm}
-                disabled={deleteLoading}
+                disabled={deleteLoading || overrideLoading}
                 className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors disabled:opacity-50"
               >
-                Cancel
+                {blockedClients.length > 0 ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="button"
-                onClick={handleDeleteConfirmed}
-                disabled={deleteLoading || deleteConfirmText.trim().toLowerCase() !== 'confirm'}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {deleteLoading ? 'Deleting…' : 'Delete'}
-              </button>
+              {blockedClients.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={handleDeleteConfirmed}
+                  disabled={deleteLoading || deleteConfirmText.trim().toLowerCase() !== 'confirm'}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deleteLoading ? 'Deleting…' : 'Delete'}
+                </button>
+              ) : isSuperAdmin && !overrideImpact ? (
+                <button
+                  type="button"
+                  onClick={handleStartOverride}
+                  disabled={overrideLoading}
+                  className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {overrideLoading ? 'Checking…' : 'Override'}
+                </button>
+              ) : isSuperAdmin ? (
+                <button
+                  type="button"
+                  onClick={handleOverrideDelete}
+                  disabled={overrideLoading || !overridePassword}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {overrideLoading ? 'Deleting…' : 'Delete everything'}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
