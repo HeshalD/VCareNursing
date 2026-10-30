@@ -7,6 +7,8 @@ import {
   ExternalLink, EyeOff, ChevronDown, Upload, ChevronLeft, ChevronRight, Tag,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import SearchFilterChip from '../components/SearchFilterChip';
+import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
@@ -237,6 +239,8 @@ function CatalogTab() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [displayFilter, setDisplayFilter] = useState('ALL'); // 'ALL' | 'ON' | 'OFF'
+  // Set when the page is opened from global search (?search=); narrows the catalog to matching products.
+  const [catalogSearch, setCatalogSearch] = useUrlSearchState();
   const [visibilityBusy, setVisibilityBusy] = useState(false);
 
   const fetchAll = useCallback(async () => {
@@ -291,8 +295,10 @@ function CatalogTab() {
 
   const isOn = (p) => p.is_public !== false;
   const onDisplayCount = products.filter(isOn).length;
+  const catalogQuery = catalogSearch.trim().toLowerCase();
   const shownProducts = products.filter((p) =>
-    displayFilter === 'ALL' || (displayFilter === 'ON' ? isOn(p) : !isOn(p))
+    (displayFilter === 'ALL' || (displayFilter === 'ON' ? isOn(p) : !isOn(p)))
+    && (!catalogQuery || String(p.name || '').toLowerCase().includes(catalogQuery))
   );
   const rentalProducts = shownProducts.filter((p) => p.product_type === 'RENTAL');
   const serviceProducts = shownProducts.filter((p) => p.product_type === 'ONE_TIME_SERVICE');
@@ -367,6 +373,8 @@ function CatalogTab() {
           <AlertCircle className="h-4 w-4 shrink-0" /> {error}
         </div>
       )}
+
+      <SearchFilterChip value={catalogSearch} onClear={() => setCatalogSearch('')} />
 
       {selected.size > 0 && (
         <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 shadow-sm">

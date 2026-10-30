@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
-  Settings, LogOut, Bell, Search,
+  Settings, LogOut, Bell,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
   Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare, MessageCircle
@@ -12,6 +12,7 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { subscribeWhatsApp, disconnectWhatsApp } from '../whatsapp/waSocket';
+import GlobalSearch from './GlobalSearch';
 
 const ROLE_LABELS = {
   SUPER_ADMIN: 'Super Admin',
@@ -241,6 +242,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin, hasPermission, waUnread]);
 
+  // Sidebar destinations the admin may open, offered by global search as "Go to page" shortcuts.
+  const searchPages = useMemo(
+    () => visibleNavSections.flatMap((group) => group.items.map((item) => ({ label: item.label, path: item.path, section: group.section }))),
+    [visibleNavSections],
+  );
+
   // Client-side guard for direct navigation to a page the current user isn't permissioned for.
   const routeRule = findRouteRule(location.pathname);
   const routeAllowed = !routeRule || canAccess(routeRule);
@@ -377,14 +384,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
           </div>
 
           <div className="flex items-center gap-4 sm:gap-6 flex-shrink-0">
-            <div className="relative hidden lg:block">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search..."
-                className="pl-9 pr-4 py-2 bg-slate-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 w-64 transition-all"
-              />
-            </div>
+            <GlobalSearch pages={searchPages} />
             <button className="relative text-slate-500 hover:text-slate-700 transition-colors">
               <Bell className="w-5 h-5" />
               <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>

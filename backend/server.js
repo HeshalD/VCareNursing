@@ -179,6 +179,7 @@ app.use('/api/client-receipt-upload', clientReceiptUploadRoutes);
 app.use('/api/walk-in-customers', walkInCustomerRoutes);
 app.use('/api/product-invoices', invoiceRoutes);
 app.use('/api/rentals', rentalRoutes);
+app.use('/api/admin-search', require('./routes/searchRoutes'));
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

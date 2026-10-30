@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import * as XLSX from 'xlsx';
 import {
   ArrowLeftRight, ArrowDownLeft, ArrowUpRight, ChevronLeft, ChevronRight,
@@ -91,7 +92,7 @@ const TransactionsPage = () => {
   const [toast, setToast] = useState('');
 
   const [categories, setCategories] = useState([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useUrlSearchState();
   const [category, setCategory] = useState('');
   const [flow, setFlow] = useState('');
   const [source, setSource] = useState('');

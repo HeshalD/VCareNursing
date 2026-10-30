@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import {
   Eye, XCircle, Loader2, Calendar, Activity, Clock, CheckCircle,
@@ -454,7 +455,7 @@ const Statements = () => {
 
   // Search
   const [bookingSearch, setBookingSearch] = useState('');
-  const [historySearch, setHistorySearch] = useState('');
+  const [historySearch, setHistorySearch] = useUrlSearchState();
   const [historySourceFilter, setHistorySourceFilter] = useState('');
 
   // Status filter

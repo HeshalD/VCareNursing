@@ -4,6 +4,8 @@ import {
   Loader2, X, Receipt, Check, AlertCircle, Download, Send, Search, Pencil,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import SearchFilterChip from '../components/SearchFilterChip';
+import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
@@ -158,7 +160,15 @@ const linkCls = 'text-blue-600 hover:underline';
 
 export default function AdminInvoicesPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState('pending'); // 'pending' | 'all' | 'reg-fee' | 'products' | 'combined'
+  // Set when opened from global search (?search=<invoice code>): lands on the product-invoices tab,
+  // narrowed to matching rows.
+  const [invoiceSearch, setInvoiceSearch] = useUrlSearchState();
+  const [tab, setTab] = useState(invoiceSearch ? 'products' : 'pending'); // 'pending' | 'all' | 'reg-fee' | 'products' | 'combined'
+  const [seenInvoiceSearch, setSeenInvoiceSearch] = useState(invoiceSearch);
+  if (invoiceSearch !== seenInvoiceSearch) {
+    setSeenInvoiceSearch(invoiceSearch);
+    if (invoiceSearch) setTab('products');
+  }
   const [openPreview, previewModal] = useInvoicePreview();
 
   // ── Combined (quotation) invoices state ────────────────────────────────────
@@ -1027,6 +1037,7 @@ export default function AdminInvoicesPage() {
         {/* ── PRODUCTS TAB ──────────────────────────────────────────────────── */}
         {tab === 'products' && (
           <>
+            <SearchFilterChip value={invoiceSearch} onClear={() => setInvoiceSearch('')} />
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
@@ -1082,7 +1093,10 @@ export default function AdminInvoicesPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {productInvoices.map((inv) => (
+                      {productInvoices.filter((inv) => {
+                        const q = invoiceSearch.trim().toLowerCase();
+                        return !q || [inv.invoice_code, inv.client_name, inv.walk_in_name].some((v) => v && String(v).toLowerCase().includes(q));
+                      }).map((inv) => (
                         <tr key={inv.invoice_id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{inv.invoice_code}</td>
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.created_at)}</td>

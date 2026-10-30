@@ -4015,6 +4015,31 @@ async function runMigration() {
     ON CONFLICT (document_key, version) DO NOTHING
   `);
 
+  // Admin global search: trigram indexes so partial/fuzzy matches on names, codes and phones stay
+  // fast as tables grow. pg_trgm needs CREATE EXTENSION rights; if the DB role lacks them we log
+  // and carry on - the search endpoint still works via plain ILIKE, just without index support.
+  try {
+    await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    const trgm = (name, table, expr) =>
+      db.query(`CREATE INDEX IF NOT EXISTS ${name} ON ${table} USING gin ((${expr}) gin_trgm_ops)`);
+    const digits = (col) => `regexp_replace(COALESCE(${col}, ''), '\\D', '', 'g')`;
+    await Promise.all([
+      trgm('trgm_client_name', 'client_profiles', `lower(COALESCE(full_name, ''))`),
+      trgm('trgm_client_code', 'client_profiles', `lower(COALESCE(client_code, ''))`),
+      trgm('trgm_staff_name', 'staff_profiles', `lower(COALESCE(full_name, ''))`),
+      trgm('trgm_staff_code', 'staff_profiles', `lower(COALESCE(staff_code, ''))`),
+      trgm('trgm_user_mobile', 'users', digits('mobile_number')),
+      trgm('trgm_patient_name', 'patient_profiles', `lower(COALESCE(full_name, ''))`),
+      trgm('trgm_booking_code', 'bookings', `lower(COALESCE(booking_code, ''))`),
+      trgm('trgm_invoice_code', 'invoices', `lower(COALESCE(invoice_code, ''))`),
+      trgm('trgm_internal_staff_name', 'internal_staff', `lower(COALESCE(full_name, ''))`),
+      trgm('trgm_vendor_name', 'vendors', `lower(COALESCE(name, ''))`),
+      trgm('trgm_product_name', 'products', `lower(COALESCE(name, ''))`),
+    ]);
+  } catch (error) {
+    console.error('Skipping trigram search indexes (pg_trgm unavailable):', error.message);
+  }
+
   console.log('Migration completed successfully!');
 }
 

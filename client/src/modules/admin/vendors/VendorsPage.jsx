@@ -14,6 +14,8 @@ import {
 	Loader2,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import SearchFilterChip from '../components/SearchFilterChip';
+import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
@@ -106,6 +108,13 @@ const StatTile = ({ label, value, tone = 'slate' }) => {
 
 const VendorsPage = () => {
 	const [vendors, setVendors] = useState([]);
+	// Set when the page is opened from global search (?search=); narrows the list to matching vendors.
+	const [vendorSearch, setVendorSearch] = useUrlSearchState();
+	const shownVendors = useMemo(() => {
+		const q = vendorSearch.trim().toLowerCase();
+		if (!q) return vendors;
+		return vendors.filter((v) => [v.name, v.contact_person, v.phone, v.email].some((x) => x && String(x).toLowerCase().includes(q)));
+	}, [vendors, vendorSearch]);
 	const [loading, setLoading] = useState(true);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState('');
@@ -304,6 +313,8 @@ const VendorsPage = () => {
 					<div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">{successMessage}</div>
 				)}
 
+				<SearchFilterChip value={vendorSearch} onClear={() => setVendorSearch('')} />
+
 				{/* ── Vendors list ─────────────────────────────────────────────── */}
 				<div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
 					<div className="border-b border-slate-100 px-5 py-3.5">
@@ -333,7 +344,7 @@ const VendorsPage = () => {
 									</tr>
 								</thead>
 								<tbody className="divide-y divide-slate-100">
-									{vendors.map((vendor) => {
+									{shownVendors.map((vendor) => {
 										const isSelected = selectedVendor?.vendor_id === vendor.vendor_id;
 										const outstanding = parseFloat(vendor.outstanding_balance || 0);
 										return (

@@ -4,6 +4,7 @@ import {
   CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User,
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
+import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -36,8 +37,8 @@ const ClientPaymentsLedgerPage = () => {
   const [receipts, setReceipts] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: LIMIT, total: 0, total_pages: 1 });
   const [page, setPage] = useState(1);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useUrlSearchState();
+  const [search, setSearch] = useState(searchInput);
   const [loading, setLoading] = useState(true);
   const [sendingIds, setSendingIds] = useState(new Set());
   const [error, setError] = useState('');

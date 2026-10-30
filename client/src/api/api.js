@@ -1417,6 +1417,11 @@ class ApiClient {
     return this.request(`/whatsapp/conversations${qs ? `?${qs}` : ''}`);
   }
 
+  // Admin-wide search. `signal` lets the caller cancel a superseded keystroke's request.
+  async adminSearch(q, signal) {
+    return this.request(`/admin-search?q=${encodeURIComponent(q)}`, { signal });
+  }
+
   async getWaUnreadCount() {
     return this.request('/whatsapp/unread-count');
   }

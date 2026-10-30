@@ -114,6 +114,7 @@ function buildTransactionFilters(query) {
       OR sp.full_name ILIKE $${p}
       OR t.external_party ILIKE $${p}
       OR t.reference_number ILIKE $${p}
+      OR t.transaction_code ILIKE $${p}
       OR t.notes ILIKE $${p}
       OR pp.full_name ILIKE $${p}
       OR t.custom_category_label ILIKE $${p}
