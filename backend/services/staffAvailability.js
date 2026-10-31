@@ -1,10 +1,9 @@
-// A staff member normally holds one booking at a time. Staff flagged
-// can_dual_book (they work two shifts a day at two different bookings) may hold two.
-const MAX_BOOKINGS = 2;
+// A staff member normally holds one booking at a time. Staff flagged can_dual_book
+// (they work several shifts a day at different bookings) may hold any number.
+//
+// The conflict queries fetch date-overlapping commitments on OTHER bookings (LIMIT 2 —
+// enough to tell "one" from "more"). Assignment is refused once that count reaches this
+// threshold: 1 other booking blocks a normal staff member; a badged one is never blocked.
+const conflictThreshold = (canDualBook) => (canDualBook ? Infinity : 1);
 
-// The conflict queries count date-overlapping commitments on OTHER bookings (fetching
-// at most MAX_BOOKINGS rows). Assignment is refused once that count reaches this
-// threshold: 1 other booking blocks a normal staff member, 2 block a dual-booking one.
-const conflictThreshold = (canDualBook) => (canDualBook ? MAX_BOOKINGS : 1);
-
-module.exports = { MAX_BOOKINGS, conflictThreshold };
+module.exports = { conflictThreshold };

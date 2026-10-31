@@ -1874,7 +1874,7 @@ exports.updateStaffStatus = async (req, res) => {
     }
 };
 
-// Flag a staff member as able to hold two bookings at once (two shifts a day at two
+// Flag a staff member as able to hold several bookings at once (shifts a day at different
 // different bookings). Admin-only; the assignment/swap checks read can_dual_book.
 exports.updateStaffDualBooking = async (req, res) => {
     const { staff_profile_id } = req.params;
@@ -1885,7 +1885,7 @@ exports.updateStaffDualBooking = async (req, res) => {
     }
 
     try {
-        // Turning it off while the staff member already holds two open bookings would
+        // Turning it off while the staff member already holds more than one open booking would
         // leave them over the limit with no way to tell — make the admin free one first.
         if (!can_dual_book) {
             const openRes = await db.query(
@@ -1922,7 +1922,7 @@ exports.updateStaffDualBooking = async (req, res) => {
 
         res.status(200).json({
             status: 'success',
-            message: can_dual_book ? 'Staff member can now be assigned to two bookings' : 'Dual-booking badge removed',
+            message: can_dual_book ? 'Staff member can now be assigned to multiple bookings' : 'Dual-booking badge removed',
             data: result.rows[0]
         });
     } catch (error) {

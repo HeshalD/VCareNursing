@@ -1565,7 +1565,7 @@ const StaffDetailPageV2 = () => {
                 <div className="text-sm font-semibold text-slate-900">{canDualBook ? 'Dual-booking enabled' : 'Single booking only'}</div>
                 <div className="text-xs text-slate-500 mt-0.5">
                   {canDualBook
-                    ? 'Can be assigned to two bookings at the same time (two shifts a day).'
+                    ? 'Can be assigned to multiple bookings at the same time.'
                     : 'Can only be assigned to one booking at a time.'}
                 </div>
               </div>
@@ -1577,7 +1577,7 @@ const StaffDetailPageV2 = () => {
               className={`mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-60 ${canDualBook ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-violet-200 text-violet-700 hover:bg-violet-50'}`}
             >
               {dualUpdating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {canDualBook ? 'Remove dual-booking badge' : 'Allow two bookings at once'}
+              {canDualBook ? 'Remove dual-booking badge' : 'Allow multiple bookings'}
             </button>
 
             <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${showOnPublicSite ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-200'}`}>
@@ -3414,7 +3414,7 @@ const StaffDetailPageV2 = () => {
               {canDualBook && (
                 <span
                   className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200"
-                  title="Works two shifts a day — can be assigned to two bookings at once"
+                  title="Can be assigned to multiple bookings at once"
                 >
                   <Users className="h-3 w-3" />
                   Dual booking

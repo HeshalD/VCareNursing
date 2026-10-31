@@ -535,8 +535,8 @@ exports.assignStaffToBooking = async (req, res) => {
            LIMIT 2`,
           [staff_profile_id, booking_id, toDateStr(service_start_date)]
         );
-        // A dual-booking staff member (two shifts a day at two bookings) may hold
-        // one other overlapping commitment; everyone else may hold none.
+        // A dual-booking staff member (works several bookings a day) may hold any
+        // number of overlapping commitments; everyone else may hold none.
         if (conflictRes.rows.length >= conflictThreshold(lockedStaffRes.rows[0].can_dual_book)) {
           await assignClient.query('ROLLBACK');
           return res.status(400).json({

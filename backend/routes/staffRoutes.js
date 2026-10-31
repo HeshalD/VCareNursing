@@ -553,7 +553,7 @@ router.patch(
   staffController.updateStaffExperienceLevel
 );
 
-// Admin Only: toggle the "can hold two bookings at once" badge.
+// Admin Only: toggle the "can hold multiple bookings at once" badge.
 router.patch(
   '/:staff_profile_id/dual-booking',
   protect,
