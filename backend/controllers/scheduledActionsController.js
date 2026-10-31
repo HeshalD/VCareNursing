@@ -357,7 +357,12 @@ exports.cancelScheduledAction = async (req, res) => {
             );
             if (payload.staff_profile_id) {
                 await client.query(
-                    `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
+                    `UPDATE staff_profiles SET current_status = 'AVAILABLE'
+                     WHERE staff_profile_id = $1
+                       AND NOT EXISTS (
+                         SELECT 1 FROM booking_staff_assignments o
+                         WHERE o.staff_profile_id = $1 AND o.status IN ('ACTIVE', 'SCHEDULED')
+                       )`,
                     [payload.staff_profile_id]
                 );
             }
@@ -368,7 +373,12 @@ exports.cancelScheduledAction = async (req, res) => {
             );
             if (payload.new_staff_id) {
                 await client.query(
-                    `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
+                    `UPDATE staff_profiles SET current_status = 'AVAILABLE'
+                     WHERE staff_profile_id = $1
+                       AND NOT EXISTS (
+                         SELECT 1 FROM booking_staff_assignments o
+                         WHERE o.staff_profile_id = $1 AND o.status IN ('ACTIVE', 'SCHEDULED')
+                       )`,
                     [payload.new_staff_id]
                 );
             }

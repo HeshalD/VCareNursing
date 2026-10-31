@@ -1237,6 +1237,13 @@ class ApiClient {
     });
   }
 
+  async updateStaffDualBooking(staffProfileId, canDualBook) {
+    return this.request(`/staff/${staffProfileId}/dual-booking`, {
+      method: 'PATCH',
+      body: JSON.stringify({ can_dual_book: canDualBook })
+    });
+  }
+
   async getStaffByRole(role, filters = {}) {
     const queryParams = new URLSearchParams(filters).toString();
     const url = queryParams ? `/staff/role/${role}?${queryParams}` : `/staff/role/${role}`;

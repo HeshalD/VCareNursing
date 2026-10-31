@@ -239,7 +239,12 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
             const staffIds = [...new Set(endedRes.rows.map((r) => r.staff_profile_id))];
             if (staffIds.length) {
                 await client.query(
-                    `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = ANY($1::uuid[])`,
+                    `UPDATE staff_profiles SET current_status = 'AVAILABLE'
+                     WHERE staff_profile_id = ANY($1::uuid[])
+                       AND NOT EXISTS (
+                         SELECT 1 FROM booking_staff_assignments o
+                         WHERE o.staff_profile_id = staff_profiles.staff_profile_id AND o.status IN ('ACTIVE', 'SCHEDULED')
+                       )`,
                     [staffIds]
                 );
             }
@@ -284,7 +289,12 @@ const closeActivePatternForPause = async (client, booking_id, businessDate) => {
             const staffIds = [...new Set(endedRes.rows.map((r) => r.staff_profile_id))];
             if (staffIds.length) {
                 await client.query(
-                    `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = ANY($1::uuid[])`,
+                    `UPDATE staff_profiles SET current_status = 'AVAILABLE'
+                     WHERE staff_profile_id = ANY($1::uuid[])
+                       AND NOT EXISTS (
+                         SELECT 1 FROM booking_staff_assignments o
+                         WHERE o.staff_profile_id = staff_profiles.staff_profile_id AND o.status IN ('ACTIVE', 'SCHEDULED')
+                       )`,
                     [staffIds]
                 );
             }

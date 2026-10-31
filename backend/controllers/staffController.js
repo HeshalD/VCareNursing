@@ -355,6 +355,7 @@ exports.getStaffByID = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -422,6 +423,7 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.advance_threshold_amount,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -1643,6 +1645,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -1760,6 +1763,7 @@ exports.getAvailableStaff = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,
@@ -1867,6 +1871,63 @@ exports.updateStaffStatus = async (req, res) => {
             status: 'error',
             message: 'Server error while updating staff member status'
         });
+    }
+};
+
+// Flag a staff member as able to hold two bookings at once (two shifts a day at two
+// different bookings). Admin-only; the assignment/swap checks read can_dual_book.
+exports.updateStaffDualBooking = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { can_dual_book } = req.body;
+
+    if (typeof can_dual_book !== 'boolean') {
+        return res.status(400).json({ status: 'error', message: 'can_dual_book must be true or false' });
+    }
+
+    try {
+        // Turning it off while the staff member already holds two open bookings would
+        // leave them over the limit with no way to tell — make the admin free one first.
+        if (!can_dual_book) {
+            const openRes = await db.query(
+                `SELECT COUNT(DISTINCT booking_id)::int AS n FROM booking_staff_assignments
+                 WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')`,
+                [staff_profile_id]
+            );
+            if (openRes.rows[0].n > 1) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'This staff member is currently on more than one booking. End one of them before removing the dual-booking badge.'
+                });
+            }
+        }
+
+        const result = await db.query(
+            `UPDATE staff_profiles SET can_dual_book = $1
+             WHERE staff_profile_id = $2
+             RETURNING staff_profile_id, full_name, can_dual_book`,
+            [can_dual_book, staff_profile_id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Staff member not found' });
+        }
+
+        logActivity({
+            actorUserId: req.user.user_id,
+            actorRole: Array.isArray(req.user.role) ? req.user.role[0] : req.user.role,
+            actionType: can_dual_book ? 'STAFF_DUAL_BOOKING_ENABLED' : 'STAFF_DUAL_BOOKING_DISABLED',
+            entityType: 'staff',
+            entityId: String(staff_profile_id),
+            details: { staff_profile_id, full_name: result.rows[0].full_name },
+        }).catch((e) => console.error('[Staff] dual-booking activity log error:', e.message));
+
+        res.status(200).json({
+            status: 'success',
+            message: can_dual_book ? 'Staff member can now be assigned to two bookings' : 'Dual-booking badge removed',
+            data: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Update Staff Dual Booking Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error while updating dual-booking badge' });
     }
 };
 
@@ -2533,6 +2594,7 @@ exports.getStaffByRole = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.created_at,
                 sp.location,
@@ -2655,6 +2717,7 @@ exports.getStaffByGender = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.created_at,
                 sp.location,
@@ -2775,6 +2838,7 @@ exports.getStaffWillingToLiveIn = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.created_at,
                 sp.location,
@@ -4075,6 +4139,7 @@ exports.getTopRatedStaff = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.willing_to_stay_at_hospital,
+                sp.can_dual_book,
                 sp.date_of_birth,
                 sp.experience_level,
                 sp.doc_upload_token,

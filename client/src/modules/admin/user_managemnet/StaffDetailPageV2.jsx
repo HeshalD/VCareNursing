@@ -47,6 +47,7 @@ import {
   StickyNote,
   Trash2,
   Upload,
+  Users,
   Wallet,
   X,
 } from 'lucide-react';
@@ -635,6 +636,7 @@ const StaffDetailPageV2 = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [portalUpdating, setPortalUpdating] = useState(false);
+  const [dualUpdating, setDualUpdating] = useState(false);
   const [publicUpdating, setPublicUpdating] = useState(false);
   const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
   const [payoutSubmitting, setPayoutSubmitting] = useState(false);
@@ -687,6 +689,7 @@ const StaffDetailPageV2 = () => {
   const activeStatus = String(profile.current_status || '').toLowerCase();
   const isActive = Boolean(profile.is_active);
   const portalDisabled = Boolean(profile.portal_access_disabled);
+  const canDualBook = Boolean(profile.can_dual_book);
   const showOnPublicSite = Boolean(profile.show_on_public_site);
   const currentAssignment = currentBooking || overviewCurrentBooking;
   const isPendingMigration = String(profile.onboarding_status || '').toUpperCase() === 'PENDING_MIGRATION';
@@ -931,6 +934,18 @@ const StaffDetailPageV2 = () => {
       setError(e?.message || 'Failed to update staff dashboard access');
     } finally {
       setPortalUpdating(false);
+    }
+  };
+
+  const handleToggleDualBooking = async () => {
+    try {
+      setDualUpdating(true);
+      await runAdminRequest(() => apiClient.updateStaffDualBooking(staffProfileId, !canDualBook));
+      await loadPage();
+    } catch (e) {
+      setError(e?.message || 'Failed to update dual-booking badge');
+    } finally {
+      setDualUpdating(false);
     }
   };
 
@@ -1542,6 +1557,27 @@ const StaffDetailPageV2 = () => {
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : portalDisabled ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldOff className="w-3.5 h-3.5" />}
               {portalDisabled ? 'Enable dashboard access' : 'Disable dashboard access'}
+            </button>
+
+            <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${canDualBook ? 'bg-violet-50 border-violet-100' : 'bg-slate-50 border-slate-200'}`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${canDualBook ? 'bg-violet-500' : 'bg-slate-400'}`} />
+              <div>
+                <div className="text-sm font-semibold text-slate-900">{canDualBook ? 'Dual-booking enabled' : 'Single booking only'}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {canDualBook
+                    ? 'Can be assigned to two bookings at the same time (two shifts a day).'
+                    : 'Can only be assigned to one booking at a time.'}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleToggleDualBooking}
+              disabled={dualUpdating}
+              className={`mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-60 ${canDualBook ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-violet-200 text-violet-700 hover:bg-violet-50'}`}
+            >
+              {dualUpdating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {canDualBook ? 'Remove dual-booking badge' : 'Allow two bookings at once'}
             </button>
 
             <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${showOnPublicSite ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-200'}`}>
@@ -3375,6 +3411,15 @@ const StaffDetailPageV2 = () => {
                 <Hospital className="h-3 w-3" />
                 {profile.willing_to_stay_at_hospital ? 'Hospital stay OK' : 'No hospital stay'}
               </span>
+              {canDualBook && (
+                <span
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200"
+                  title="Works two shifts a day — can be assigned to two bookings at once"
+                >
+                  <Users className="h-3 w-3" />
+                  Dual booking
+                </span>
+              )}
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-slate-500">
               <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{profile.designation || 'Staff member'}</span>

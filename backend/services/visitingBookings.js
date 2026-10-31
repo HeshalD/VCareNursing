@@ -68,7 +68,12 @@ const maybeAutoCompleteVisitingBooking = async (client, bookingId) => {
         `UPDATE staff_profiles sp
          SET current_status = 'AVAILABLE'
          FROM booking_staff_assignments bsa
-         WHERE bsa.booking_id = $1 AND bsa.status = 'ACTIVE' AND sp.staff_profile_id = bsa.staff_profile_id`,
+         WHERE bsa.booking_id = $1 AND bsa.status = 'ACTIVE' AND sp.staff_profile_id = bsa.staff_profile_id
+           AND NOT EXISTS (
+             SELECT 1 FROM booking_staff_assignments o
+             WHERE o.staff_profile_id = sp.staff_profile_id AND o.booking_id <> $1
+               AND o.status IN ('ACTIVE', 'SCHEDULED')
+           )`,
         [bookingId]
     );
 

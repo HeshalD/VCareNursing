@@ -129,7 +129,12 @@ const executeTermination = async (client, params) => {
          FROM booking_staff_assignments bsa
          WHERE bsa.booking_id = $1
            AND bsa.status IN ('ACTIVE', 'SCHEDULED')
-           AND sp.staff_profile_id = bsa.staff_profile_id`,
+           AND sp.staff_profile_id = bsa.staff_profile_id
+           AND NOT EXISTS (
+             SELECT 1 FROM booking_staff_assignments o
+             WHERE o.staff_profile_id = sp.staff_profile_id AND o.booking_id <> $1
+               AND o.status IN ('ACTIVE', 'SCHEDULED')
+           )`,
         [booking_id]
     );
 
@@ -249,7 +254,12 @@ const executeCompletion = async (client, params) => {
          FROM booking_staff_assignments bsa
          WHERE bsa.booking_id = $1
            AND bsa.status IN ('ACTIVE', 'SCHEDULED')
-           AND sp.staff_profile_id = bsa.staff_profile_id`,
+           AND sp.staff_profile_id = bsa.staff_profile_id
+           AND NOT EXISTS (
+             SELECT 1 FROM booking_staff_assignments o
+             WHERE o.staff_profile_id = sp.staff_profile_id AND o.booking_id <> $1
+               AND o.status IN ('ACTIVE', 'SCHEDULED')
+           )`,
         [booking_id]
     );
 
@@ -556,7 +566,15 @@ const executeShiftReassignment = async (client, payload) => {
     );
 
     if (old_staff_id) {
-        await client.query(`UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`, [old_staff_id]);
+        await client.query(
+            `UPDATE staff_profiles SET current_status = 'AVAILABLE'
+             WHERE staff_profile_id = $1
+               AND NOT EXISTS (
+                 SELECT 1 FROM booking_staff_assignments
+                 WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
+               )`,
+            [old_staff_id]
+        );
     }
     await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
 

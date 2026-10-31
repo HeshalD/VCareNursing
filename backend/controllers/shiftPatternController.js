@@ -5,6 +5,7 @@
 
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { conflictThreshold } = require('../services/staffAvailability');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -233,7 +234,7 @@ exports.assignStaffToSlot = async (req, res) => {
         }
 
         const staffRes = await client.query(
-            `SELECT staff_profile_id, full_name, current_status FROM staff_profiles WHERE staff_profile_id = $1`,
+            `SELECT staff_profile_id, full_name, current_status, can_dual_book FROM staff_profiles WHERE staff_profile_id = $1`,
             [staff_profile_id]
         );
         if (staffRes.rows.length === 0) {
@@ -265,10 +266,10 @@ exports.assignStaffToSlot = async (req, res) => {
                    AND bsa.service_start_date <= $3::date
                    AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
                         OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
-                 LIMIT 1`,
+                 LIMIT 2`,
                 [staff_profile_id, booking_id, toDateStr(service_start_date)]
             );
-            if (conflictRes.rows.length > 0) {
+            if (conflictRes.rows.length >= conflictThreshold(staff.can_dual_book)) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ status: 'error', message: `${staff.full_name} is not available (status: ${staff.current_status})` });
             }
@@ -389,7 +390,7 @@ exports.reassignSlotStaff = async (req, res) => {
         const current = currentRes.rows[0] || null;
 
         const newStaffRes = await client.query(
-            `SELECT staff_profile_id, full_name, current_status FROM staff_profiles WHERE staff_profile_id = $1`,
+            `SELECT staff_profile_id, full_name, current_status, can_dual_book FROM staff_profiles WHERE staff_profile_id = $1`,
             [new_staff_id]
         );
         if (newStaffRes.rows.length === 0) {
@@ -419,10 +420,10 @@ exports.reassignSlotStaff = async (req, res) => {
                    AND bsa.service_start_date <= $3::date
                    AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
                         OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
-                 LIMIT 1`,
+                 LIMIT 2`,
                 [new_staff_id, booking_id, toDateStr(effective_date)]
             );
-            if (conflictRes.rows.length > 0) {
+            if (conflictRes.rows.length >= conflictThreshold(newStaff.can_dual_book)) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ status: 'error', message: `${newStaff.full_name} is not available (status: ${newStaff.current_status})` });
             }

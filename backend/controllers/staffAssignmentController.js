@@ -6,6 +6,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { getBusinessDate, toDateStr, isFutureDate, enqueueScheduledAction, hasOpenAction } = require('../services/scheduledActions');
 const { creditSalespersonForBooking } = require('../services/salespersonService');
 const { normalizeRepeatDays } = require('../services/repeatDays');
+const { conflictThreshold } = require('../services/staffAvailability');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -498,7 +499,7 @@ exports.assignStaffToBooking = async (req, res) => {
       await assignClient.query('BEGIN');
 
       const lockedStaffRes = await assignClient.query(
-        `SELECT current_status FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+        `SELECT current_status, can_dual_book FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
         [staff_profile_id]
       );
       if (lockedStaffRes.rows.length === 0) {
@@ -531,10 +532,12 @@ exports.assignStaffToBooking = async (req, res) => {
              AND bsa.service_start_date <= $3::date
              AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
                   OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
-           LIMIT 1`,
+           LIMIT 2`,
           [staff_profile_id, booking_id, toDateStr(service_start_date)]
         );
-        if (conflictRes.rows.length > 0) {
+        // A dual-booking staff member (two shifts a day at two bookings) may hold
+        // one other overlapping commitment; everyone else may hold none.
+        if (conflictRes.rows.length >= conflictThreshold(lockedStaffRes.rows[0].can_dual_book)) {
           await assignClient.query('ROLLBACK');
           return res.status(400).json({
             status: 'error',

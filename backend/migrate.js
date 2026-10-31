@@ -2149,6 +2149,10 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS willing_to_stay_at_hospital BOOLEAN NOT NULL DEFAULT false`);
   await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS willing_to_stay_at_hospital BOOLEAN NOT NULL DEFAULT false`);
 
+  // Admin-set badge: this staff member works two shifts a day at two different bookings,
+  // so they may be assigned to two bookings at once (everyone else: one).
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS can_dual_book BOOLEAN NOT NULL DEFAULT false`);
+
   // Compliance documents — Grama Niladhari Report and Police Report uploaded by staff post-acceptance.
   // doc_upload_token is a stable UUID used as the public upload portal key (no login required).
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS doc_upload_token UUID UNIQUE DEFAULT gen_random_uuid()`);

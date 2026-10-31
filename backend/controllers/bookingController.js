@@ -4,6 +4,7 @@ const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
 const { bookingChargeSql } = require('../services/clientFinancials');
+const { conflictThreshold } = require('../services/staffAvailability');
 const { settleWalletForDeletedTransactions } = require('../services/walletLedger');
 const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew, sendCandidateProfile } = require('../utils/metaWhatsapp');
@@ -222,7 +223,12 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
              FROM booking_staff_assignments bsa
              WHERE bsa.booking_id = $1
                AND bsa.status IN ('ACTIVE', 'SCHEDULED')
-               AND sp.staff_profile_id = bsa.staff_profile_id`,
+               AND sp.staff_profile_id = bsa.staff_profile_id
+               AND NOT EXISTS (
+                 SELECT 1 FROM booking_staff_assignments o
+                 WHERE o.staff_profile_id = sp.staff_profile_id AND o.booking_id <> $1
+                   AND o.status IN ('ACTIVE', 'SCHEDULED')
+               )`,
             [booking_id]
         );
 
@@ -508,7 +514,12 @@ exports.pauseBooking = async (req, res) => {
                  SET current_status = 'AVAILABLE'
                  FROM booking_staff_assignments bsa
                  WHERE bsa.booking_id = $1 AND bsa.status IN ('ACTIVE', 'SCHEDULED')
-                   AND sp.staff_profile_id = bsa.staff_profile_id`,
+                   AND sp.staff_profile_id = bsa.staff_profile_id
+                   AND NOT EXISTS (
+                 SELECT 1 FROM booking_staff_assignments o
+                 WHERE o.staff_profile_id = sp.staff_profile_id AND o.booking_id <> $1
+                   AND o.status IN ('ACTIVE', 'SCHEDULED')
+                   )`,
                 [booking_id]
             );
             await client.query(
@@ -710,7 +721,7 @@ exports.resumeWithStaff = async (req, res) => {
         }
 
         const staffRes = await client.query(
-            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status, u.mobile_number
+            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status, sp.can_dual_book, u.mobile_number
              FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id
              WHERE sp.staff_profile_id = $1 FOR UPDATE OF sp`,
             [staff_profile_id]
@@ -733,10 +744,10 @@ exports.resumeWithStaff = async (req, res) => {
                    AND bsa.service_start_date <= $3::date
                    AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
                         OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
-                 LIMIT 1`,
+                 LIMIT 2`,
                 [staff_profile_id, booking_id, service_start_date]
             );
-            if (conflictRes.rows.length > 0) throw fail(400, `${staff.full_name} is not available (status: ${staff.current_status})`);
+            if (conflictRes.rows.length >= conflictThreshold(staff.can_dual_book)) throw fail(400, `${staff.full_name} is not available (status: ${staff.current_status})`);
         }
         const dupRes = await client.query(
             `SELECT 1 FROM booking_staff_assignments
@@ -3624,7 +3635,12 @@ exports.forceStopBooking = async (req, res) => {
              FROM booking_staff_assignments bsa
              WHERE bsa.booking_id = $1
                AND bsa.status IN ('ACTIVE', 'SCHEDULED')
-               AND sp.staff_profile_id = bsa.staff_profile_id`,
+               AND sp.staff_profile_id = bsa.staff_profile_id
+               AND NOT EXISTS (
+                 SELECT 1 FROM booking_staff_assignments o
+                 WHERE o.staff_profile_id = sp.staff_profile_id AND o.booking_id <> $1
+                   AND o.status IN ('ACTIVE', 'SCHEDULED')
+               )`,
             [booking_id]
         );
 
@@ -4440,7 +4456,7 @@ exports.swapStaff = async (req, res) => {
 
         // 2. Verify new staff exists and is available
         const newStaffRes = await client.query(
-            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status,
+            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status, sp.can_dual_book,
                     u.mobile_number as staff_mobile
              FROM staff_profiles sp
              JOIN users u ON sp.user_id = u.user_id
@@ -4485,10 +4501,10 @@ exports.swapStaff = async (req, res) => {
                    AND bsa.service_start_date <= $3::date
                    AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
                         OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
-                 LIMIT 1`,
+                 LIMIT 2`,
                 [new_staff_id, booking_id, requestedSwapDateStr]
             );
-            if (conflictRes.rows.length > 0) {
+            if (conflictRes.rows.length >= conflictThreshold(newStaff.can_dual_book)) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({
                     status: 'error',
