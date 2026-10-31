@@ -1018,10 +1018,11 @@ exports.updateAssignment = async (req, res) => {
       });
     }
 
-    // Get current assignment
+    // Get current assignment. SCHEDULED ("scheduled to start") assignments are
+    // editable too — their pay rate often needs fixing before the booking starts.
     const getQuery = `
-      SELECT * FROM booking_staff_assignments 
-      WHERE assignment_id = $1 AND status = 'ACTIVE'
+      SELECT * FROM booking_staff_assignments
+      WHERE assignment_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
     `;
     const getResult = await db.query(getQuery, [assignment_id]);
 
@@ -1033,6 +1034,16 @@ exports.updateAssignment = async (req, res) => {
     }
 
     const assignment = getResult.rows[0];
+
+    // A scheduled assignment's dates/hours are driven by its pending scheduled
+    // action (swap/assign), so only the pay rate and notes may change here.
+    if (assignment.status === 'SCHEDULED'
+        && (service_start_date || service_start_time !== undefined || assigned_hours !== undefined || service_end_date)) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Dates and hours of a scheduled assignment cannot be edited here. Only the pay rate and notes can be changed.'
+      });
+    }
 
     // Build update query dynamically
     let updateFields = [];

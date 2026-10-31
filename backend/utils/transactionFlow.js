@@ -36,10 +36,17 @@ const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'INT
 // reserved for wallet payouts (see staffController.js / paymentTrackingController.js).
 const MANUAL_CATEGORIES = ['OTHER_INCOME', 'OTHER_EXPENSE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY'];
 
-function flowOf(category) {
+// SQL predicate matching REGISTRATION_FEE's DEBIT-side "charge" rows, which are
+// NEUTRAL (billing record, no cash moved). `alias` is the transactions table alias.
+function regFeeChargeSql(alias = 't') {
+  return `(${alias}.category::text = 'REGISTRATION_FEE' AND ${alias}.transaction_type = 'DEBIT')`;
+}
+
+function flowOf(category, transactionType) {
+  if (category === 'REGISTRATION_FEE' && transactionType === 'DEBIT') return 'NEUTRAL';
   if (IN_CATEGORIES.includes(category)) return 'IN';
   if (OUT_CATEGORIES.includes(category)) return 'OUT';
   return 'NEUTRAL';
 }
 
-module.exports = { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf };
+module.exports = { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf, regFeeChargeSql };

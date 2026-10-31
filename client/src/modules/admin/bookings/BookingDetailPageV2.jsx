@@ -683,6 +683,8 @@ const BookingDetailPageV2 = () => {
   // All currently-active assignments — for SHIFT_BASED this can be several (one per
   // shift slot), each with its own independently-editable pay rate. Used by the Rates tab.
   const activeAssignments = staffHistory.filter(r => (r.status || '').toLowerCase() === 'active');
+  // Rates tab: also lists assignments still "scheduled to start", whose pay rate can be set before they begin.
+  const rateAssignments = staffHistory.filter(r => ['active', 'scheduled'].includes((r.status || '').toLowerCase()));
 
   const normCurrentStaff = currentStaff?.staff_name || currentStaff?.full_name || currentStaff?.name
     ? { name: currentStaff.staff_name || currentStaff.full_name || currentStaff.name || '-', id: currentStaff.staff_code || currentStaff.staff_profile_id || '-', profileId: currentStaff.staff_profile_id || null, mobile: currentStaff.staff_mobile || currentStaff.mobile || '-', email: currentStaff.staff_email || currentStaff.email || '-', designation: currentStaff.designation || currentStaff.staff_designation || '-' }
@@ -4235,13 +4237,13 @@ const BookingDetailPageV2 = () => {
               </Card>
 
               <Card>
-                <CardTitle>Staff pay rate{activeAssignments.length !== 1 ? 's' : ''}</CardTitle>
+                <CardTitle>Staff pay rate{rateAssignments.length !== 1 ? 's' : ''}</CardTitle>
                 <p style={{ fontSize: 12.5, color: '#6F6A60', marginTop: -8, marginBottom: 14 }}>
                   What each staff member currently on this booking earns per {isShiftBased ? 'shift' : 'day'} — set independently of the client rate above.
                 </p>
-                {activeAssignments.length === 0 ? <Empty icon={Users} text="No active staff assignment." /> : (
+                {rateAssignments.length === 0 ? <Empty icon={Users} text="No active staff assignment." /> : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {activeAssignments.map((a) => (
+                    {rateAssignments.map((a) => (
                       <div key={a.assignment_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px solid #EFEAE0', borderRadius: 12, padding: '12px 14px', background: '#FBF9F4' }}>
                         <div>
                           <StaffLink id={a.staff_profile_id}>

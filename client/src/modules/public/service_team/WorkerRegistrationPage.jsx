@@ -444,7 +444,15 @@ const WorkerRegistrationPage = () => {
   const totalSteps = 5;
 
   const nextStep = () => {
-    if (currentStep < totalSteps) setCurrentStep(prev => prev + 1);
+    if (currentStep >= totalSteps) return;
+    // Block progress until every required field on this step is valid, and
+    // surface the reasons inline so untouched fields don't fail silently.
+    const stepIssues = getBlockingIssues().filter(issue => issue.step === currentStep);
+    if (stepIssues.length > 0 || (currentStep === 1 && mobileConflict)) {
+      setFieldErrors(prev => stepIssues.reduce((acc, { field, reason }) => ({ ...acc, [field]: reason }), prev));
+      return;
+    }
+    setCurrentStep(prev => prev + 1);
   };
 
   const prevStep = () => {

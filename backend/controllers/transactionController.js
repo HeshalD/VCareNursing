@@ -1,6 +1,6 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
-const { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf } = require('../utils/transactionFlow');
+const { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf, regFeeChargeSql } = require('../utils/transactionFlow');
 const { generateTransactionsPdf } = require('../utils/transactionsPdf');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { transactionEditColumns } = require('../utils/editedAmount');
@@ -76,13 +76,13 @@ function buildTransactionFilters(query) {
   if (flow && VALID_FLOWS.includes(flow)) {
     if (flow === 'IN') {
       params.push(IN_CATEGORIES);
-      conditions.push(`t.category::text = ANY($${params.length}::text[])`);
+      conditions.push(`t.category::text = ANY($${params.length}::text[]) AND NOT ${regFeeChargeSql('t')}`);
     } else if (flow === 'OUT') {
       params.push(OUT_CATEGORIES);
       conditions.push(`t.category::text = ANY($${params.length}::text[])`);
     } else {
       params.push([...IN_CATEGORIES, ...OUT_CATEGORIES]);
-      conditions.push(`NOT (t.category::text = ANY($${params.length}::text[]))`);
+      conditions.push(`(NOT (t.category::text = ANY($${params.length}::text[])) OR ${regFeeChargeSql('t')})`);
     }
   }
   if (payment_method) {
@@ -166,7 +166,7 @@ const getAllTransactions = async (req, res) => {
     const summaryQuery = `
       SELECT
         COUNT(*) AS total_count,
-        COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${inParam}::text[])), 0) AS total_in,
+        COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${inParam}::text[]) AND NOT ${regFeeChargeSql('t')}), 0) AS total_in,
         COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${outParam}::text[])), 0) AS total_out
       ${joins}
       ${whereClause}
@@ -223,7 +223,7 @@ const exportTransactionsPdf = async (req, res) => {
     const outParam = params.length + 2;
     const summaryQuery = `
       SELECT
-        COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${inParam}::text[])), 0) AS total_in,
+        COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${inParam}::text[]) AND NOT ${regFeeChargeSql('t')}), 0) AS total_in,
         COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${outParam}::text[])), 0) AS total_out
       ${joins}
       ${whereClause}
@@ -236,7 +236,7 @@ const exportTransactionsPdf = async (req, res) => {
     ]);
 
     const summaryRow = summaryResult.rows[0];
-    const transactions = listResult.rows.map(tx => ({ ...tx, _flow: flowOf(tx.category) }));
+    const transactions = listResult.rows.map(tx => ({ ...tx, _flow: flowOf(tx.category, tx.transaction_type) }));
 
     const pdfBuffer = await generateTransactionsPdf({
       transactions,
