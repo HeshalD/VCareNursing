@@ -1488,6 +1488,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     bsa.amount_allocated,
                     bsa.status,
                     bsa.notes,
+                    bsa.assigned_on,
                     bsa.shift_slot_id,
                     bsa.reschedule_id,
                     ss.shift_number,
@@ -1502,7 +1503,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                  JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
                  LEFT JOIN booking_shift_slots ss ON bsa.shift_slot_id = ss.shift_slot_id
                  WHERE bsa.booking_id = $1
-                 ORDER BY bsa.service_start_date ASC`,
+                 ORDER BY bsa.service_start_date ASC, bsa.assigned_on ASC`,
                 [booking_id]
             ),
             db.query(

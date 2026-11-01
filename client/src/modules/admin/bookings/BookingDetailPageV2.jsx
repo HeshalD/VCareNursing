@@ -714,6 +714,7 @@ const BookingDetailPageV2 = () => {
     endDate: r.service_end_date || r.ended_at || r.end_date,
     dailyRate: r.daily_rate ?? r.rate ?? 0, amountAllocated: r.amount_allocated ?? 0,
     shiftSlotId: r.shift_slot_id || null,
+    assignedOn: r.assigned_on || null,
   }));
 
   const normSwapHistory = swapHistory.map(s => ({
@@ -4046,11 +4047,14 @@ const BookingDetailPageV2 = () => {
             // Only the outgoing side of an open swap can be logged out: an ongoing row
             // whose replacement (another ongoing row) started after it. Returns that
             // replacement's start date — the likeliest day they left, so the close
-            // modal opens on it instead of today.
+            // modal opens on it instead of today. A replacement that starts the same
+            // day counts too when it was assigned after this row (e.g. a bulk-entered
+            // booking swapped on its first day).
             const replacementStartFor = (row) => {
               const start = toLocalDateStr(row.startDate);
+              const assignedAfter = (r) => r.assignedOn && row.assignedOn && new Date(r.assignedOn) > new Date(row.assignedOn);
               const later = allocationHistoryWithTimeStatus
-                .filter(r => r.id !== row.id && r.isOngoing && !r.shiftSlotId && toLocalDateStr(r.startDate) > start)
+                .filter(r => r.id !== row.id && r.isOngoing && !r.shiftSlotId && (toLocalDateStr(r.startDate) > start || (toLocalDateStr(r.startDate) === start && assignedAfter(r))))
                 .map(r => toLocalDateStr(r.startDate)).sort();
               return later[0] || null;
             };
