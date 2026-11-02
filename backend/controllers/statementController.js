@@ -4,6 +4,7 @@ const { generateStatementPDF } = require('../utils/statement');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { sendClientBookingStatement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
+const { billingName: billingNameOf } = require('../utils/clientName');
 
 async function getActorName(userId) {
     const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -105,7 +106,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     });
 
     const clientRes = await db.query(
-        `SELECT cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number
+        `SELECT cp.honorific, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number
          FROM client_profiles cp
          JOIN users u ON cp.user_id = u.user_id
          WHERE cp.client_profile_id = $1`,
@@ -117,7 +118,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     }
 
     const clientRow = clientRes.rows[0];
-    const billingName = (clientRow.display_name_source === 'COMPANY_NAME' && clientRow.company_name) || clientRow.full_name;
+    const billingName = billingNameOf(clientRow) || clientRow.full_name;
     const currentBalance = runningBalance;
 
     const pdfData = {

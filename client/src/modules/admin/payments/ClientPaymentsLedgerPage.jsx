@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Receipt, Download, Send, Search, RefreshCcw, Loader2,
-  CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User,
+  CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User, Pencil, Ban,
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import useUrlSearchState from '../../../hooks/useUrlSearchState';
@@ -10,6 +10,8 @@ import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
+import EditPaymentModal from './EditPaymentModal';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const fmt = (v) => money.format(Number(v || 0));
@@ -34,6 +36,10 @@ const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md t
 
 const ClientPaymentsLedgerPage = () => {
   const navigate = useNavigate();
+  const { hasPermission } = useAdminAuth();
+  const canEditPayments = hasPermission ? hasPermission('RECEIPT_EDIT_PAYMENT') : false;
+  const [editTarget, setEditTarget] = useState(null);
+  const [notice, setNotice] = useState(null); // { message, reopened, warnings }
   const [receipts, setReceipts] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: LIMIT, total: 0, total_pages: 1 });
   const [page, setPage] = useState(1);
@@ -79,11 +85,17 @@ const ClientPaymentsLedgerPage = () => {
   useEffect(() => { load(); }, [load]);
 
   // New client payments can be recorded by other admins at any time; pause
-  // while a WhatsApp receipt send is in flight so it can't be raced.
+  // while a WhatsApp receipt send is in flight (or the edit form is open) so it can't be raced.
   useAutoRefresh(() => load({ silent: true }), {
     intervalMs: 5000,
-    enabled: sendingIds.size === 0,
+    enabled: sendingIds.size === 0 && !editTarget,
   });
+
+  const handleEdited = (res) => {
+    setEditTarget(null);
+    setNotice({ message: res?.message || 'Payment updated.', reopened: res?.reopened || [], warnings: res?.warnings || [] });
+    load({ silent: true });
+  };
 
   const handleSend = async (receiptId) => {
     setSendingIds((prev) => new Set([...prev, receiptId]));
@@ -135,6 +147,26 @@ const ClientPaymentsLedgerPage = () => {
 
       {error && (
         <div className="rounded-xl bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 text-sm">{error}</div>
+      )}
+
+      {notice && (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 text-sm flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="font-medium">{notice.message}</p>
+            {notice.reopened.length > 0 && (
+              <div>
+                <p className="text-amber-800 font-medium">The credit was already spent, so these wallet payments were re-opened (the invoices are unpaid again):</p>
+                <ul className="list-disc ml-5 text-amber-800">
+                  {notice.reopened.map((x, i) => (
+                    <li key={i}>Booking {x.booking_code}: {fmt(x.amount)} re-opened ({fmt(x.was)} → {fmt(x.now)})</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {notice.warnings.map((w, i) => <p key={i} className="text-amber-800">{w}</p>)}
+          </div>
+          <button onClick={() => setNotice(null)} className="text-emerald-700 hover:underline text-xs shrink-0">Dismiss</button>
+        </div>
       )}
 
       {/* Table */}
@@ -193,10 +225,22 @@ const ClientPaymentsLedgerPage = () => {
                           </td>
                         </tr>
                       )}
-                      <tr className="hover:bg-slate-50/60 transition-colors">
-                        <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{r.receipt_code}</td>
+                      <tr className={`transition-colors ${r.voided_at ? 'bg-slate-50/80 opacity-60' : 'hover:bg-slate-50/60'}`}>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">
+                          <span className={r.voided_at ? 'line-through' : ''}>{r.receipt_code}</span>
+                          {r.voided_at && (
+                            <span title={r.void_reason || ''} className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-600 no-underline">
+                              <Ban className="w-2.5 h-2.5" /> Voided{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}
+                            </span>
+                          )}
+                          {r.replaces_code && !r.voided_at && (
+                            <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700" title={`Replaces ${r.replaces_code}`}>
+                              Edited · replaces {r.replaces_code}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{fmtDate(r.payment_date || r.created_at)}</td>
-                        <td className="px-4 py-3 text-right font-medium text-slate-900 whitespace-nowrap">{fmt(r.total_amount)}</td>
+                        <td className={`px-4 py-3 text-right font-medium whitespace-nowrap ${r.voided_at ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{fmt(r.total_amount)}</td>
                         <td className="px-4 py-3 text-slate-600 text-xs">{METHOD_LABELS[r.payment_method] || r.payment_method || '—'}</td>
                         <td className="px-4 py-3 text-slate-500 text-xs font-mono">
                           {r.reference_number || <span className="italic text-slate-300">—</span>}
@@ -227,10 +271,19 @@ const ClientPaymentsLedgerPage = () => {
                             >
                               <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                             </button>
+                            {canEditPayments && !r.voided_at && (
+                              <button
+                                onClick={() => setEditTarget(r)}
+                                title="Edit this payment"
+                                className={iconBtnCls}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
-                              disabled={isSending || !r.mobile_number}
+                              disabled={isSending || !r.mobile_number || !!r.voided_at}
                               onClick={() => handleSend(r.receipt_id)}
-                              title={!r.mobile_number ? 'Client has no mobile number on record' : (r.whatsapp_sent ? 'Resend receipt via WhatsApp' : 'Send receipt via WhatsApp')}
+                              title={r.voided_at ? 'This receipt was voided - send its replacement instead' : (!r.mobile_number ? 'Client has no mobile number on record' : (r.whatsapp_sent ? 'Resend receipt via WhatsApp' : 'Send receipt via WhatsApp'))}
                               className={iconBtnCls}
                             >
                               {isSending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -318,6 +371,9 @@ const ClientPaymentsLedgerPage = () => {
           <p className="text-slate-600 font-medium">No client payments yet</p>
           <p className="text-sm text-slate-400 mt-1">Receipts are generated automatically when a client payment is recorded.</p>
         </div>
+      )}
+      {editTarget && (
+        <EditPaymentModal receipt={editTarget} onClose={() => setEditTarget(null)} onSaved={handleEdited} />
       )}
     </AdminLayout>
   );

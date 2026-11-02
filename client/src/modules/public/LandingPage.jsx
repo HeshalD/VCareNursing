@@ -4,13 +4,16 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, Baby, Home, ArrowRight, ShieldCheck,
   Activity, Star, Globe, Clock, CheckCircle2,
-  Stethoscope, Smile, TrendingUp, ChevronRight, DollarSign, X, AlertCircle
+  Stethoscope, Smile, TrendingUp, ChevronRight, DollarSign, X, AlertCircle,
+  MapPin, Phone, Mail, Navigation
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import Popup from '../../components/common/Popup';
 import ReviewSection from './components/ReviewSection';
 import { useAuth } from '../../context/AuthContext';
+import { CONTACT_NUMBERS } from '../../constants/contactNumbers';
+import { OFFICE_ADDRESS_LINES, OFFICE_MAP_URL, OFFICE_MAP_EMBED_URL, OFFICE_EMAIL } from '../../constants/company';
 
 // Reusing the background image from Login for consistency, but using it differently
 import heroBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
@@ -21,6 +24,8 @@ import doctorVisitImg from '../../assets/images/doctor_visit.PNG';
 import hospitalCareImg from '../../assets/images/hospital_care.png';
 import patientCareImg from '../../assets/images/patient_care.png';
 import ambulanceImg from '../../assets/images/ambulance.PNG';
+import medicineDeliveryImg from '../../assets/images/Medicine Delivey.jpg';
+import homeLabImg from '../../assets/images/Home Visti Lab Service.jpg';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 import patternBg from '../../assets/images/abstract-seamless-geometric-shape-lines-pattern-design-background_84443-23990.png';
 
@@ -129,13 +134,13 @@ const HeroSection = ({ blockStaffJoin, onStaffJoinBlocked }) => {
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10 w-full">
         <div className="max-w-2xl mt-24 md:mt-32">
           <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-[80px] font-bold tracking-tight text-white mb-6 leading-[1.1]">
-            Care made <br className="hidden sm:block" />
-            simple, trusted, <br className="hidden sm:block" />
-            and local
+            Expert nursing, <br className="hidden sm:block" />
+            and complete care, <br className="hidden sm:block" />
+            in one trusted network
           </h1>
 
           <p className="text-sm sm:text-base md:text-lg text-white/90 mb-8 leading-relaxed max-w-lg font-medium">
-            Manage childcare, elderly care, and housekeeping services in one powerful platform. Streamline operations, track staff, and deliver better care effortlessly
+            Home nursing, hospital care, patient care, elderly care and baby care, delivered by a large network of vetted caregivers ready to meet every need
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
@@ -167,6 +172,8 @@ const ServiceGrid = () => {
     { title: 'Hospital Care', img: hospitalCareImg, link: '/services/hospital-care' },
     { title: 'Doctor Visits', img: doctorVisitImg, link: '/services/doctor-visits' },
     { title: 'Ambulance Service', img: ambulanceImg, link: '/services/ambulance' },
+    { title: 'Medicine Delivery', img: medicineDeliveryImg, link: '/services/medicine-delivery' },
+    { title: 'Home Visit Lab Service', img: homeLabImg, link: '/services/home-lab' },
   ];
 
   return (
@@ -506,6 +513,77 @@ const BrowseStaffSection = () => {
 
 
 
+const OfficeLocationSection = () => (
+  <section className="py-24 bg-white relative overflow-hidden">
+    <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-blue-100/60 blur-3xl pointer-events-none" />
+    <div className="absolute -bottom-24 -right-24 w-96 h-96 rounded-full bg-indigo-100/60 blur-3xl pointer-events-none" />
+
+    <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+      <div className="text-center mb-12">
+        <span className="inline-block px-3 py-1 mb-4 rounded-full bg-blue-50 text-blue-700 text-xs font-bold uppercase tracking-wider">
+          Visit our office
+        </span>
+        <h2 className="text-3xl md:text-4xl font-semibold text-slate-900">Come say hello in Nugegoda</h2>
+      </div>
+
+      <div className="grid lg:grid-cols-5 rounded-[28px] overflow-hidden shadow-xl border border-slate-200 bg-white">
+        {/* Address card */}
+        <div className="lg:col-span-2 relative bg-gradient-to-br from-blue-600 to-blue-800 text-white p-8 md:p-10 flex flex-col justify-between gap-8 overflow-hidden">
+          <div className="absolute -top-12 -right-12 w-56 h-56 rounded-full bg-white/10 blur-2xl" />
+          {/* Dashed route line */}
+          <svg className="absolute bottom-0 right-0 w-64 h-64 text-white/15" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+            <path d="M10 190 C 50 150, 40 100, 90 90 S 150 60, 190 20" stroke="currentColor" strokeWidth="3" strokeDasharray="6 8" strokeLinecap="round" />
+          </svg>
+
+          <div className="relative">
+            <div className="relative w-16 h-16 mb-6">
+              <span className="absolute inset-0 rounded-full bg-white/30 animate-ping" />
+              <span className="relative flex w-16 h-16 rounded-full bg-white items-center justify-center shadow-lg">
+                <MapPin className="w-8 h-8 text-blue-600" />
+              </span>
+            </div>
+            <p className="text-blue-200 text-sm font-semibold uppercase tracking-wider mb-2">VCare Nursing</p>
+            <a href={OFFICE_MAP_URL} target="_blank" rel="noopener noreferrer" className="block text-2xl md:text-3xl font-semibold leading-snug hover:underline underline-offset-4">
+              {OFFICE_ADDRESS_LINES.map((line, i) => (
+                <React.Fragment key={line}>{i > 0 && <br />}{line}</React.Fragment>
+              ))}
+            </a>
+          </div>
+
+          <div className="relative space-y-4">
+            <a href={`tel:${CONTACT_NUMBERS[0].tel}`} className="flex items-center gap-3 text-blue-50 hover:text-white transition-colors">
+              <Phone className="w-5 h-5 flex-shrink-0" /> {CONTACT_NUMBERS[0].display}
+            </a>
+            <a href={`mailto:${OFFICE_EMAIL}`} className="flex items-center gap-3 text-blue-50 hover:text-white transition-colors">
+              <Mail className="w-5 h-5 flex-shrink-0" /> {OFFICE_EMAIL}
+            </a>
+            <a
+              href={OFFICE_MAP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 mt-2 px-6 py-3 bg-white text-blue-700 hover:bg-blue-50 rounded-full font-bold transition-colors"
+            >
+              <Navigation className="w-4 h-4" /> Get directions
+            </a>
+          </div>
+        </div>
+
+        {/* Map */}
+        <div className="lg:col-span-3 relative min-h-[320px] lg:min-h-[460px] bg-slate-100">
+          <iframe
+            title="VCare Nursing office location"
+            src={OFFICE_MAP_EMBED_URL}
+            className="absolute inset-0 w-full h-full border-0"
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            allowFullScreen
+          />
+        </div>
+      </div>
+    </div>
+  </section>
+);
+
 const LandingPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -559,6 +637,7 @@ const LandingPage = () => {
       <BrowseStaffSection />
       <JoinTeamBanner blockStaffJoin={blockStaffJoin} onStaffJoinBlocked={() => setShowStaffJoinBlocked(true)} />
       <ReviewSection />
+      <OfficeLocationSection />
       <Footer />
 
       <Popup

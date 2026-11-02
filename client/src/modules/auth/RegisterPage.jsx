@@ -6,8 +6,10 @@ import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp
 import apiClient from '../../api/api';
 import PhoneInput, { isValidPhoneNumber } from '../../components/common/PhoneInput';
 import CitySelect from '../../components/common/CitySelect';
+import useLegalDocuments from '../../hooks/useLegalDocuments';
 
 const RegisterPage = () => {
+  const { termsUrl } = useLegalDocuments();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -593,7 +595,7 @@ const RegisterPage = () => {
                 <label htmlFor="terms" className="text-sm text-slate-600 leading-relaxed">
                   I agree to the{' '}
                   <a
-                    href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652854/VCare_Client_Service_Agreement_znjsim.pdf"
+                    href={termsUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-indigo-600 hover:underline"

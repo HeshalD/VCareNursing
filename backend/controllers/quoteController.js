@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
+const { billingName } = require('../utils/clientName');
 const { sendClientQuotation, sendClientProductQuotation, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
@@ -210,7 +211,7 @@ exports.generateAndSendPDF = async (req, res) => {
     try {
         // 1. Fetch Quote & Patient Data (including line items)
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id,
@@ -224,9 +225,10 @@ exports.generateAndSendPDF = async (req, res) => {
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
+            LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             WHERE q.quote_id = $1
-            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -355,7 +357,7 @@ exports.generatePdfOnly = async (req, res) => {
     const { product_quote_id } = req.body || {};
     try {
         const result = await db.query(
-            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id,
@@ -369,9 +371,10 @@ exports.generatePdfOnly = async (req, res) => {
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
              FROM quotations q
              JOIN service_requests s ON q.request_id = s.request_id
-             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+             LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
              WHERE q.quote_id = $1
-             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type`,
+             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific`,
             [quote_id]
         );
         if (result.rows.length === 0) {
@@ -1311,11 +1314,18 @@ async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registratio
     const bank = bankResult.rows[0] || {};
     const feeAmount = parseFloat(registrationFee).toFixed(2);
 
+    // Print the client's billing name with their honorific (falls back to the request's payer name).
+    const nameRow = await db.query(
+        `SELECT honorific, full_name, company_name, display_name_source FROM client_profiles WHERE client_profile_id = $1`,
+        [clientId]
+    );
+    const invoiceName = billingName(nameRow.rows[0]) || payerName;
+
     try {
         const pdfUrl = await generateAndUploadRegFeeInvoice({
             invoice_code: invoiceCode,
             invoice_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-            client_name: payerName,
+            client_name: invoiceName,
             amount: feeAmount,
             bank_name: bank.bank_name || '',
             account_holder_name: bank.account_holder_name || '',
@@ -1376,7 +1386,7 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false, rege
     }
 
     const result = await db.query(`
-        SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+        SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
             COALESCE(json_agg(
                 json_build_object(
                     'line_item_id', li.line_item_id,
@@ -1390,9 +1400,10 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false, rege
             ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
         FROM quotations q
         JOIN service_requests s ON q.request_id = s.request_id
-        LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+        LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
         WHERE q.quote_id = $1
-        GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type
+        GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific
     `, [serviceQuoteId]);
     if (result.rows.length === 0) return null;
     const data = result.rows[0];
@@ -1459,7 +1470,7 @@ exports.renderQuotePdfBuffer = async (quote_id) => {
         data = await buildProductQuotePdfData(quote_id);
     } else {
         const result = await db.query(
-            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id, 'item_type', li.item_type,
@@ -1469,9 +1480,10 @@ exports.renderQuotePdfBuffer = async (quote_id) => {
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
              FROM quotations q
              JOIN service_requests s ON q.request_id = s.request_id
-             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+             LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
              WHERE q.quote_id = $1
-             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type`,
+             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific`,
             [quote_id]
         );
         data = result.rows[0];

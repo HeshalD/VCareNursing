@@ -15,6 +15,7 @@ const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { toE164, isValidPhone, toE164ListWithNames } = require('../utils/phone');
 const { resolveCity } = require('../utils/cityHelper');
+const { billingName } = require('../utils/clientName');
 const { userHasPermission } = require('../middleware/authMiddleware');
 const { getClientFinancialTotals, getClientOverdueBreakdown, bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 const { getClientFinancialBreakdown } = require('../services/clientFinancialBreakdown');
@@ -1822,7 +1823,7 @@ exports.sendRegFeeInvoice = async (req, res) => {
 
   try {
     const clientResult = await db.query(
-      `SELECT cp.client_profile_id, cp.full_name, cp.company_name, cp.display_name_source, cp.reg_fee_status,
+      `SELECT cp.client_profile_id, cp.honorific, cp.full_name, cp.company_name, cp.display_name_source, cp.reg_fee_status,
               u.mobile_number
        FROM client_profiles cp
        JOIN users u ON cp.user_id = u.user_id
@@ -1837,6 +1838,8 @@ exports.sendRegFeeInvoice = async (req, res) => {
     const client = clientResult.rows[0];
     // The billed entity — the company itself when that's the client's chosen display name.
     client.display_name = (client.display_name_source === 'COMPANY_NAME' && client.company_name) || client.full_name;
+    // Name printed on the invoice PDF: same entity, with the client's honorific.
+    client.invoice_name = billingName(client) || client.display_name;
 
     if (!client.mobile_number) {
       return res.status(400).json({ message: 'Client does not have a mobile number on file.' });
@@ -1872,7 +1875,7 @@ exports.sendRegFeeInvoice = async (req, res) => {
     const invoicePdfUrl = await generateAndUploadRegFeeInvoice({
       invoice_code: invoiceCode,
       invoice_date: invoiceDate,
-      client_name: client.display_name,
+      client_name: client.invoice_name,
       amount: feeAmount,
       bank_name: bank.bank_name,
       account_holder_name: bank.account_holder_name,
@@ -2031,7 +2034,7 @@ exports.updateRegFeeAmount = async (req, res) => {
     await dbClient.query('BEGIN');
 
     const clientResult = await dbClient.query(
-      `SELECT cp.client_profile_id, cp.full_name, cp.company_name, cp.display_name_source,
+      `SELECT cp.client_profile_id, cp.honorific, cp.full_name, cp.company_name, cp.display_name_source,
               cp.reg_fee_status, cp.reg_fee_amount, cp.reg_fee_receipt_token
        FROM client_profiles cp
        WHERE cp.client_profile_id = $1
@@ -2044,6 +2047,7 @@ exports.updateRegFeeAmount = async (req, res) => {
     }
     const client = clientResult.rows[0];
     client.display_name = (client.display_name_source === 'COMPANY_NAME' && client.company_name) || client.full_name;
+    client.invoice_name = billingName(client) || client.display_name;
 
     if (!['INVOICED', 'PAID'].includes(client.reg_fee_status)) {
       await dbClient.query('ROLLBACK');
@@ -2100,7 +2104,7 @@ exports.updateRegFeeAmount = async (req, res) => {
       invoicePdfUrl = await generateAndUploadRegFeeInvoice({
         invoice_code: invoice.invoice_code,
         invoice_date: invoiceDate,
-        client_name: client.display_name,
+        client_name: client.invoice_name,
         amount: feeAmount,
         bank_name: invoice.bank_name,
         account_holder_name: invoice.account_holder_name,

@@ -3,6 +3,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { sendSms } = require('../utils/sms');
 const { sendServiceRequestConfirmed, sendCandidateProfile } = require('../utils/metaWhatsapp');
 const { toE164, isValidPhone } = require('../utils/phone');
+const { notifyNewServiceRequest } = require('../services/serviceRequestEmail');
 
 const formatServiceType = (type) => {
     if (!type) return 'our services';
@@ -146,6 +147,9 @@ exports.submitServiceRequest = async (req, res) => {
         // 3. Send SMS + WhatsApp confirmation (non-fatal)
         sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
+        // 4. Email the configured team (non-fatal, never blocks the response)
+        notifyNewServiceRequest(result.rows[0].request_id).catch(() => {});
+
         res.status(201).json({
             status: 'success',
             message: 'Service request submitted successfully',
@@ -207,9 +211,13 @@ exports.getServiceRequestById = async (req, res) => {
     try {
         const { id } = req.params;
         const result = await db.query(
-            `SELECT sr.*, cp.client_code, cp.honorific AS client_honorific
+            `SELECT sr.*, cp.client_code, cp.honorific AS client_honorific,
+                    coord.full_name AS coordinator_name,
+                    city.name AS city_name
              FROM service_requests sr
              LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+             LEFT JOIN internal_staff coord ON coord.id = sr.coordinator_staff_id
+             LEFT JOIN sl_cities city ON city.city_id = sr.city_id
              WHERE sr.request_id = $1`,
             [id]
         );
@@ -222,6 +230,97 @@ exports.getServiceRequestById = async (req, res) => {
     } catch (error) {
         console.error("Error fetching service request:", error);
         res.status(500).json({ message: "Error fetching service request" });
+    }
+};
+
+// Staff a request can be assigned to: active internal staff holding the COORDINATOR role.
+exports.getAssignableCoordinators = async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT s.id, s.full_name
+             FROM internal_staff s
+             WHERE s.status = 'Active'
+               AND EXISTS (SELECT 1 FROM internal_staff_roles r WHERE r.staff_id = s.id AND r.role = 'COORDINATOR')
+             ORDER BY s.full_name`
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Error fetching coordinators:', error);
+        res.status(500).json({ message: 'Error fetching coordinators' });
+    }
+};
+
+// Admin: assign / change / clear the coordinator on a service request.
+// Body: { coordinator_staff_id: <internal_staff.id> | null }. Only the request's own
+// coordinator_staff_id changes - the client/patient profiles and any booking already created
+// from the request keep their own coordinator.
+exports.assignCoordinator = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const raw = req.body?.coordinator_staff_id;
+        const newId = raw === undefined || raw === null || raw === '' ? null : String(raw);
+        if (newId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(newId)) {
+            return res.status(400).json({ message: 'Invalid coordinator.' });
+        }
+
+        const current = await db.query(
+            `SELECT sr.request_id, sr.service_request_code, sr.coordinator_staff_id, cur.full_name AS current_name
+             FROM service_requests sr
+             LEFT JOIN internal_staff cur ON cur.id = sr.coordinator_staff_id
+             WHERE sr.request_id = $1`,
+            [id]
+        );
+        if (current.rows.length === 0) return res.status(404).json({ message: 'Service request not found' });
+        const before = current.rows[0];
+
+        let newName = null;
+        if (newId) {
+            const staff = await db.query(
+                `SELECT s.id, s.full_name, s.status,
+                        EXISTS (SELECT 1 FROM internal_staff_roles r WHERE r.staff_id = s.id AND r.role = 'COORDINATOR') AS is_coordinator
+                 FROM internal_staff s WHERE s.id = $1`,
+                [newId]
+            );
+            const row = staff.rows[0];
+            if (!row) return res.status(404).json({ message: 'Coordinator not found.' });
+            if (row.status !== 'Active') return res.status(400).json({ message: 'That staff member is not active.' });
+            if (!row.is_coordinator) return res.status(400).json({ message: 'That staff member does not have the Coordinator role.' });
+            newName = row.full_name;
+        }
+
+        if ((before.coordinator_staff_id || null) === newId) {
+            return res.status(200).json({ status: 'success', message: 'No change.', data: { coordinator_staff_id: newId, coordinator_name: newName } });
+        }
+
+        await db.query('UPDATE service_requests SET coordinator_staff_id = $1 WHERE request_id = $2', [newId, id]);
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'SERVICE_REQUEST_COORDINATOR_CHANGED',
+                entityType: 'SERVICE_REQUEST',
+                entityId: id,
+                details: {
+                    service_request_code: before.service_request_code,
+                    from: before.current_name || null,
+                    to: newName,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (coordinator change):', logErr.message);
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: newName ? `Assigned to ${newName}.` : 'Coordinator removed.',
+            data: { coordinator_staff_id: newId, coordinator_name: newName },
+        });
+    } catch (error) {
+        console.error('Error assigning coordinator:', error);
+        res.status(500).json({ message: 'Error assigning coordinator' });
     }
 };
 
@@ -687,6 +786,64 @@ exports.updateServiceRequest = async (req, res) => {
         }
         const old = existing.rows[0];
 
+        // ── Client / care-profile fields that may not have come in with the request ──
+        // Absent = unchanged, empty = cleared. The client-identity fields (honorific, gender,
+        // type, company, email, city) belong to the client's profile once the request is linked
+        // to an existing client, so they are ignored then.
+        const has = (k) => req.body[k] !== undefined;
+        const clean = (k) => (has(k) ? (String(req.body[k] ?? '').trim() || null) : old[k]);
+        const linkedClient = !!old.client_id;
+        const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
+        const bad = (message) => { const e = new Error(message); e.statusCode = 400; return e; };
+        const enumOrNull = (k) => {
+            const v = clean(k);
+            if (v === null) return null;
+            const up = String(v).toUpperCase();
+            if (!GENDERS.includes(up)) throw bad('Gender must be Male, Female or Other.');
+            return up;
+        };
+        let identity;
+        try {
+            const clientType = !linkedClient && has('client_type') ? String(req.body.client_type || 'INDIVIDUAL') : (old.client_type || 'INDIVIDUAL');
+            if (!['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'].includes(clientType)) throw bad('Invalid client type.');
+            const company = linkedClient ? old.company_name : (clientType === 'CORPORATE_PROXY' ? clean('company_name') : null);
+            if (!linkedClient && clientType === 'CORPORATE_PROXY' && !company) throw bad('Company name is required for a corporate client.');
+            const email = linkedClient ? old.payer_email : clean('payer_email');
+            if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw bad('Enter a valid email address.');
+            let cityId = old.city_id;
+            if (!linkedClient && has('city_id')) {
+                cityId = req.body.city_id === '' || req.body.city_id === null ? null : parseInt(req.body.city_id, 10);
+                if (cityId !== null) {
+                    const c = Number.isNaN(cityId) ? { rows: [] } : await db.query('SELECT 1 FROM sl_cities WHERE city_id = $1', [cityId]);
+                    if (c.rows.length === 0) throw bad('Select a valid city.');
+                }
+            }
+            const newStart = has('start_date') ? (req.body.start_date || null) : old.start_date;
+            const newEnd = has('requested_end_date') ? (req.body.requested_end_date || null) : old.requested_end_date;
+            // pg returns DATE columns as local-midnight Dates; compare calendar days, not strings of Dates.
+            const day = (v) => (v instanceof Date
+                ? [v.getFullYear(), String(v.getMonth() + 1).padStart(2, '0'), String(v.getDate()).padStart(2, '0')].join('-')
+                : String(v).slice(0, 10));
+            if (newStart && newEnd && day(newEnd) <= day(newStart)) throw bad('The end date must be after the start date.');
+            identity = {
+                honorific: linkedClient ? old.honorific : clean('honorific'),
+                payer_gender: linkedClient ? old.payer_gender : enumOrNull('payer_gender'),
+                client_type: clientType,
+                company_name: company,
+                payer_email: email,
+                city_id: cityId,
+                gender: enumOrNull('gender'),
+                emergency_contact_name: clean('emergency_contact_name'),
+                emergency_contact_number: clean('emergency_contact_number'),
+                requested_end_date: newEnd,
+            };
+        } catch (validationErr) {
+            if (validationErr.statusCode) {
+                return res.status(validationErr.statusCode).json({ status: 'error', message: validationErr.message });
+            }
+            throw validationErr;
+        }
+
         const result = await db.query(
             `UPDATE service_requests SET
                 payer_name = COALESCE($1, payer_name),
@@ -702,7 +859,17 @@ exports.updateServiceRequest = async (req, res) => {
                 remarks = $11,
                 preferred_gender = COALESCE($12::gender_preference_enum, preferred_gender),
                 status = COALESCE($13, status),
-                hospital_name = $14
+                hospital_name = $14,
+                honorific = $16,
+                payer_gender = $17::gender_enum,
+                client_type = $18::client_type_enum,
+                company_name = $19,
+                payer_email = $20,
+                city_id = $21,
+                gender = $22::gender_enum,
+                emergency_contact_name = $23,
+                emergency_contact_number = $24,
+                requested_end_date = $25
              WHERE request_id = $15
              RETURNING *`,
             [
@@ -720,7 +887,17 @@ exports.updateServiceRequest = async (req, res) => {
                 preferred_gender || null,
                 status || null,
                 hospital_name !== undefined ? ((hospital_name || '').trim() || null) : old.hospital_name,
-                id
+                id,
+                identity.honorific,
+                identity.payer_gender,
+                identity.client_type,
+                identity.company_name,
+                identity.payer_email,
+                identity.city_id,
+                identity.gender,
+                identity.emergency_contact_name,
+                identity.emergency_contact_number,
+                identity.requested_end_date
             ]
         );
 
@@ -737,7 +914,9 @@ exports.updateServiceRequest = async (req, res) => {
             'payer_name', 'payer_mobile', 'patient_name', 'patient_age',
             'relationship_to_client', 'patient_condition', 'service_type',
             'service_model', 'location_address', 'start_date', 'remarks',
-            'preferred_gender', 'hospital_name', 'status'
+            'preferred_gender', 'hospital_name', 'status',
+            'honorific', 'payer_gender', 'client_type', 'company_name', 'payer_email', 'city_id',
+            'gender', 'emergency_contact_name', 'emergency_contact_number', 'requested_end_date'
         ];
         for (const field of fields) {
             const oldVal = String(old[field] ?? '');

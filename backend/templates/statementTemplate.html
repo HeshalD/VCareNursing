@@ -25,10 +25,22 @@
             margin-bottom: 28px;
         }
 
+        /* The hosted logo canvas is mostly transparent: crop to the visible mark and scale it up
+           (same numbers as templates/logoBlock.js). */
         .logo-block {
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            width: 180px;
+            height: 88px;
+            overflow: hidden;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .logo-block img {
+            position: absolute;
+            width: 300px;
+            height: auto;
+            left: -59.4px;
+            top: -106.2px;
         }
 
         /* SVG heart-logo placeholder – replace with <img> if you have the real logo */
@@ -194,7 +206,7 @@
     <div class="header">
         <!-- Logo (SVG approximation of the VCare heart icon + text) -->
         <div class="logo-block">
-            <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" alt="VCare Nursing" style="width: 160px; height: auto;" />
+            <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" alt="VCare Nursing" />
         </div>
 
         <!-- Company address -->

@@ -6,9 +6,12 @@ import {
   ExternalLink, Pencil, X, Save, User, Stethoscope,
   BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
   Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
-  BadgeDollarSign, Menu, UserCheck, Check,
+  BadgeDollarSign, Menu, UserCheck, Check, UserCog,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
+import AssignCoordinatorModal from './AssignCoordinatorModal';
+import CitySelect from '../../../components/common/CitySelect';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
@@ -39,6 +42,11 @@ const RELATIONSHIP_OPTIONS = [
 
 const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
 const GENDER_OPTIONS        = ['ANY', 'MALE', 'FEMALE'];
+const PERSON_GENDER_OPTIONS = ['MALE', 'FEMALE', 'OTHER'];
+const HONORIFICS            = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
+const CLIENT_TYPE_OPTIONS   = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
+const clientTypeLabel       = (t) => (t ? t.charAt(0) + t.slice(1).toLowerCase().replace('_', ' ') : null);
+const genderLabel           = (g) => (g ? g.charAt(0) + g.slice(1).toLowerCase() : null);
 
 const REQUEST_STATUS_CONFIG = {
   NEW_LEAD:        { dot: 'bg-purple-400',  text: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200',  label: 'New Lead',          icon: FileText },
@@ -195,6 +203,16 @@ const InfoRow = ({ label, value }) => (
   </div>
 );
 
+// A detail the request came in without: shown dimmed so it is obvious it can be added via Edit Request.
+const OptionalRow = ({ label, value }) => (
+  <div>
+    <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+    {value
+      ? <p className="text-sm font-medium text-slate-900 break-words">{value}</p>
+      : <p className="text-sm italic text-slate-300">Not provided</p>}
+  </div>
+);
+
 // Replaces the old inline status pill — a dedicated card showing the current
 // stage, why it's in that stage (for PENDING), and the Contacted/Confirmed
 // quick-action buttons when relevant to this stage.
@@ -264,6 +282,9 @@ const ServiceRequestSummaryPage = () => {
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState('');
   const [request, setRequest]           = useState(null);
+  const { hasPermission } = useAdminAuth();
+  const canAssignCoordinator = hasPermission ? hasPermission('SERVICE_REQUEST_ASSIGN_COORDINATOR') : false;
+  const [showCoordinatorModal, setShowCoordinatorModal] = useState(false);
   const [quotes, setQuotes]             = useState([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState('');
   const [proceeding, setProceeding]     = useState(false);
@@ -537,6 +558,16 @@ const ServiceRequestSummaryPage = () => {
     setEditForm({
       payer_name:             request.payer_name || '',
       payer_mobile:           request.payer_mobile || '',
+      honorific:              request.client_honorific || request.honorific || '',
+      payer_gender:           request.payer_gender || '',
+      client_type:            request.client_type || 'INDIVIDUAL',
+      company_name:           request.company_name || '',
+      payer_email:            request.payer_email || '',
+      city_id:                request.city_id || '',
+      gender:                 request.gender || '',
+      emergency_contact_name:   request.emergency_contact_name || '',
+      emergency_contact_number: request.emergency_contact_number || '',
+      requested_end_date:     request.requested_end_date ? String(request.requested_end_date).slice(0, 10) : '',
       patient_name:           request.patient_name || '',
       patient_age:            request.patient_age || '',
       relationship_to_client: request.relationship_to_client || '',
@@ -559,7 +590,8 @@ const ServiceRequestSummaryPage = () => {
       setSaving(true);
       setSaveError('');
       const res = await apiClient.updateServiceRequest(requestId, editForm);
-      setRequest(res.data);
+      // Merge so joined fields (client_code, coordinator_name) from the initial load survive.
+      setRequest((prev) => ({ ...prev, ...res.data }));
       setEditMode(false);
     } catch (err) {
       setSaveError(err.message || 'Failed to save changes');
@@ -834,6 +866,24 @@ const ServiceRequestSummaryPage = () => {
               <p className="text-xs text-slate-400">
                 {request.service_request_code || `Request #${requestId}`} &middot; Created {fmt(request.created_at)}
               </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <UserCog className="h-3.5 w-3.5 text-slate-400" />
+                <span className="text-slate-500">Coordinator:</span>
+                {request.coordinator_staff_id ? (
+                  <span className="font-medium text-slate-700">{request.coordinator_name || 'Assigned'}</span>
+                ) : (
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">Unassigned</span>
+                )}
+                {canAssignCoordinator && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoordinatorModal(true)}
+                    className="font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+                  >
+                    {request.coordinator_staff_id ? 'Change' : 'Assign'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Right: edit controls */}
@@ -969,14 +1019,78 @@ const ServiceRequestSummaryPage = () => {
                           <User className="w-3.5 h-3.5 text-slate-400" />
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client / Payer</p>
                         </div>
+                        {request.client_id && (
+                          <p className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                            This request belongs to an existing client, so their honorific, gender, type, company, email and city are managed on the client's profile.
+                          </p>
+                        )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelCls}>Honorific</label>
+                            <select
+                              value={editForm.honorific}
+                              disabled={!!request.client_id}
+                              onChange={e => {
+                                const honorific = e.target.value;
+                                const inferred = honorific === 'Mr.' ? 'MALE' : (honorific === 'Mrs.' || honorific === 'Ms.') ? 'FEMALE' : null;
+                                setEditForm(f => ({ ...f, honorific, ...(inferred ? { payer_gender: inferred } : {}) }));
+                              }}
+                              className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
+                            >
+                              <option value="">— None —</option>
+                              {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                          </div>
                           <div>
                             <label className={labelCls}>Full Name</label>
                             <input type="text" value={editForm.payer_name} onChange={e => set('payer_name')(e.target.value)} className={inputCls} />
                           </div>
                           <div>
+                            <label className={labelCls}>Gender</label>
+                            <select
+                              value={editForm.payer_gender}
+                              disabled={!!request.client_id || ['Mr.', 'Mrs.', 'Ms.'].includes(editForm.honorific)}
+                              onChange={e => set('payer_gender')(e.target.value)}
+                              className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
+                            >
+                              <option value="">— Select —</option>
+                              {PERSON_GENDER_OPTIONS.map(o => <option key={o} value={o}>{genderLabel(o)}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Client Type</label>
+                            <select
+                              value={editForm.client_type}
+                              disabled={!!request.client_id}
+                              onChange={e => setEditForm(f => ({ ...f, client_type: e.target.value, ...(e.target.value !== 'CORPORATE_PROXY' ? { company_name: '' } : {}) }))}
+                              className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
+                            >
+                              {CLIENT_TYPE_OPTIONS.map(t => <option key={t} value={t}>{clientTypeLabel(t)}</option>)}
+                            </select>
+                          </div>
+                          {editForm.client_type === 'CORPORATE_PROXY' && (
+                            <div className="sm:col-span-2">
+                              <label className={labelCls}>Company Name *</label>
+                              <input type="text" value={editForm.company_name} disabled={!!request.client_id} onChange={e => set('company_name')(e.target.value)} className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`} />
+                            </div>
+                          )}
+                          <div>
+                            <label className={labelCls}>Email</label>
+                            <input type="email" value={editForm.payer_email} disabled={!!request.client_id} onChange={e => set('payer_email')(e.target.value)} className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`} placeholder="Optional" />
+                          </div>
+                          <div>
                             <label className={labelCls}>Mobile Number</label>
                             <PhoneInput value={editForm.payer_mobile} onChange={e => set('payer_mobile')(e.target.value)} />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className={labelCls}>City</label>
+                            <CitySelect
+                              value={editForm.city_id}
+                              disabled={!!request.client_id}
+                              onChange={(city) => set('city_id')(city ? city.city_id : '')}
+                              placeholder="Select city (optional)"
+                              className={`${inputCls} disabled:bg-slate-50`}
+                            />
                           </div>
                           <div className="sm:col-span-2">
                             <label className={labelCls}>Service Address</label>
@@ -1014,8 +1128,23 @@ const ServiceRequestSummaryPage = () => {
                             </select>
                           </div>
                           <div>
+                            <label className={labelCls}>Gender</label>
+                            <select value={editForm.gender} onChange={e => set('gender')(e.target.value)} className={inputCls}>
+                              <option value="">— Select —</option>
+                              {PERSON_GENDER_OPTIONS.map(o => <option key={o} value={o}>{genderLabel(o)}</option>)}
+                            </select>
+                          </div>
+                          <div>
                             <label className={labelCls}>Medical Condition</label>
                             <input type="text" value={editForm.patient_condition} onChange={e => set('patient_condition')(e.target.value)} className={inputCls} placeholder="Condition or care needs" />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Emergency Contact Name</label>
+                            <input type="text" value={editForm.emergency_contact_name} onChange={e => set('emergency_contact_name')(e.target.value)} className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Emergency Contact Number</label>
+                            <input type="text" value={editForm.emergency_contact_number} onChange={e => set('emergency_contact_number')(e.target.value)} className={inputCls} />
                           </div>
                         </div>
                       </div>
@@ -1058,6 +1187,10 @@ const ServiceRequestSummaryPage = () => {
                             <label className={labelCls}>Preferred Start Date</label>
                             <DateInput value={editForm.start_date} onChange={e => set('start_date')(e.target.value)} min={todayISO()} className={inputCls} />
                           </div>
+                          <div>
+                            <label className={labelCls}>Requested End Date</label>
+                            <DateInput value={editForm.requested_end_date} onChange={e => set('requested_end_date')(e.target.value)} min={editForm.start_date || todayISO()} className={inputCls} />
+                          </div>
                         </div>
                       </div>
 
@@ -1086,6 +1219,11 @@ const ServiceRequestSummaryPage = () => {
                           <InfoRow label="Full Name" value={withHonorific(request.client_honorific || request.honorific, request.payer_name)} />
                           <InfoRow label="Mobile" value={formatMobileNumber(request.payer_mobile)} />
                           {request.client_code && <InfoRow label="Client Code" value={request.client_code} />}
+                          <OptionalRow label="Gender" value={genderLabel(request.payer_gender)} />
+                          <OptionalRow label="Email" value={request.payer_email} />
+                          <OptionalRow label="Client Type" value={clientTypeLabel(request.client_type)} />
+                          {request.client_type === 'CORPORATE_PROXY' && <OptionalRow label="Company" value={request.company_name} />}
+                          <OptionalRow label="City" value={request.city_name} />
                           {request.location_address && (
                             <div>
                               <p className="text-xs text-slate-400 mb-0.5">Service Address</p>
@@ -1113,6 +1251,8 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                           <InfoRow label="Age" value={request.patient_age} />
                           <InfoRow label="Relationship" value={request.relationship_to_client} />
+                          <OptionalRow label="Gender" value={genderLabel(request.gender)} />
+                          <OptionalRow label="Emergency Contact" value={[request.emergency_contact_name, request.emergency_contact_number].filter(Boolean).join(' - ')} />
                           {request.patient_condition && (
                             <div className="col-span-2">
                               <p className="text-xs text-slate-400 mb-1">Condition / Needs</p>
@@ -1136,6 +1276,7 @@ const ServiceRequestSummaryPage = () => {
                         <InfoRow label="Service Model" value={request.service_type === 'PRIORITY_MEMBERSHIP' ? '—' : modelLabel(request.service_model)} />
                         <InfoRow label="Preferred Gender" value={request.preferred_gender || 'Any'} />
                         <InfoRow label="Start Date" value={fmt(request.start_date)} />
+                        <OptionalRow label="Requested End Date" value={request.requested_end_date ? fmt(request.requested_end_date) : null} />
                       </div>
                       {request.remarks && (
                         <div className="border-t border-slate-100 p-4">
@@ -1779,6 +1920,17 @@ const ServiceRequestSummaryPage = () => {
           fetchData();
         }}
       />
+      {showCoordinatorModal && (
+        <AssignCoordinatorModal
+          requestId={requestId}
+          currentId={request.coordinator_staff_id}
+          onClose={() => setShowCoordinatorModal(false)}
+          onSaved={(data) => {
+            setRequest((prev) => ({ ...prev, coordinator_staff_id: data.coordinator_staff_id, coordinator_name: data.coordinator_name }));
+            setShowCoordinatorModal(false);
+          }}
+        />
+      )}
     </AdminLayout>
   );
 };

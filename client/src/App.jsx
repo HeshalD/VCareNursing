@@ -11,10 +11,11 @@ import CatalogPage from './modules/public/CatalogPage';
 import ProductDetailPage from './modules/public/ProductDetailPage';
 import VerifyOTPReg from './auth/VerifyOTPReg';
 import { AuthProvider } from './context/AuthContext';
-import HospitalStaffingPage from './modules/public/HospitalStaffingPage';
 import ChildCarePage from './modules/public/ChildCarePage';
 import ElderlyCarePage from './modules/public/ElderlyCarePage';
 import DoctorVisitsPage from './modules/public/DoctorVisitsPage';
+import MedicineDeliveryPage from './modules/public/MedicineDeliveryPage';
+import HomeLabServicePage from './modules/public/HomeLabServicePage';
 import AmbulanceServicePage from './modules/public/AmbulanceServicePage';
 import PriorityMembershipPage from './modules/public/PriorityMembershipPage';
 import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
@@ -160,12 +161,13 @@ function App() {
             <Route path="/verify-otp-reg" element={<VerifyOTPReg />} />
             <Route path="/services/home-nursing" element={<HomeNursingPage />} />
             <Route path="/services/home-nursing/book" element={<HomeNursingBookingPage />} />
-            <Route path="/services/hospital-staffing" element={<HospitalStaffingPage />} />
             <Route path="/services/child-care" element={<ChildCarePage />} />
             <Route path='/services/child-care/book' element={<BabyCareBookingPage/>}/>
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
             <Route path="/services/doctor-visits" element={<DoctorVisitsPage />} />
             <Route path="/services/ambulance" element={<AmbulanceServicePage />} />
+            <Route path="/services/medicine-delivery" element={<MedicineDeliveryPage />} />
+            <Route path="/services/home-lab" element={<HomeLabServicePage />} />
             <Route path="/priority-membership" element={<PriorityMembershipPage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
             <Route path="/services/patient-care" element={<PatientCarePage />} />

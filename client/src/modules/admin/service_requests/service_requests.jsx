@@ -3,7 +3,7 @@ import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Phone, MapPin, Calendar, FileText,
-  Eye, Calculator, Settings, Shield, Loader2,
+  Eye, Calculator, Settings, Cog, Shield, Loader2,
   ChevronRight, ChevronDown, Wallet, UserPlus, CalendarCheck, UserCog, User, X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
@@ -13,6 +13,8 @@ import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
 import PresetManager from '../service_quotes/PresetManager';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
+import NotificationRecipientsModal from './NotificationRecipientsModal';
 
 const STATUS_TABS = ['All', 'New Lead', 'Pending', 'Contacted', 'Confirmed', 'Cancelled', 'Booking Created'];
 
@@ -202,6 +204,9 @@ const ServiceRequests = () => {
   const [coordinatorFilter, setCoordinatorFilter] = useState('ALL');
   const [enteredViaFilter, setEnteredViaFilter]   = useState('ALL');
   const [showPresetManager, setShowPresetManager] = useState(false);
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const { hasPermission } = useAdminAuth();
+  const canManageNotifications = hasPermission ? hasPermission('SERVICE_REQUEST_NOTIFICATIONS') : false;
 
   useEffect(() => { fetchRequests(); }, []);
 
@@ -350,6 +355,16 @@ const ServiceRequests = () => {
             <Settings className="w-3.5 h-3.5" />
             Manage Presets
           </button>
+          {canManageNotifications && (
+            <button
+              onClick={() => setShowNotificationSettings(true)}
+              title="New request email alerts"
+              aria-label="New request email alerts"
+              className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors"
+            >
+              <Cog className="w-4 h-4" />
+            </button>
+          )}
         </div>
       }
     >
@@ -610,6 +625,10 @@ const ServiceRequests = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {showNotificationSettings && canManageNotifications && (
+        <NotificationRecipientsModal onClose={() => setShowNotificationSettings(false)} />
       )}
 
       <PresetManager

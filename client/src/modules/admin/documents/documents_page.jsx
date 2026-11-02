@@ -6,7 +6,8 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 
 const fmt = (d) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 
-const AUDIENCE_LABEL = { STAFF: 'Staff', CLIENT: 'Clients' };
+const AUDIENCE_LABEL = { STAFF: 'Staff', CLIENT: 'Clients', PUBLIC: 'Website visitors' };
+const groupHeading = (label) => (label === AUDIENCE_LABEL.PUBLIC ? 'Published on the website' : `Sent to ${label}`);
 
 const DocumentCard = ({ doc, canEdit, busy, onReplace, onRestore }) => {
   const fileRef = useRef(null);
@@ -36,7 +37,11 @@ const DocumentCard = ({ doc, canEdit, busy, onReplace, onRestore }) => {
               <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 inline-flex items-center gap-1">
                 <Users className="w-3 h-3" /> {AUDIENCE_LABEL[doc.audience] || doc.audience}
               </span>
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">v{doc.version}</span>
+              {doc.file_url ? (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">v{doc.version}</span>
+              ) : (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Not uploaded yet</span>
+              )}
             </div>
             {doc.description && <p className="text-sm text-slate-500 mt-0.5">{doc.description}</p>}
             {doc.sent_via && (
@@ -49,20 +54,22 @@ const DocumentCard = ({ doc, canEdit, busy, onReplace, onRestore }) => {
             </p>
           </div>
         </div>
-        <a
-          href={doc.file_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
-        >
-          <ExternalLink className="w-4 h-4" /> View current file
-        </a>
+        {doc.file_url && (
+          <a
+            href={doc.file_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+          >
+            <ExternalLink className="w-4 h-4" /> View current file
+          </a>
+        )}
       </div>
 
       {canEdit && (
         <div className="px-5 pb-5">
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 space-y-3">
-            <p className="text-sm font-semibold text-slate-700">Replace with a newer version</p>
+            <p className="text-sm font-semibold text-slate-700">{doc.file_url ? 'Replace with a newer version' : 'Upload the first version'}</p>
             <input
               ref={fileRef}
               type="file"
@@ -205,7 +212,7 @@ const DocumentsPage = () => {
         ) : (
           groups.map((g) => (
             <section key={g.label} className="space-y-3">
-              <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500">Sent to {g.label}</h2>
+              <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500">{groupHeading(g.label)}</h2>
               {g.items.map((d) => (
                 <DocumentCard
                   key={d.document_key}

@@ -1413,6 +1413,10 @@ class ApiClient {
     return this.request('/documents/public/agreements');
   }
 
+  async getPublicLegalDocuments() {
+    return this.request('/documents/public/legal');
+  }
+
   // ── WhatsApp inbox (admin) ──
   async getWaConversations({ search, unreadOnly, before, limit } = {}) {
     const q = new URLSearchParams();
@@ -1982,6 +1986,52 @@ class ApiClient {
 
   async sendPaymentReceipt(receiptId) {
     return this.request(`/payment-receipts/${receiptId}/send`, { method: 'POST' });
+  }
+
+  // ── Service request coordinator ──
+  async getAssignableCoordinators() {
+    return this.request('/service-requests/coordinators');
+  }
+
+  async assignServiceRequestCoordinator(requestId, coordinatorStaffId) {
+    return this.request(`/service-requests/${requestId}/coordinator`, {
+      method: 'PUT',
+      body: JSON.stringify({ coordinator_staff_id: coordinatorStaffId }),
+    });
+  }
+
+  // ── New service request email notifications ──
+  async getServiceRequestNotificationRecipients() {
+    return this.request('/service-requests/notification-recipients');
+  }
+
+  async addServiceRequestNotificationRecipient(email) {
+    return this.request('/service-requests/notification-recipients', { method: 'POST', body: JSON.stringify({ email }) });
+  }
+
+  async removeServiceRequestNotificationRecipient(recipientId) {
+    return this.request(`/service-requests/notification-recipients/${recipientId}`, { method: 'DELETE' });
+  }
+
+  async sendServiceRequestNotificationTest() {
+    return this.request('/service-requests/notification-recipients/test', { method: 'POST' });
+  }
+
+  // Super admin: current values + what is editable for the payment behind a receipt.
+  async getPaymentEditContext(receiptId) {
+    return this.request(`/payment-receipts/${receiptId}/edit-context`);
+  }
+
+  // Super admin: edit the payment behind a receipt. The receipt is voided and re-issued.
+  // `fields` holds only what changed (+ `reason`); `allocations` is sent as JSON.
+  async editPaymentReceipt(receiptId, fields, slipFile = null) {
+    const formData = new FormData();
+    Object.entries(fields).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      formData.append(key, key === 'allocations' ? JSON.stringify(value) : value);
+    });
+    if (slipFile) formData.append('payment_slip', slipFile);
+    return this.request(`/payment-receipts/${receiptId}/edit`, { method: 'PATCH', body: formData });
   }
 
   async confirmBookingDailyInvoice(bookingId, payload) {

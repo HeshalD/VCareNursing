@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
+import useLegalDocuments from '../../hooks/useLegalDocuments';
 
 const genderLabel = (g) => {
   if (g === 'MALE') return 'Male';
@@ -33,6 +34,7 @@ const LockedField = ({ label, value, icon: Icon }) => (
 );
 
 const CreateClientProfilePage = () => {
+  const { termsUrl } = useLegalDocuments();
   const navigate = useNavigate();
   const { isAuthenticated, loading: authLoading } = useAuth();
 
@@ -260,7 +262,7 @@ const CreateClientProfilePage = () => {
                 <label htmlFor="terms" className="text-sm text-slate-600 leading-relaxed">
                   I agree to the{' '}
                   <a
-                    href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652854/VCare_Client_Service_Agreement_znjsim.pdf"
+                    href={termsUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-indigo-600 hover:underline"

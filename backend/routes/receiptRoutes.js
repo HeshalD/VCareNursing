@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const receiptController = require('../controllers/receiptController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
+const { upload } = require('../config/cloudinaryConfig');
 
 const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 
@@ -35,6 +36,24 @@ router.post(
   protect,
   requirePermission('RECEIPT_SEND'),
   receiptController.sendReceiptWhatsApp
+);
+
+// GET /api/payment-receipts/:receipt_id/edit-context — current values + what is editable
+router.get(
+  '/:receipt_id/edit-context',
+  protect,
+  requirePermission('RECEIPT_EDIT_PAYMENT'),
+  receiptController.getEditContext
+);
+
+// PATCH /api/payment-receipts/:receipt_id/edit — edits the payment behind a
+// receipt; the receipt is voided and re-issued
+router.patch(
+  '/:receipt_id/edit',
+  protect,
+  requirePermission('RECEIPT_EDIT_PAYMENT'),
+  upload.single('payment_slip'),
+  receiptController.editReceiptPayment
 );
 
 // GET /api/payment-receipts/:receipt_id — receipt detail

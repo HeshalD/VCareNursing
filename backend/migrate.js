@@ -512,6 +512,22 @@ async function runMigration() {
     );
   `);
 
+  // Who is emailed whenever a client submits a service request from the website
+  // (services/serviceRequestEmail.js). Managed from the admin Service Requests page.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS service_request_notification_recipients (
+      recipient_id   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      email          VARCHAR(255) NOT NULL,
+      added_by       UUID REFERENCES users(user_id) ON DELETE SET NULL,
+      added_by_name  VARCHAR(255),
+      created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_sr_notification_recipients_email
+    ON service_request_notification_recipients (LOWER(email))
+  `);
+
   // bookings must exist before quotations / booking_payment_tracking reference it
   await db.query(`
     CREATE TABLE IF NOT EXISTS bookings (
@@ -2551,6 +2567,35 @@ async function runMigration() {
     CREATE INDEX IF NOT EXISTS idx_payment_receipts_client_id
     ON payment_receipts(client_id);
   `);
+
+  // Super-admin payment edits (services/paymentEdits.js): the original receipt is
+  // voided and a new one (new receipt_code) issued in its place, linked both ways.
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS voided_at TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS voided_by UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS void_reason TEXT`);
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS replaced_by_receipt_id UUID REFERENCES payment_receipts(receipt_id) ON DELETE SET NULL`);
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS replaces_receipt_id UUID REFERENCES payment_receipts(receipt_id) ON DELETE SET NULL`);
+
+  // One row per payment edit: who/when/why, what the payment looked like before and
+  // after, and any invoices that had to be re-opened to cover a reduced amount.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS payment_edit_log (
+      edit_id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id          UUID NOT NULL REFERENCES client_profiles(client_profile_id),
+      source_type        VARCHAR(20) NOT NULL,
+      source_id          UUID,
+      old_receipt_id     UUID REFERENCES payment_receipts(receipt_id) ON DELETE SET NULL,
+      new_receipt_id     UUID REFERENCES payment_receipts(receipt_id) ON DELETE SET NULL,
+      reason             TEXT NOT NULL,
+      before_state       JSONB,
+      after_state        JSONB,
+      reopened           JSONB NOT NULL DEFAULT '[]',
+      edited_by          UUID REFERENCES users(user_id),
+      edited_by_name     VARCHAR(255),
+      created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_payment_edit_log_client ON payment_edit_log(client_id, created_at DESC)`);
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_payment_receipts_whatsapp_sent
     ON payment_receipts(whatsapp_sent);
@@ -4012,10 +4057,25 @@ async function runMigration() {
        'VCare_Independent_Contractor_Agreement_Sinhala.pdf', 2)
     ON CONFLICT (document_key) DO NOTHING
   `);
+  // Website legal documents start with no file (version 0) until an admin uploads the first PDF.
+  await db.query(`ALTER TABLE managed_documents ALTER COLUMN file_url DROP NOT NULL`);
+  await db.query(`ALTER TABLE managed_documents ALTER COLUMN file_name DROP NOT NULL`);
+  await db.query(`
+    INSERT INTO managed_documents (document_key, title, description, audience, language, sent_via, file_url, file_name, version, sort_order)
+    VALUES
+      ('PRIVACY_POLICY', 'Privacy Policy',
+       'How VCare collects, uses and protects personal information.', 'PUBLIC', NULL,
+       'Linked as "Privacy Policy" in the website footer.', NULL, NULL, 0, 3),
+      ('TERMS_OF_SERVICE', 'Terms of Service',
+       'The terms that apply to everyone using the VCare website and services.', 'PUBLIC', NULL,
+       'Linked as "Terms of Service" in the website footer.', NULL, NULL, 0, 4)
+    ON CONFLICT (document_key) DO NOTHING
+  `);
   await db.query(`
     INSERT INTO managed_document_versions (document_key, version, file_url, file_name, note, uploaded_by_name)
     SELECT document_key, 1, file_url, file_name, 'Original file', 'System'
     FROM managed_documents
+    WHERE file_url IS NOT NULL
     ON CONFLICT (document_key, version) DO NOTHING
   `);
 

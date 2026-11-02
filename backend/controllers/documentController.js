@@ -56,6 +56,20 @@ exports.getPublicAgreements = async (req, res) => {
   }
 };
 
+// Public: current privacy policy / terms of service links for the website footer (null until uploaded).
+exports.getPublicLegal = async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT document_key, file_url FROM managed_documents WHERE document_key IN ('PRIVACY_POLICY', 'TERMS_OF_SERVICE')`
+    );
+    const url = (k) => r.rows.find((row) => row.document_key === k)?.file_url || null;
+    res.json({ success: true, data: { privacy_policy: url('PRIVACY_POLICY'), terms_of_service: url('TERMS_OF_SERVICE') } });
+  } catch (err) {
+    console.error('getPublicLegal error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load legal documents' });
+  }
+};
+
 // Shared by replace and restore: make the given file the new current version of a document.
 async function publishVersion(client, documentKey, fileUrl, fileName, note, req, actor) {
   const next = await client.query(
@@ -99,7 +113,9 @@ exports.replaceDocument = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Document not found' });
     }
     // Keep the delivered filename stable for recipients (e.g. WhatsApp shows it).
-    const version = await publishVersion(client, key, req.file.location, cur.rows[0].file_name, note, req, actor);
+    // (first upload of a document with no file yet falls back to the uploaded name)
+    const fileName = cur.rows[0].file_name || req.file.originalname.slice(0, 200);
+    const version = await publishVersion(client, key, req.file.location, fileName, note, req, actor);
     await client.query('COMMIT');
     await logChange(req, actor, 'DOCUMENT_REPLACED', cur.rows[0], { from_version: cur.rows[0].version, to_version: version, note });
     res.json({ success: true, message: `${cur.rows[0].title} updated to version ${version}.`, version });

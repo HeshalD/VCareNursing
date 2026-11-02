@@ -6,8 +6,8 @@ import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import CitySelect from '../../../components/common/CitySelect';
+import useLegalDocuments from '../../../hooks/useLegalDocuments';
 
-const TERMS_URL = 'https://res.cloudinary.com/dohaktkth/image/upload/v1780652854/VCare_Client_Service_Agreement_znjsim.pdf';
 const RESEND_SECONDS = 60;
 
 const inputCls = (err) =>
@@ -56,6 +56,7 @@ const validate = (f) => {
  *  - Guests: details form -> mobile OTP -> submit.
  */
 const PriorityMembershipRegisterModal = ({ isOpen, onClose }) => {
+  const { termsUrl } = useLegalDocuments();
   const { user, isAuthenticated } = useAuth();
   const [step, setStep] = useState('details'); // details | otp | done
   const [form, setForm] = useState(emptyForm);
@@ -316,7 +317,7 @@ const PriorityMembershipRegisterModal = ({ isOpen, onClose }) => {
                       className="mt-1 w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
                     <label htmlFor="pm-terms" className="text-sm text-slate-600 leading-relaxed">
                       I agree to the{' '}
-                      <a href={TERMS_URL} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">Terms &amp; Conditions</a>
+                      <a href={termsUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">Terms &amp; Conditions</a>
                     </label>
                   </div>
 

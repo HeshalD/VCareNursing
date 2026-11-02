@@ -100,7 +100,7 @@ exports.listReceipts = async (req, res) => {
             `SELECT receipt_id, receipt_code, source_type, total_amount, payment_method,
                     payment_date, reference_number, line_items, created_at
              FROM payment_receipts
-             WHERE client_id = $1
+             WHERE client_id = $1 AND voided_at IS NULL
              ORDER BY created_at DESC`,
             [clientId]
         );

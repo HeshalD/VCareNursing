@@ -7,6 +7,7 @@ const { sendOtp: sendWhatsAppOtp } = require('../utils/metaWhatsapp');
 const { sendServiceRequestConfirmed } = require('../utils/metaWhatsapp');
 const { resolveCity } = require('../utils/cityHelper');
 const { toE164, isValidPhone } = require('../utils/phone');
+const { notifyNewServiceRequest } = require('../services/serviceRequestEmail');
 
 // Priority Membership is a registration-fee lead: a normal service_requests row
 // tagged with this service_type. Admin then quotes the registration fee, assigns
@@ -76,6 +77,8 @@ const insertRequest = async (v) => {
       'Priority Membership registration (submitted from the website).',
     ]
   );
+  // A Priority Membership sign-up lands in the same Service Requests list, so the team is emailed too.
+  notifyNewServiceRequest(result.rows[0].request_id).catch(() => {});
   return result.rows[0];
 };
 

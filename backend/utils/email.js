@@ -62,7 +62,7 @@ const sendEmail = async (options) => {
     to: options.email,
     subject: options.subject,
     text: options.message,
-    // html: options.html (you can add HTML templates later)
+    ...(options.html ? { html: options.html } : {}),
   };
 
   // 3. Send the email

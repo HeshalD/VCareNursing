@@ -1,13 +1,23 @@
 const express = require('express');
 const router = express.Router();
 const serviceRequestController = require('../controllers/serviceRequestController');
+const notificationController = require('../controllers/serviceRequestNotificationController');
 const { protect, restrictTo, requirePermission, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware'); // Adjust path as needed
 
 // Public route for Phase 1
 router.post('/submit-request', serviceRequestController.submitServiceRequest);
 
+// Who is emailed when a client submits a request (must stay above '/:id')
+router.get('/notification-recipients', protect, requirePermission('SERVICE_REQUEST_NOTIFICATIONS'), notificationController.listRecipients);
+router.post('/notification-recipients/test', protect, requirePermission('SERVICE_REQUEST_NOTIFICATIONS'), notificationController.sendTest);
+router.post('/notification-recipients', protect, requirePermission('SERVICE_REQUEST_NOTIFICATIONS'), notificationController.addRecipient);
+router.delete('/notification-recipients/:id', protect, requirePermission('SERVICE_REQUEST_NOTIFICATIONS'), notificationController.removeRecipient);
+
 // Protected admin route for Phase 2 (Home Tab)
 router.get('/all-leads', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getAllLeads);
+
+// Coordinators a request can be assigned to (must stay above '/:id')
+router.get('/coordinators', protect, requirePermission('SERVICE_REQUEST_ASSIGN_COORDINATOR'), serviceRequestController.getAssignableCoordinators);
 
 router.get('/new_leads', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getNewLeads);
 
@@ -15,6 +25,9 @@ router.get('/pending_leads', protect, requirePermission('VIEW_SERVICE_REQUESTS')
 
 // Protected admin route to get service request by ID
 router.get('/:id', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getServiceRequestById);
+
+// Assign / change / clear the coordinator (locked to the current coordinator once assigned)
+router.put('/:id/coordinator', protect, requirePermission('SERVICE_REQUEST_ASSIGN_COORDINATOR'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.assignCoordinator);
 
 // Protected admin route to update service request status
 router.put('/:id/status', protect, requirePermission('SERVICE_REQUEST_EDIT'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.updateServiceRequestStatus);

@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { generateAndUploadReceipt } = require('../utils/receiptPdf');
+const { billingName } = require('../utils/clientName');
 
 // Build the data object the HTML template expects from a payment_receipts row.
 function buildTemplateData(receipt) {
@@ -19,7 +20,15 @@ function buildTemplateData(receipt) {
 // Generate + upload the PDF for an existing receipt row and persist the URL.
 // Returns the secure_url. Throws on failure (caller decides how to handle).
 async function generateReceiptPdf(receipt) {
-    const pdfUrl = await generateAndUploadReceipt(buildTemplateData(receipt));
+    // Always print the client's current billing name with their honorific, even on receipts
+    // whose stored "received from" snapshot predates that (or was typed without it).
+    const nameRes = await db.query(
+        'SELECT honorific, full_name, company_name, display_name_source FROM client_profiles WHERE client_profile_id = $1',
+        [receipt.client_id]
+    );
+    const billed = billingName(nameRes.rows[0]);
+    const data = buildTemplateData(billed ? { ...receipt, received_from: billed } : receipt);
+    const pdfUrl = await generateAndUploadReceipt(data);
     await db.query(
         'UPDATE payment_receipts SET pdf_url = $1 WHERE receipt_id = $2',
         [pdfUrl, receipt.receipt_id]
@@ -55,13 +64,10 @@ async function createPaymentReceipt({
         // Snapshot the billing name for the "Received From" field, respecting the
         // client's chosen display name (their own name, or their company name).
         const clientRes = await db.query(
-            'SELECT full_name, company_name, display_name_source FROM client_profiles WHERE client_profile_id = $1',
+            'SELECT honorific, full_name, company_name, display_name_source FROM client_profiles WHERE client_profile_id = $1',
             [client_id]
         );
-        const clientRow = clientRes.rows[0];
-        const received_from = (clientRow?.display_name_source === 'COMPANY_NAME' && clientRow?.company_name)
-            || clientRow?.full_name
-            || 'Valued Client';
+        const received_from = billingName(clientRes.rows[0]) || 'Valued Client';
 
         const insertRes = await db.query(
             `INSERT INTO payment_receipts

@@ -1,3 +1,6 @@
+const { logoCss, logoHtml } = require('./logoBlock');
+const { withHonorific } = require('../utils/clientName');
+
 module.exports = (data) => {
     // Generate current date
     const now = new Date();
@@ -94,7 +97,7 @@ module.exports = (data) => {
 
           /* Header */
           .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
-          .logo { width: 160px; height: auto; }
+          ${logoCss}
           .header-right { text-align: right; }
           .header-right h1 { font-size: 42px; font-weight: 300; color: #555; margin-bottom: 4px; }
           .header-right .est-number { font-size: 14px; color: #555; }
@@ -144,7 +147,7 @@ module.exports = (data) => {
         <!-- Header: Logo left, Estimate title right -->
         <div class="header">
           <div>
-            <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" class="logo" alt="VCare Logo" />
+            ${logoHtml("VCare Logo")}
           </div>
           <div class="header-right">
             <h1>${data.document_label || 'Estimate'}</h1>
@@ -165,7 +168,7 @@ module.exports = (data) => {
         <div class="bill-date-row">
           <div>
             <div class="bill-to-label">Bill To</div>
-            <div class="bill-to-name">${data.payer_name}</div>
+            <div class="bill-to-name">${withHonorific(data.client_honorific, data.payer_name)}</div>
           </div>
           <div class="estimate-date">
             ${data.document_label || 'Estimate'} Date : <span>${formattedDate}</span>

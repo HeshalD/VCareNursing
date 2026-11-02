@@ -3,6 +3,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { sendPaymentReceipt, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { generateReceiptPdf } = require('../services/receiptService');
 const { ensureCombinedInvoice } = require('./quoteController');
+const { editReceiptPayment, getEditContext, PaymentEditError } = require('../services/paymentEdits');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -81,12 +82,15 @@ const getAllReceipts = async (req, res) => {
         const dataRes = await db.query(
             `SELECT r.receipt_id, r.receipt_code, r.client_id, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                     cp.honorific, cp.client_code,
-                    u.mobile_number, r.source_type, r.total_amount, r.payment_method,
-                    r.payment_date, r.reference_number, r.line_items, r.pdf_url,
-                    r.whatsapp_sent, r.whatsapp_sent_at, r.send_error, r.created_at
+                    u.mobile_number, r.source_type, r.source_id, r.total_amount, r.payment_method,
+                    r.payment_date, r.reference_number, r.cheque_number, r.bank_account_id, r.line_items, r.pdf_url,
+                    r.whatsapp_sent, r.whatsapp_sent_at, r.send_error, r.created_at,
+                    r.voided_at, r.void_reason, rep.receipt_code AS replaced_by_code, prev.receipt_code AS replaces_code
              FROM payment_receipts r
              JOIN client_profiles cp ON cp.client_profile_id = r.client_id
              LEFT JOIN users u ON u.user_id = cp.user_id
+             LEFT JOIN payment_receipts rep ON rep.receipt_id = r.replaced_by_receipt_id
+             LEFT JOIN payment_receipts prev ON prev.receipt_id = r.replaces_receipt_id
              ${where}
              ORDER BY cp.full_name ASC, r.created_at DESC
              LIMIT $${filterParams.length + 1} OFFSET $${filterParams.length + 2}`,
@@ -119,7 +123,7 @@ const getClientReceipts = async (req, res) => {
             `SELECT receipt_id, receipt_code, source_type, source_id, total_amount,
                     payment_method, payment_date, reference_number, cheque_number,
                     received_from, line_items, pdf_url, whatsapp_sent, whatsapp_sent_at,
-                    send_error, created_at
+                    send_error, created_at, voided_at, void_reason
              FROM payment_receipts
              WHERE client_id = $1
              ORDER BY created_at DESC`,
@@ -154,7 +158,7 @@ const getBookingReceipts = async (req, res) => {
              JOIN booking_payment_tracking bpt
                ON (r.source_type = 'BOOKING_PAYMENT' AND bpt.booking_payment_id = r.source_id)
                OR (r.source_type = 'QUOTE_PAYMENT'   AND bpt.payment_tracking_id = r.source_id)
-             WHERE bpt.booking_id = $1
+             WHERE bpt.booking_id = $1 AND r.voided_at IS NULL
              UNION
              SELECT r.receipt_id, r.receipt_code, r.total_amount, r.payment_method,
                     r.payment_date, r.pdf_url, r.whatsapp_sent, r.whatsapp_sent_at,
@@ -162,7 +166,7 @@ const getBookingReceipts = async (req, res) => {
              FROM payment_receipts r
              JOIN client_payment_allocations cpa
                ON r.source_type = 'CLIENT_PAYMENT' AND cpa.record_id = r.source_id
-             WHERE cpa.booking_id = $1
+             WHERE cpa.booking_id = $1 AND r.voided_at IS NULL
              ORDER BY created_at DESC`,
             [booking_id]
         );
@@ -229,6 +233,10 @@ const sendReceiptWhatsApp = async (req, res) => {
         }
 
         const receipt = result.rows[0];
+
+        if (receipt.voided_at) {
+            return res.status(409).json({ status: 'error', message: 'This receipt was voided and replaced. Send the replacement receipt instead.' });
+        }
 
         if (!receipt.mobile_number) {
             return res.status(400).json({ status: 'error', message: 'Client has no mobile number on file' });
@@ -327,4 +335,104 @@ const sendReceiptWhatsApp = async (req, res) => {
     }
 };
 
-module.exports = { getAllReceipts, getClientReceipts, getBookingReceipts, getReceipt, sendReceiptWhatsApp };
+// =========================================================
+// PATCH /api/payment-receipts/:receipt_id/edit   (SUPER_ADMIN only)
+// Edits the payment behind a receipt (amount, allocation split and every detail),
+// voids the receipt and issues a replacement. See services/paymentEdits.js.
+// multipart/form-data: reason (required) + any of total_amount, payment_method,
+// bank_account_id, cheque_number, cheque_date, reference_number, payment_date, notes,
+// allocations (JSON), payment_slip (file).
+// =========================================================
+const EDITABLE_FIELDS = [
+    'total_amount', 'payment_method', 'bank_account_id', 'cheque_number', 'cheque_date',
+    'reference_number', 'payment_date', 'notes', 'allocations',
+];
+
+const editReceiptPaymentHandler = async (req, res) => {
+    try {
+        const { receipt_id } = req.params;
+        if (!uuidRegex.test(receipt_id)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid receipt_id format' });
+        }
+
+        const body = req.body || {};
+        const changes = {};
+        for (const key of EDITABLE_FIELDS) {
+            if (body[key] !== undefined) changes[key] = body[key];
+        }
+        if (req.file?.location) changes.slip_url = req.file.location;
+
+        const nameRes = await db.query(
+            `SELECT COALESCE(sp.full_name, ist.full_name) AS full_name
+             FROM users u
+             LEFT JOIN staff_profiles sp ON sp.user_id = u.user_id
+             LEFT JOIN internal_staff ist ON ist.user_id = u.user_id
+             WHERE u.user_id = $1`,
+            [req.user.user_id]
+        );
+        const actor = {
+            user_id: req.user.user_id,
+            name: nameRes.rows[0]?.full_name || 'Super Admin',
+            role: extractActorRole(req.user.role),
+        };
+
+        const out = await editReceiptPayment({ receipt_id, changes, reason: body.reason, actor });
+
+        logActivity({
+            actorUserId: actor.user_id,
+            actorName: actor.name,
+            actorRole: actor.role,
+            actionType: 'CLIENT_PAYMENT_EDITED',
+            entityType: 'payment_receipt',
+            entityId: String(out.new_receipt.receipt_id),
+            details: {
+                client_id: out.new_receipt.client_id,
+                source_type: out.new_receipt.source_type,
+                old_receipt_code: out.old_receipt.receipt_code,
+                new_receipt_code: out.new_receipt.receipt_code,
+                reason: String(body.reason || '').trim(),
+                before: out.before,
+                after: out.after,
+                reopened: out.reopened,
+            },
+        }).catch((e) => console.error('[PaymentEdit] Activity log error:', e.message));
+
+        return res.status(200).json({
+            status: 'success',
+            message: `Payment updated. Receipt ${out.old_receipt.receipt_code} was voided and replaced by ${out.new_receipt.receipt_code}.`,
+            receipt: out.new_receipt,
+            reopened: out.reopened,
+            warnings: out.warnings,
+        });
+    } catch (err) {
+        if (err instanceof PaymentEditError) {
+            return res.status(err.statusCode).json({ status: 'error', message: err.message });
+        }
+        console.error('editReceiptPayment error:', err);
+        return res.status(500).json({ status: 'error', message: err.message || 'Server error' });
+    }
+};
+
+// GET /api/payment-receipts/:receipt_id/edit-context   (SUPER_ADMIN only)
+const getEditContextHandler = async (req, res) => {
+    try {
+        const { receipt_id } = req.params;
+        if (!uuidRegex.test(receipt_id)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid receipt_id format' });
+        }
+        const data = await getEditContext(receipt_id);
+        return res.status(200).json({ status: 'success', data });
+    } catch (err) {
+        if (err instanceof PaymentEditError) {
+            return res.status(err.statusCode).json({ status: 'error', message: err.message });
+        }
+        console.error('getEditContext error:', err);
+        return res.status(500).json({ status: 'error', message: err.message || 'Server error' });
+    }
+};
+
+module.exports = {
+    getAllReceipts, getClientReceipts, getBookingReceipts, getReceipt, sendReceiptWhatsApp,
+    editReceiptPayment: editReceiptPaymentHandler,
+    getEditContext: getEditContextHandler,
+};

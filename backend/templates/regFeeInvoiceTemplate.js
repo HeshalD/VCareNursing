@@ -1,3 +1,4 @@
+const { logoCss, logoHtml } = require('./logoBlock');
 // Registration Fee Invoice PDF template.
 //
 // Expected `data` shape:
@@ -24,7 +25,7 @@ module.exports = (data) => {
         body { font-family: 'Helvetica', Arial, sans-serif; padding: 44px; color: #1f2937; font-size: 12px; }
 
         .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }
-        .logo { width: 150px; height: auto; }
+        ${logoCss}
         .company-info { text-align: right; font-size: 11px; line-height: 1.7; color: #6b7280; }
         .company-info strong { color: #111827; font-size: 13px; }
 
@@ -78,7 +79,7 @@ module.exports = (data) => {
 <body>
 
     <div class="header">
-        <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" class="logo" alt="VCare Nursing" />
+        ${logoHtml()}
         <div class="company-info">
             <strong>VCare Nursing</strong><br>
             No: 293/17B, Hospital Rd<br>

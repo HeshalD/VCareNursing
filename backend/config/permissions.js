@@ -77,6 +77,8 @@ const PERMISSIONS = {
   SERVICE_REQUEST_EDIT:        { label: 'Edit Service Request',             module: 'Service Requests', entity: 'Service Request', verb: 'Edit',                category: 'action' },
   SERVICE_REQUEST_CONVERT:     { label: 'Convert Request to Booking',       module: 'Service Requests', entity: 'Service Request', verb: 'Convert to Booking',  category: 'action' },
   SERVICE_REQUEST_SEND_CANDIDATE: { label: 'Send Candidate Profile',        module: 'Service Requests', entity: 'Service Request', verb: 'Send Candidate Profile', category: 'action' },
+  SERVICE_REQUEST_ASSIGN_COORDINATOR: { label: 'Assign / Change Coordinator', module: 'Service Requests', entity: 'Service Request', verb: 'Assign Coordinator', category: 'action' },
+  SERVICE_REQUEST_NOTIFICATIONS: { label: 'Manage New-Request Email Recipients', module: 'Service Requests', entity: 'Service Request', verb: 'Manage Notification Emails', category: 'action' },
 
   // ── Quotations ────────────────────────────────────────────────────────────
   QUOTATION_CREATE:            { label: 'Create Quotation',                 module: 'Quotations', entity: 'Quotation',        verb: 'Create',                   category: 'action' },
@@ -166,6 +168,7 @@ const PERMISSIONS = {
 
   // ── Receipts ──────────────────────────────────────────────────────────────
   RECEIPT_SEND:                { label: 'Send Receipt via WhatsApp',        module: 'Receipts', entity: 'Receipt', verb: 'Send', category: 'action' },
+  RECEIPT_EDIT_PAYMENT:        { label: 'Edit Recorded Client Payment (voids & reissues receipt)', module: 'Receipts', entity: 'Receipt', verb: 'Edit Payment', category: 'action' },
 
   // ── Bank Accounts (Company) ───────────────────────────────────────────────
   BANK_ACCOUNT_CREATE:         { label: 'Create Bank Account',              module: 'Bank Accounts', entity: 'Company Bank Account', verb: 'Create',                   category: 'action' },
@@ -301,7 +304,7 @@ const ROLE_TEMPLATES = {
     'BOOKING_UPDATE_RATE',
     'ASSIGNMENT_ASSIGN', 'ASSIGNMENT_UPDATE', 'ASSIGNMENT_COMPLETE',
     'SERVICE_REQUEST_CREATE', 'SERVICE_REQUEST_EDIT', 'SERVICE_REQUEST_CONVERT',
-    'SERVICE_REQUEST_SEND_CANDIDATE',
+    'SERVICE_REQUEST_SEND_CANDIDATE', 'SERVICE_REQUEST_ASSIGN_COORDINATOR',
     'QUOTATION_CREATE', 'QUOTATION_EDIT', 'QUOTATION_SEND', 'QUOTATION_ACCEPT',
     'QUOTATION_RECORD_PAYMENT', 'QUOTATION_VERIFY_PAYMENT', 'QUOTATION_REJECT_PAYMENT',
     'PRESET_CREATE', 'PRESET_EDIT', 'PRESET_DELETE',
