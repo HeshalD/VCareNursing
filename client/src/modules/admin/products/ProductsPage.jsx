@@ -16,6 +16,7 @@ import { ClientLink } from '../components/EntityLinks';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
+import { HONORIFICS } from '../../../constants/honorifics';
 
 // Matches the public CatalogPage product card image box, which is a
 // square (aspect-square) slot.
@@ -95,7 +96,6 @@ const UNIT_STATUS_DOT = {
   MAINTENANCE: { dot: 'bg-amber-400', text: 'text-amber-700' },
 };
 
-const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
 const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
 const emptyWalkInClient = () => ({

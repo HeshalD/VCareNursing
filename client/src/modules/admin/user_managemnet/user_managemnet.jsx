@@ -12,6 +12,7 @@ import PhoneInput from '../../../components/common/PhoneInput';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import CitySelect from '../../../components/common/CitySelect';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { HONORIFICS } from '../../../constants/honorifics';
 
 const PAGE_SIZE = 50;
 
@@ -35,7 +36,6 @@ const TAB_TO_STATUS = {
   Expired:            'EXPIRED',
 };
 
-const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
 const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {

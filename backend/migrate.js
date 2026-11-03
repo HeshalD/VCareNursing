@@ -4079,6 +4079,12 @@ async function runMigration() {
     ON CONFLICT (document_key, version) DO NOTHING
   `);
 
+  // Honorifics stay canonical in the database itself (Mr. not Mr, Dr. not Doc): normalises existing
+  // rows once and installs a trigger on every table with an honorific column. See utils/honorificSql.js.
+  for (const stmt of require('./utils/honorificSql').statements) {
+    await db.query(stmt);
+  }
+
   // Admin global search: trigram indexes so partial/fuzzy matches on names, codes and phones stay
   // fast as tables grow. pg_trgm needs CREATE EXTENSION rights; if the DB role lacks them we log
   // and carry on - the search endpoint still works via plain ILIKE, just without index support.

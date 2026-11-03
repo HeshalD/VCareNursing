@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { normalizeHonorificBody } = require('../utils/honorific');
 const clientController = require('../controllers/clientController');
 const bookingNotesController = require('../controllers/bookingNotesController');
 const { protect, restrictTo, requirePermission, requireOwnSalesRecord, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware');
@@ -30,7 +31,7 @@ router.delete('/:client_id', protect, requirePermission('CLIENT_DELETE'), client
 // SUPER_ADMIN-only override of the delete block (hard-deletes the client and everything attached)
 router.get('/:client_id/delete-impact', protect, restrictTo('SUPER_ADMIN'), clientController.getClientDeleteImpact);
 router.delete('/:client_id/force', protect, restrictTo('SUPER_ADMIN'), clientController.forceDeleteClientProfile);
-router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientCompanyName);
+router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), normalizeHonorificBody, requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientCompanyName);
 router.patch('/:client_id/profile', protect, requirePermission('CLIENT_EDIT'), requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientProfile);
 router.post('/:client_id/send-reg-fee-invoice', protect, requirePermission('CLIENT_SEND_REG_FEE_INVOICE'), clientController.sendRegFeeInvoice);
 router.patch('/:client_id/reg-fee-status', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeStatus);
@@ -62,14 +63,14 @@ router.get('/overdue-payments/:client_id', clientController.getOverduePayments);
 router.get('/overdue-payments', clientController.getOverduePayments);
 
 // Admin proxy-create client (bypasses OTP)
-router.post('/proxy-create', protect, requirePermission('CLIENT_PROXY_CREATE'), clientController.proxyCreateClient);
+router.post('/proxy-create', protect, requirePermission('CLIENT_PROXY_CREATE'), normalizeHonorificBody, clientController.proxyCreateClient);
 
 // Global admin invoices list (must be before /:client_id catch-all)
 router.get('/all-invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getAdminInvoices);
 
 // Generic client profile route - MUST come after specific routes
 router.get('/:client_id', clientController.getClientProfile);
-router.patch('/update-me', clientController.updateMe);
+router.patch('/update-me', normalizeHonorificBody, clientController.updateMe);
 router.delete('/delete-me', clientController.deleteMe);
 
 // bookings endpoints

@@ -7,6 +7,7 @@ import apiClient from '../../api/api';
 import PhoneInput, { isValidPhoneNumber } from '../../components/common/PhoneInput';
 import CitySelect from '../../components/common/CitySelect';
 import useLegalDocuments from '../../hooks/useLegalDocuments';
+import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../constants/honorifics';
 
 const RegisterPage = () => {
   const { termsUrl } = useLegalDocuments();
@@ -46,7 +47,7 @@ const RegisterPage = () => {
     color: 'text-gray-500'
   });
 
-  const genderLockedByHonorific = formData.honorific === 'Mr' || formData.honorific === 'Mrs' || formData.honorific === 'Miss';
+  const genderLockedByHonorific = isGenderImplied(formData.honorific);
 
   const validateField = (name, value) => {
     let error = '';
@@ -141,7 +142,7 @@ const RegisterPage = () => {
 
   const handleInputChange = (name, value) => {
     const genderFromHonorific = name === 'honorific'
-      ? (value === 'Mr' ? 'MALE' : (value === 'Mrs' || value === 'Miss') ? 'FEMALE' : null)
+      ? genderForHonorific(value)
       : null;
 
     setFormData({ ...formData, [name]: value, ...(genderFromHonorific ? { gender: genderFromHonorific } : {}) });
@@ -387,7 +388,7 @@ const RegisterPage = () => {
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700 block">Title <span className="text-slate-400 font-normal">(optional)</span></label>
                 <div className="flex flex-wrap gap-2">
-                  {['Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map(h => (
+                  {HONORIFICS.map(h => (
                     <button
                       key={h}
                       type="button"

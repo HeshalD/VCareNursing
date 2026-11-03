@@ -14,6 +14,7 @@ import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import CitySelect from '../../../components/common/CitySelect';
+import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,6 @@ const SERVICE_TYPE_OPTIONS = [
 const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
 const GENDER_OPTIONS        = ['MALE', 'FEMALE', 'ANY'];
 const PATIENT_GENDER_OPTIONS = ['MALE', 'FEMALE', 'OTHER'];
-const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
 const CLIENT_TYPE_OPTIONS = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
@@ -564,9 +564,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                           value={formData.honorific}
                           onChange={(e) => {
                             const honorific = e.target.value;
-                            const inferredGender =
-                              honorific === 'Mr.' ? 'MALE' :
-                              (honorific === 'Mrs.' || honorific === 'Ms.') ? 'FEMALE' : null;
+                            const inferredGender = genderForHonorific(honorific);
                             setFormData(prev => ({
                               ...prev,
                               honorific,
@@ -592,9 +590,9 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                           name="payer_gender"
                           value={formData.payer_gender}
                           onChange={handleInputChange}
-                          disabled={['Mr.', 'Mrs.', 'Ms.'].includes(formData.honorific)}
+                          disabled={isGenderImplied(formData.honorific)}
                           className={`rounded-md border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 ${
-                            ['Mr.', 'Mrs.', 'Ms.'].includes(formData.honorific)
+                            isGenderImplied(formData.honorific)
                               ? 'bg-slate-50 text-slate-500 cursor-not-allowed'
                               : 'bg-white text-slate-800'
                           }`}

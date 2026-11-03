@@ -18,7 +18,7 @@ const SHEET_NAMES = {
 
 const VALID_STAFF_ROLES = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
 const VALID_GENDERS = ['MALE', 'FEMALE', 'OTHER'];
-const VALID_HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
+const { HONORIFICS: VALID_HONORIFICS, normalizeHonorific } = require('../utils/honorific');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ─── Spreadsheet parsing ────────────────────────────────────────────────────
@@ -180,8 +180,9 @@ function normalizeClientRow(row) {
   const gender = row.gender ? String(row.gender).trim().toUpperCase() : null;
   if (gender && !VALID_GENDERS.includes(gender)) errors.push(`gender must be one of ${VALID_GENDERS.join(', ')}`);
 
-  const honorific = row.honorific ? String(row.honorific).trim() : null;
-  if (honorific && !VALID_HONORIFICS.includes(honorific)) errors.push(`honorific must be one of ${VALID_HONORIFICS.join(', ')}`);
+  const honorificCheck = normalizeHonorific(row.honorific);
+  const honorific = honorificCheck.value;
+  if (!honorificCheck.valid) errors.push(`honorific must be one of ${VALID_HONORIFICS.join(', ')}`);
 
   const wallet_balance_opening = toNumberOrNull(row.wallet_balance_opening);
   if (Number.isNaN(wallet_balance_opening)) errors.push('wallet_balance_opening must be a number');

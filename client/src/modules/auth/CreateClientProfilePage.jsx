@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
+import { HONORIFICS } from '../../constants/honorifics';
 import useLegalDocuments from '../../hooks/useLegalDocuments';
 
 const genderLabel = (g) => {
@@ -233,7 +234,7 @@ const CreateClientProfilePage = () => {
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700 block">Title <span className="text-slate-400 font-normal">(optional)</span></label>
                 <div className="flex flex-wrap gap-2">
-                  {['Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map(h => (
+                  {HONORIFICS.map(h => (
                     <button
                       key={h}
                       type="button"

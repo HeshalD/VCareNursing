@@ -546,8 +546,13 @@ const CareTimeline = ({
   // their own — the grid only reaches them because something explicit (e.g. a
   // makeup shift) was scheduled there. Delivered overrun days keep showing
   // staff: the booking genuinely ran on.
+  // `dayNum` here is a RAW calendar day-number, so "already delivered" must be compared as a
+  // raw number too. servedDays is an effective count (days off and pauses squeezed out): with a
+  // day off in the booking's first days, today's raw number runs ahead of it, and comparing the
+  // two made today look "past the end of the booking" and blanked its cell.
+  const servedRawDay = effectiveCountToRawDay(servedDays);
   const isBeyondNaturalFuture = (dayNum) =>
-    naturalEndDayNum !== null && dayNum > naturalEndDayNum && dayNum > servedDays;
+    naturalEndDayNum !== null && dayNum > naturalEndDayNum && dayNum > servedRawDay;
 
   // The paid shifts may not divide evenly into days (e.g. 7 shifts @ 2/day):
   // the plan then ends on a partial day carrying only the leftover shift(s).
@@ -919,7 +924,7 @@ const CareTimeline = ({
     // Final partial plan day: only the leftover paid shift(s) belong here — trim
     // the natural pattern down to that count (lowest shift numbers first). Only
     // for future days; once a day is delivered, show what actually ran.
-    if (partialLastDay && dayNum === partialLastDay.day && dayNum > servedDays) {
+    if (partialLastDay && dayNum === partialLastDay.day && dayNum > servedRawDay) {
       matches.sort((a, b) => a.shiftNumber - b.shiftNumber);
       let kept = 0;
       const trimmed = matches.filter((n) => n.kind !== 'NATURAL' || ++kept <= partialLastDay.count);

@@ -7,6 +7,7 @@ import { useAuth } from '../../../context/AuthContext';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import CitySelect from '../../../components/common/CitySelect';
 import useLegalDocuments from '../../../hooks/useLegalDocuments';
+import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
 
 const RESEND_SECONDS = 60;
 
@@ -90,15 +91,15 @@ const PriorityMembershipRegisterModal = ({ isOpen, onClose }) => {
     setForm((prev) => {
       const next = { ...prev, [name]: value };
       if (name === 'honorific') {
-        if (value === 'Mr') next.gender = 'MALE';
-        else if (value === 'Mrs' || value === 'Miss') next.gender = 'FEMALE';
+        const implied = genderForHonorific(value);
+        if (implied) next.gender = implied;
       }
       return next;
     });
     setErrors((prev) => ({ ...prev, [name]: '' }));
   };
 
-  const genderLocked = ['Mr', 'Mrs', 'Miss'].includes(form.honorific);
+  const genderLocked = isGenderImplied(form.honorific);
 
   const sendOtp = async () => {
     setBusy(true); setError('');
@@ -259,7 +260,7 @@ const PriorityMembershipRegisterModal = ({ isOpen, onClose }) => {
 
                   <Field label={<>Title <span className="text-slate-400 font-normal">(optional)</span></>}>
                     <div className="flex flex-wrap gap-2">
-                      {['Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map((h) => (
+                      {HONORIFICS.map((h) => (
                         <button key={h} type="button" className={choiceCls(form.honorific === h)}
                           onClick={() => set('honorific', form.honorific === h ? '' : h)}>{h}</button>
                       ))}

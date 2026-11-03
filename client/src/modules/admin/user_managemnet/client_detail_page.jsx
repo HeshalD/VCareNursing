@@ -56,6 +56,7 @@ const NOTE_TYPE_META = {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { withHonorific } from '../../../utils/clientName';
+import { HONORIFICS } from '../../../constants/honorifics';
 import { dotForAction, fmt as fmtActivityDate, ROLE_DOT as ROLE_DOT_MAP, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import { RefundDepositModal, ForfeitDepositModal } from '../products/ProductsPage';
@@ -3646,7 +3647,7 @@ const ClientDetailPage = () => {
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Title / Honorific</label>
                         <div className="flex flex-wrap gap-2">
-                          {['', 'Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map(h => (
+                          {['', ...HONORIFICS].map(h => (
                             <button
                               key={h}
                               type="button"

@@ -12,6 +12,7 @@ import AdminLayout from '../components/AdminLayout';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import AssignCoordinatorModal from './AssignCoordinatorModal';
 import CitySelect from '../../../components/common/CitySelect';
+import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
@@ -43,7 +44,6 @@ const RELATIONSHIP_OPTIONS = [
 const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
 const GENDER_OPTIONS        = ['ANY', 'MALE', 'FEMALE'];
 const PERSON_GENDER_OPTIONS = ['MALE', 'FEMALE', 'OTHER'];
-const HONORIFICS            = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
 const CLIENT_TYPE_OPTIONS   = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
 const clientTypeLabel       = (t) => (t ? t.charAt(0) + t.slice(1).toLowerCase().replace('_', ' ') : null);
 const genderLabel           = (g) => (g ? g.charAt(0) + g.slice(1).toLowerCase() : null);
@@ -1032,7 +1032,7 @@ const ServiceRequestSummaryPage = () => {
                               disabled={!!request.client_id}
                               onChange={e => {
                                 const honorific = e.target.value;
-                                const inferred = honorific === 'Mr.' ? 'MALE' : (honorific === 'Mrs.' || honorific === 'Ms.') ? 'FEMALE' : null;
+                                const inferred = genderForHonorific(honorific);
                                 setEditForm(f => ({ ...f, honorific, ...(inferred ? { payer_gender: inferred } : {}) }));
                               }}
                               className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
@@ -1049,7 +1049,7 @@ const ServiceRequestSummaryPage = () => {
                             <label className={labelCls}>Gender</label>
                             <select
                               value={editForm.payer_gender}
-                              disabled={!!request.client_id || ['Mr.', 'Mrs.', 'Ms.'].includes(editForm.honorific)}
+                              disabled={!!request.client_id || isGenderImplied(editForm.honorific)}
                               onChange={e => set('payer_gender')(e.target.value)}
                               className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
                             >

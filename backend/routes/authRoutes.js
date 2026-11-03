@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const { normalizeHonorificBody } = require('../utils/honorific');
 const authController = require('../controllers/authController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 // Route: POST /api/auth/register
-router.post('/register', authController.registerClient);
+router.post('/register', normalizeHonorificBody, authController.registerClient);
 router.post('/login', authController.login);
 router.post('/resend-otp', authController.resendOtp);
 router.post('/verify-otp', authController.verifyOtp);
@@ -22,6 +23,6 @@ router.get('/users', requirePermission('VIEW_USER_MANAGEMENT'), authController.g
 // Self-service: let an already-authenticated user (e.g. staff without a client
 // profile) fetch their known account details and create a linked client profile.
 router.get('/me', authController.getMyAccountInfo);
-router.post('/create-client-profile', authController.createClientProfileForExistingUser);
+router.post('/create-client-profile', normalizeHonorificBody, authController.createClientProfileForExistingUser);
 
 module.exports = router;
