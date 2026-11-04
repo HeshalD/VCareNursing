@@ -705,9 +705,7 @@ exports.resumeWithStaff = async (req, res) => {
         if (!booking) throw fail(404, 'Booking not found');
         if (booking.status !== 'PAUSED') throw fail(400, 'Booking is not paused');
         if (booking.service_model !== 'LIVE_IN') throw fail(400, 'Resuming onto a staff member here is for LIVE_IN bookings — use Resume for other types');
-        // Same rule as assignStaffToBooking: a quoted booking needs money in the
-        // client's wallet before staff go on it (admin-direct bookings are deferred).
-        if (booking.request_id && Number(booking.wallet_balance) <= 0) throw fail(400, 'Cannot assign staff without payment. Record payment first.');
+        // No payment gate (same as assignStaffToBooking): the quote may be paid later.
 
         const businessDate = await getBusinessDate(client);
         const pauseRes = await client.query(

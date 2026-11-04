@@ -650,6 +650,17 @@ exports.createServiceRequest = async (req, res) => {
         // Send SMS + WhatsApp confirmation (non-fatal)
         sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
+        // Email the configured team, naming the internal member who created it (non-fatal)
+        (async () => {
+            let creatorName = null;
+            if (callerStaffId) {
+                const r = await db.query(`SELECT full_name FROM internal_staff WHERE id = $1`, [callerStaffId]);
+                creatorName = r.rows[0]?.full_name || null;
+            }
+            if (!creatorName) creatorName = await getActorName(req.user.user_id);
+            await notifyNewServiceRequest(newRequest.request_id, { type: 'STAFF', name: creatorName });
+        })().catch(() => {});
+
         res.status(201).json({
             status: 'success',
             message: 'Service request created successfully',

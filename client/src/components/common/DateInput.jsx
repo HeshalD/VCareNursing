@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 // Formats raw digits typed by the user into a DD/MM/YYYY masked string
 export const maskDateInput = (raw) => {
@@ -60,6 +60,7 @@ export default function DateInput({
   style,
   placeholder = 'DD/MM/YYYY',
   onBlur,
+  calendar = false,
   ...rest
 }) {
   const [display, setDisplay] = useState(() => isoToDisplay(value));
@@ -109,25 +110,81 @@ export default function DateInput({
     onChange && onChange({ target: { name, value: iso } });
   };
 
+  const pickerRef = useRef(null);
+
+  // Native picker selection comes back as ISO already.
+  const handlePick = (e) => {
+    const iso = e.target.value;
+    if (!iso) return;
+    setDisplay(isoToDisplay(iso));
+    setError('');
+    onChange && onChange({ target: { name, value: iso } });
+  };
+
+  const openPicker = () => {
+    const el = pickerRef.current;
+    if (!el || disabled) return;
+    if (typeof el.showPicker === 'function') {
+      try { el.showPicker(); return; } catch { /* fall through */ }
+    }
+    el.focus();
+    el.click();
+  };
+
+  const input = (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      name={name}
+      id={id}
+      value={display}
+      onChange={handleChange}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      maxLength={10}
+      required={required}
+      disabled={disabled}
+      className={className}
+      style={calendar ? { ...style, paddingRight: 36 } : style}
+      {...rest}
+    />
+  );
+
   return (
     <div>
-      <input
-        type="text"
-        inputMode="numeric"
-        autoComplete="off"
-        name={name}
-        id={id}
-        value={display}
-        onChange={handleChange}
-        onBlur={onBlur}
-        placeholder={placeholder}
-        maxLength={10}
-        required={required}
-        disabled={disabled}
-        className={className}
-        style={style}
-        {...rest}
-      />
+      {calendar ? (
+        <div style={{ position: 'relative' }}>
+          {input}
+          <button
+            type="button"
+            onClick={openPicker}
+            disabled={disabled}
+            aria-label="Open calendar"
+            title="Pick from calendar"
+            style={{
+              position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+              background: 'none', border: 'none', padding: 2, cursor: disabled ? 'not-allowed' : 'pointer',
+              color: '#64748b', display: 'flex', alignItems: 'center',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </button>
+          <input
+            ref={pickerRef}
+            type="date"
+            tabIndex={-1}
+            aria-hidden="true"
+            value={value || ''}
+            min={min}
+            max={max}
+            onChange={handlePick}
+            style={{ position: 'absolute', right: 0, bottom: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+          />
+        </div>
+      ) : input}
       {error && (
         <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#BC4338' }}>{error}</p>
       )}

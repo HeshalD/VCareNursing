@@ -357,18 +357,10 @@ exports.assignStaffToBooking = async (req, res) => {
     const amount_paid = parseFloat(booking.amount_paid);
     const walletBalance = parseFloat(booking.wallet_balance || 0);
 
-    // For normal bookings (with a quotation), require the client to have money
-    // in their wallet before assigning staff. This is a shared, client-wide
-    // check now (not a reservation) — money is no longer pre-funded per
-    // booking; it's drawn down lazily as days/shifts are actually invoiced
-    // (see walletService.drawWalletForBooking). Admin-direct bookings are
-    // deferred-payment arrangements, so skip this check.
-    if (!isDirectBooking && walletBalance <= 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Cannot assign staff without payment. Record payment first.'
-      });
-    }
+    // No payment gate: staff can be assigned before the quotation is paid. Money
+    // is drawn from the client's wallet lazily as days/shifts are invoiced (see
+    // walletService.drawWalletForBooking), so a payment recorded afterwards
+    // simply funds the invoices as normal.
 
     // Get staff profile details
     const staffQuery = `

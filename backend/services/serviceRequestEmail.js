@@ -1,7 +1,8 @@
 // services/serviceRequestEmail.js
 //
 // Emails the configured recipients (admin Service Requests page -> notification settings)
-// every time a client submits a service request from the website. Fire-and-forget: it never
+// every time a service request is created (by a client online, or by an internal team
+// member), saying who created it. Fire-and-forget: it never
 // throws, so a mail problem can never fail the client's submission.
 
 const db = require('../config/db');
@@ -34,7 +35,9 @@ async function loadRequest(requestId) {
 }
 
 // [section title, [[label, value, optional href], ...]] - empty values are dropped.
-function buildSections(r) {
+// `creator` = { type: 'CLIENT' } (website / client portal, the default) or
+// { type: 'STAFF', name } for a request an internal team member entered.
+function buildSections(r, creator = { type: 'CLIENT' }) {
   const mapHref = r.gps_lat != null && r.gps_lng != null
     ? `https://www.google.com/maps?q=${r.gps_lat},${r.gps_lng}`
     : null;
@@ -43,6 +46,12 @@ function buildSections(r) {
   const sections = [
     ['Request', [
       ['Request code', r.service_request_code],
+      ['Created by', creator.type === 'STAFF'
+        ? `${creator.name || 'An internal team member'} (internal team member)`
+        : 'The client (submitted online)'],
+      ['Assignment', creator.type === 'STAFF'
+        ? (creator.name ? `Coordinated by ${creator.name}` : null)
+        : 'Unassigned service request - no coordinator yet'],
       ['Submitted', fmtDateTime(r.created_at)],
       ['Status', titleCase(r.status)],
       ['Service', titleCase(r.service_type)],
@@ -85,13 +94,17 @@ function buildSections(r) {
     .filter(([, rows]) => rows.length > 0);
 }
 
-function buildEmail(r) {
-  const sections = buildSections(r);
+function buildEmail(r, creator = { type: 'CLIENT' }) {
+  const isStaff = creator.type === 'STAFF';
+  const sections = buildSections(r, creator);
+  const intro = isStaff
+    ? `A new service request was created by ${creator.name || 'an internal team member'} (internal team member).`
+    : 'A new service request was submitted by a client online. It is an unassigned service request.';
   const link = adminBaseUrl() ? `${adminBaseUrl()}/admin/service-requests/${r.request_id}/summary` : null;
   const subject = `New service request${r.service_request_code ? ` ${r.service_request_code}` : ''}: ${titleCase(r.service_type) || 'Service'} - ${r.payer_name || 'Unknown client'}`;
 
   const text = [
-    'A new service request was submitted on the VCare website.',
+    intro,
     '',
     ...sections.flatMap(([title, rows]) => [`${title.toUpperCase()}`, ...rows.map(([l, v, href]) => `  ${l}: ${v}${href && !String(href).startsWith('tel:') && !String(href).startsWith('mailto:') ? ` (${href})` : ''}`), '']),
     link ? `Open in the admin dashboard: ${link}` : '',
@@ -113,12 +126,13 @@ function buildEmail(r) {
       <div style="font-size:20px;font-weight:700;color:#ffffff;margin-top:2px;">New service request</div>
       <div style="font-size:14px;color:#dbeafe;margin-top:4px;">${esc(titleCase(r.service_type) || 'Service')} - ${esc(r.payer_name || '')}</div>
     </td></tr>
-    <tr><td style="padding:8px 24px 24px;">
+    <tr><td style="padding:16px 24px 0;font-size:14px;color:#0f172a;">${esc(intro)}</td></tr>
+    <tr><td style="padding:0 24px 24px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${sectionHtml}</table>
       ${link ? `<div style="margin-top:24px;"><a href="${esc(link)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:8px;">Open in admin dashboard</a></div>` : ''}
     </td></tr>
   </table>
-  <p style="text-align:center;font-size:11px;color:#94a3b8;margin-top:14px;">Sent automatically when a client submits a request on the website.</p>
+  <p style="text-align:center;font-size:11px;color:#94a3b8;margin-top:14px;">Sent automatically whenever a service request is created.</p>
 </body></html>`;
 
   return { subject, text, html };
@@ -130,7 +144,7 @@ async function getRecipientEmails() {
 }
 
 // Never throws. Safe to call without awaiting.
-async function notifyNewServiceRequest(requestId) {
+async function notifyNewServiceRequest(requestId, creator = { type: 'CLIENT' }) {
   try {
     const recipients = await getRecipientEmails();
     if (recipients.length === 0) return { skipped: true, reason: 'No recipients configured' };
@@ -138,7 +152,7 @@ async function notifyNewServiceRequest(requestId) {
     const request = await loadRequest(requestId);
     if (!request) return { skipped: true, reason: 'Service request not found' };
 
-    const { subject, text, html } = buildEmail(request);
+    const { subject, text, html } = buildEmail(request, creator);
     const result = await sendEmail({ email: recipients.join(', '), subject, message: text, html });
     if (result?.skipped) console.warn(`[ServiceRequestEmail] Not sent for ${request.service_request_code || requestId}: ${result.reason || result.error}`);
     return result;

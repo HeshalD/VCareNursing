@@ -1015,7 +1015,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                     </div>
                     <div>
                       <label className={labelCls}>Preferred Start Date</label>
-                      <DateInput name="start_date" value={formData.start_date} onChange={handleInputChange} min={todayISO()} className={inputCls} />
+                      <DateInput name="start_date" value={formData.start_date} onChange={handleInputChange} min={todayISO()} calendar className={inputCls} />
                     </div>
                     <div>
                       <label className={labelCls}>Additional Remarks</label>
