@@ -212,6 +212,78 @@ exports.getActivityLogByBooking = async (req, res) => {
   }
 };
 
+// All activity for a specific service request: actions logged against the
+// request itself (creation, edits, status changes, coordinator changes,
+// candidate profiles sent), plus its quotations, the bookings created from it,
+// and the invoices/payments tied to those quotations.
+exports.getActivityLogByServiceRequest = async (req, res) => {
+  const { request_id } = req.params;
+  const { page = 1, limit = 50, action_type, from, to } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  try {
+    const params = [request_id];
+    const conditions = [
+      `(
+        (entity_type = 'SERVICE_REQUEST' AND entity_id = $1)
+        OR (entity_type = 'QUOTATION' AND entity_id IN (SELECT quote_id FROM quotations WHERE request_id = $1))
+        OR (entity_type IN ('BOOKING', 'booking') AND entity_id IN (SELECT booking_id FROM bookings WHERE request_id = $1))
+        OR (entity_type = 'INVOICE' AND entity_id IN (
+              SELECT invoice_id FROM invoices WHERE quote_id IN (SELECT quote_id FROM quotations WHERE request_id = $1)
+            ))
+        OR (entity_type = 'PAYMENT' AND entity_id IN (
+              SELECT payment_id FROM payment_tracking WHERE quote_id IN (SELECT quote_id FROM quotations WHERE request_id = $1)
+            ))
+      )`
+    ];
+
+    if (action_type) {
+      params.push(action_type);
+      conditions.push(`action_type = $${params.length}`);
+    }
+    if (from) {
+      params.push(from);
+      conditions.push(`created_at >= $${params.length}`);
+    }
+    if (to) {
+      params.push(to);
+      conditions.push(`created_at <= $${params.length}`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    params.push(parseInt(limit));
+    const limitParam = params.length;
+    params.push(offset);
+    const offsetParam = params.length;
+
+    const [rows, countResult] = await Promise.all([
+      db.query(
+        `SELECT * FROM activity_log ${whereClause} ORDER BY created_at DESC LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        params
+      ),
+      db.query(
+        `SELECT COUNT(*) FROM activity_log ${whereClause}`,
+        params.slice(0, params.length - 2)
+      )
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: rows.rows,
+      pagination: {
+        total: parseInt(countResult.rows[0].count),
+        page: parseInt(page),
+        limit: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('getActivityLogByServiceRequest Error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
 // All activity for a specific staff member (caregiver): actions logged
 // directly against their staff_profile, plus entities that belong to them
 // (bank accounts, advances, payouts, leave, change requests, reviews), plus

@@ -7,7 +7,10 @@ import {
   BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
   Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
   BadgeDollarSign, Menu, UserCheck, Check, UserCog,
+  Activity, ChevronDown, ChevronLeft, ChevronRight,
 } from 'lucide-react';
+import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
+import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import AdminLayout from '../components/AdminLayout';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import AssignCoordinatorModal from './AssignCoordinatorModal';
@@ -90,6 +93,7 @@ const TABS = [
   { key: 'details',    label: 'Details' },
   { key: 'quotations', label: 'Quotations' },
   { key: 'payment',    label: 'Payment' },
+  { key: 'activity',   label: 'Activity', permission: 'VIEW_ACTIVITY_LOG' },
 ];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -308,6 +312,34 @@ const ServiceRequestSummaryPage = () => {
   const [sentCandidates, setSentCandidates]         = useState([]);
   const [statusActionLoading, setStatusActionLoading] = useState('');
   const [bookingStaffAssignments, setBookingStaffAssignments] = useState([]);
+
+  // activity history (scoped to this service request)
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityPagination, setActivityPagination] = useState({ total: 0, page: 1, limit: 20 });
+  const [activityActionType, setActivityActionType] = useState('');
+  const [activityExpandedRow, setActivityExpandedRow] = useState(null);
+  const canViewActivity = hasPermission ? hasPermission('VIEW_ACTIVITY_LOG') : false;
+
+  const fetchActivityLog = async (page = 1) => {
+    try {
+      setActivityLoading(true);
+      const params = { page, limit: activityPagination.limit };
+      if (activityActionType) params.action_type = activityActionType;
+      const res = await apiClient.getActivityLogByServiceRequest(requestId, params);
+      setActivityLogs(res.data || []);
+      setActivityPagination(res.pagination || { total: 0, page, limit: 20 });
+    } catch (err) {
+      console.error('Service request activity log fetch error:', err);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'activity' && canViewActivity) fetchActivityLog(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, requestId, activityActionType]);
 
   const selectedQuote = useMemo(
     () => quotes.find(q => q.quote_id === selectedQuoteId) || quotes[0] || null,
@@ -975,7 +1007,7 @@ const ServiceRequestSummaryPage = () => {
 
           {/* Tab strip */}
           <div className="flex items-center gap-1 border-t border-slate-100 px-6">
-            {TABS.map(tab => (
+            {TABS.filter(tab => !tab.permission || (hasPermission && hasPermission(tab.permission))).map(tab => (
               <button
                 key={tab.key}
                 type="button"
@@ -1785,6 +1817,96 @@ const ServiceRequestSummaryPage = () => {
                           })}
                         </div>
                       )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ── ACTIVITY TAB ── */}
+            {activeTab === 'activity' && canViewActivity && (
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="rounded-full bg-teal-50 p-2"><Activity className="h-4 w-4 text-teal-700" /></div>
+                    <h3 className="text-[15px] font-bold text-slate-800">Activity history</h3>
+                  </div>
+                  <select
+                    value={activityActionType}
+                    onChange={(e) => setActivityActionType(e.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 outline-none"
+                  >
+                    <option value="">All Actions</option>
+                    {ACTIVITY_ACTION_TYPES.map((a) => (
+                      <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {activityLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+                  </div>
+                ) : activityLogs.length === 0 ? (
+                  <p className="py-10 text-center text-sm text-slate-400">No activity recorded for this request.</p>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      {activityLogs.map((log) => {
+                        const isExpanded = activityExpandedRow === log.log_id;
+                        return (
+                          <div
+                            key={log.log_id}
+                            className={`rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 ${log.details ? 'cursor-pointer' : ''}`}
+                            onClick={() => log.details && setActivityExpandedRow(isExpanded ? null : log.log_id)}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="flex flex-wrap items-center gap-2.5">
+                                <span className="whitespace-nowrap text-xs text-slate-400">{fmtActivityDate(log.created_at)}</span>
+                                <span className="text-[13px] font-bold text-slate-800">{log.actor_name}</span>
+                                <ActivityTag label={log.actor_role} dot={ROLE_DOT[log.actor_role]} />
+                                <ActivityTag label={log.action_type.replace(/_/g, ' ')} dot={dotForAction(log.action_type)} />
+                                {log.entity_type && (
+                                  <span className="text-[11px] text-slate-400">{log.entity_type.replace(/_/g, ' ').toUpperCase()}</span>
+                                )}
+                              </div>
+                              {log.details && (
+                                <ChevronDown className={`h-3.5 w-3.5 text-slate-300 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                              )}
+                            </div>
+                            {isExpanded && log.details && (
+                              <div className="mt-3"><ActivityDetailsTable details={log.details} /></div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between border-t border-stone-200 pt-3">
+                      <p className="text-[11.5px] text-slate-400">
+                        Showing {activityLogs.length} of {activityPagination.total} entries
+                      </p>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => fetchActivityLog(activityPagination.page - 1)}
+                          disabled={activityPagination.page <= 1}
+                          className="flex rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="px-1.5 text-[11.5px] text-slate-500">
+                          Page {activityPagination.page} of {Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit))}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => fetchActivityLog(activityPagination.page + 1)}
+                          disabled={activityPagination.page >= Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit))}
+                          className="flex rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}

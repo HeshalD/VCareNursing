@@ -3282,6 +3282,12 @@ class ApiClient {
     return this.request(endpoint);
   }
 
+  async getActivityLogByServiceRequest(requestId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log/service-request/${requestId}?${query}` : `/activity-log/service-request/${requestId}`;
+    return this.request(endpoint);
+  }
+
   async getActivityLogByStaff(staffProfileId, params = {}) {
     const query = new URLSearchParams(params).toString();
     const endpoint = query ? `/activity-log/staff/${staffProfileId}?${query}` : `/activity-log/staff/${staffProfileId}`;

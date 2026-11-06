@@ -144,6 +144,30 @@ exports.submitServiceRequest = async (req, res) => {
 
         const result = await db.query(query, values);
 
+        // Log the public submission as the first entry in the request's history (non-fatal)
+        try {
+            await logActivity({
+                actorUserId: null,
+                actorName: payer_name || 'Client',
+                actorRole: 'CLIENT',
+                actionType: 'SERVICE_REQUEST_CREATED',
+                entityType: 'SERVICE_REQUEST',
+                entityId: result.rows[0].request_id,
+                details: {
+                    service_request_code: result.rows[0].service_request_code,
+                    payer_name,
+                    payer_mobile,
+                    patient_name,
+                    service_type,
+                    client_id: clientId,
+                    proxy: false,
+                    source: 'public_form',
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (public submit):', logErr.message);
+        }
+
         // 3. Send SMS + WhatsApp confirmation (non-fatal)
         sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
@@ -341,16 +365,39 @@ exports.updateServiceRequestStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        
+
+        const prev = await db.query('SELECT status FROM service_requests WHERE request_id = $1', [id]);
+
         const result = await db.query(
             'UPDATE service_requests SET status = $1 WHERE request_id = $2 RETURNING *',
             [status, id]
         );
-        
+
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Service request not found" });
         }
-        
+
+        if ((prev.rows[0]?.status || null) !== status) {
+            try {
+                const actorName = await getActorName(req.user.user_id);
+                await logActivity({
+                    actorUserId: req.user.user_id,
+                    actorName,
+                    actorRole: extractActorRole(req.user.role),
+                    actionType: 'SERVICE_REQUEST_STATUS_CHANGED',
+                    entityType: 'SERVICE_REQUEST',
+                    entityId: id,
+                    details: {
+                        service_request_code: result.rows[0].service_request_code,
+                        from: prev.rows[0]?.status || null,
+                        to: status,
+                    },
+                });
+            } catch (logErr) {
+                console.error('Activity log failed (status change):', logErr.message);
+            }
+        }
+
         res.status(200).json({ 
             status: 'success', 
             message: `Service request status updated to ${status}`,
