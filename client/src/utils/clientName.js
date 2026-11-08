@@ -13,3 +13,9 @@ export const clientDisplayName = (client, fallback = '') => {
   if (!client) return fallback;
   return withHonorific(client.honorific, client.full_name || client.client_name) || fallback;
 };
+
+// Care-profile (patient) names are shown with their honorific too, when one is set.
+export const patientDisplayName = (patient, fallback = '') => {
+  if (!patient) return fallback;
+  return withHonorific(patient.honorific, patient.full_name || patient.patient_name) || fallback;
+};

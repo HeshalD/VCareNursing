@@ -55,8 +55,8 @@ const NOTE_TYPE_META = {
 };
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
-import { withHonorific } from '../../../utils/clientName';
-import { HONORIFICS } from '../../../constants/honorifics';
+import { withHonorific, patientDisplayName } from '../../../utils/clientName';
+import { HONORIFICS, genderForHonorific, isGenderImplied, withHonorificGender } from '../../../constants/honorifics';
 import { dotForAction, fmt as fmtActivityDate, ROLE_DOT as ROLE_DOT_MAP, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import { RefundDepositModal, ForfeitDepositModal } from '../products/ProductsPage';
@@ -288,7 +288,7 @@ const ClientDetailPage = () => {
   const [billingError, setBillingError] = useState('');
 
   const [editingProfile, setEditingProfile] = useState(false);
-  const [profileForm, setProfileForm] = useState({ full_name: '', mobile_number: '', secondary_phone_numbers: [], email: '', primary_address: '', city_id: '', gender: '' });
+  const [profileForm, setProfileForm] = useState({ full_name: '', honorific: '', mobile_number: '', secondary_phone_numbers: [], email: '', primary_address: '', city_id: '', gender: '' });
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [sentReviewIds, setSentReviewIds] = useState(new Set());
@@ -873,12 +873,14 @@ const ClientDetailPage = () => {
   const openEditProfile = () => {
     setProfileForm({
       full_name: clientProfile.full_name || '',
+      honorific: clientProfile.honorific || '',
       mobile_number: clientProfile.mobile_number || '',
       secondary_phone_numbers: clientProfile.secondary_phone_numbers?.length ? [...clientProfile.secondary_phone_numbers] : [],
       email: clientProfile.email || '',
       primary_address: clientProfile.primary_address || '',
       city_id: clientProfile.city_id || '',
-      gender: clientProfile.gender || '',
+      // A gendered honorific (Mr./Mrs./Miss/Ms.) decides the gender, even for older records that disagree.
+      gender: genderForHonorific(clientProfile.honorific) || clientProfile.gender || '',
     });
     setProfileError('');
     setEditingProfile(true);
@@ -2382,7 +2384,7 @@ const ClientDetailPage = () => {
                     key={patient.patient_id || index}
                     summary={
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                        <span className="font-semibold text-gray-900 text-sm"><PatientLink id={patient.patient_id}>{patient.full_name || 'Care Profile'}</PatientLink></span>
+                        <span className="font-semibold text-gray-900 text-sm"><PatientLink id={patient.patient_id}>{patientDisplayName(patient) || 'Care Profile'}</PatientLink></span>
                         {patient.age && <span className="text-sm text-gray-500">{patient.age} yrs</span>}
                         {patient.gender && <span className="text-sm text-gray-500">{patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}</span>}
                         {patient.relationship_to_client && <span className="text-sm text-gray-400">{patient.relationship_to_client}</span>}
@@ -2400,7 +2402,7 @@ const ClientDetailPage = () => {
                     }
                   >
                     <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
-                      <InfoRow label="Name"         value={patient.full_name ? <PatientLink id={patient.patient_id}>{patient.full_name}</PatientLink> : null} />
+                      <InfoRow label="Name"         value={patient.full_name ? <PatientLink id={patient.patient_id}>{patientDisplayName(patient)}</PatientLink> : null} />
                       <InfoRow label="Age"          value={patient.age || '-'} />
                       <InfoRow label="Gender"       value={patient.gender ? patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase() : '-'} />
                       <InfoRow label="Relationship" value={patient.relationship_to_client || '-'} />
@@ -3458,12 +3460,23 @@ const ClientDetailPage = () => {
                     <div className="grid gap-3 @md:grid-cols-2 @4xl:grid-cols-4">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Full Name</label>
-                        <input
-                          type="text"
-                          value={profileForm.full_name}
-                          onChange={(e) => setProfileForm(f => ({ ...f, full_name: e.target.value }))}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                        />
+                        <div className="flex items-stretch">
+                          <select
+                            value={profileForm.honorific}
+                            onChange={(e) => setProfileForm(f => withHonorificGender(f, e.target.value))}
+                            aria-label="Title"
+                            className="px-2 py-2 text-sm text-gray-700 bg-gray-50 border border-r-0 border-gray-200 rounded-l-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          >
+                            <option value="">Title</option>
+                            {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                          <input
+                            type="text"
+                            value={profileForm.full_name}
+                            onChange={(e) => setProfileForm(f => ({ ...f, full_name: e.target.value }))}
+                            className={`w-full min-w-0 px-3 py-2 text-sm border border-gray-200 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white rounded-r-md`}
+                          />
+                        </div>
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Phone</label>
@@ -3487,7 +3500,9 @@ const ClientDetailPage = () => {
                         <select
                           value={profileForm.gender}
                           onChange={(e) => setProfileForm(f => ({ ...f, gender: e.target.value }))}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                          disabled={isGenderImplied(profileForm.honorific)}
+                          title={isGenderImplied(profileForm.honorific) ? 'Set by the title. Change the title to change the gender.' : undefined}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
                         >
                           <option value="">-</option>
                           <option value="MALE">Male</option>
@@ -3544,7 +3559,7 @@ const ClientDetailPage = () => {
                 ) : (
                   <div className="grid gap-4 @md:grid-cols-2 @4xl:grid-cols-4">
                     <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
-                    <InfoRow label="Full Name"   value={clientProfile.full_name || '-'} />
+                    <InfoRow label="Full Name"   value={withHonorific(clientProfile.honorific, clientProfile.full_name) || '-'} />
                     <InfoRow label="Email"       value={clientProfile.email || '-'} />
                     <InfoRow label="Phone"       value={formatMobileNumber(clientProfile.mobile_number) || '-'} />
                     <InfoRow label="City"        value={clientProfile.city_name ? `${clientProfile.city_name}, ${clientProfile.city_district}` : '-'} />

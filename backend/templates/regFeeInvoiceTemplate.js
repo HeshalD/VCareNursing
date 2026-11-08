@@ -124,7 +124,7 @@ module.exports = (data) => {
             <tr>
                 <td>
                     <div class="item-label">Registration Fee</div>
-                    <div class="item-desc">One-time VCare Nursing client registration fee</div>
+                    <div class="item-desc">Valid for 1 year from date of commencement</div>
                 </td>
                 <td class="tr">LKR ${fmt(data.amount)}</td>
             </tr>

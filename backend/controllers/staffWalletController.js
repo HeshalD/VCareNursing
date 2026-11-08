@@ -482,7 +482,7 @@ const getMyCurrentEarningsBreakdown = async (req, res) => {
             ) AS running_balance,
             b.service_type,
             NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
-            p.full_name  AS patient_name,
+            NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '')  AS patient_name,
             spt.notes    AS payout_notes,
             ba.account_nickname AS company_account_name,
             sba.bank_name       AS staff_bank_name,
@@ -569,7 +569,7 @@ const getMyCareHistory = async (req, res) => {
       `SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date,
               bsa.status AS assignment_status,
               b.status AS booking_status, b.service_type, b.service_model,
-              p.patient_id, p.full_name AS patient_name, p.age AS patient_age, p.gender AS patient_gender,
+              p.patient_id, NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name, p.age AS patient_age, p.gender AS patient_gender,
               NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name
        FROM booking_staff_assignments bsa
        JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id

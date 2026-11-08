@@ -102,7 +102,7 @@ const GROUPS = [
   {
     key: 'bookings', label: 'Bookings', permission: 'VIEW_BOOKINGS',
     sql: `SELECT b.booking_id AS id, b.booking_code, b.status, b.service_type,
-                 cp.full_name AS client_name, pp.full_name AS patient_name,
+                 cp.full_name AS client_name, NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name,
                  ${rankOf(['b.booking_code', 'pp.full_name'])} AS rank
           FROM bookings b
           LEFT JOIN client_profiles cp ON cp.client_profile_id = b.client_id

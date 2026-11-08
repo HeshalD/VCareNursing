@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const db = require('../config/db');
+const { normalizeHonorific, genderForHonorific } = require('../utils/honorific');
 const { purgeClient } = require('../services/clientHardDelete');
 const { logActivity } = require('../utils/activityLogger');
 const { parsePaymentDate } = require('../utils/paymentDate');
@@ -381,7 +382,7 @@ exports.getAdminClientDetail = async (req, res) => {
          b.amount_paid,
          b.scheduled_end_time,
          b.actual_end_time,
-         p.full_name as patient_name,
+         NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
          p.age as patient_age,
          p.relationship_to_client,
          sp.full_name as current_staff_name,
@@ -425,7 +426,7 @@ exports.getAdminClientDetail = async (req, res) => {
          q.created_at,
          sr.payer_name,
          sr.payer_mobile,
-         sr.patient_name,
+         COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name,
          sr.patient_id,
          sr.service_type,
          sr.status as request_status,
@@ -466,7 +467,7 @@ exports.getAdminClientDetail = async (req, res) => {
          sp.full_name as staff_name,
          sp.designation,
          b.patient_id,
-         p.full_name as patient_name
+         NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name
        FROM booking_staff_assignments bsa
        JOIN bookings b ON bsa.booking_id = b.booking_id
        JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
@@ -883,11 +884,20 @@ exports.updateClientCompanyName = async (req, res) => {
 // client_profiles (full_name, primary_address, gender) and users (mobile_number, email).
 exports.updateClientProfile = async (req, res) => {
   const { client_id } = req.params;
-  const { full_name, email, primary_address, gender } = req.body;
+  const { full_name, email, primary_address } = req.body;
+  let { gender } = req.body;
 
   if (!full_name || !full_name.trim()) {
     return res.status(400).json({ message: 'Full name is required.' });
   }
+  // Honorific is optional here: omitted = leave as is, '' = clear it. A honorific that implies a
+  // gender (Mr./Mrs./Miss/Ms.) always wins over the gender sent alongside it.
+  const honorificProvided = req.body.honorific !== undefined;
+  const { value: honorific, valid: honorificValid } = normalizeHonorific(req.body.honorific);
+  if (!honorificValid) {
+    return res.status(400).json({ message: 'Honorific must be one of: Mr., Mrs., Miss, Ms., Dr., Prof., Rev.' });
+  }
+  if (honorificProvided && genderForHonorific(honorific)) gender = genderForHonorific(honorific);
   if (!isValidPhone(req.body.mobile_number)) {
     return res.status(400).json({ message: 'A valid mobile number is required.' });
   }
@@ -934,13 +944,14 @@ exports.updateClientProfile = async (req, res) => {
        SET full_name = $1, primary_address = $2::text, gender = $3::gender_enum, updated_at = NOW(),
            secondary_phone_numbers = $5::jsonb,
            city_id = COALESCE($6::integer, city_id),
+           honorific = CASE WHEN $7::boolean THEN $8::text ELSE honorific END,
            onboarding_status = CASE
                WHEN onboarding_status = 'CONTACT_PENDING' THEN 'ACTIVE'
                WHEN onboarding_status = 'PENDING_MIGRATION' AND $2::text IS NOT NULL AND $3::gender_enum IS NOT NULL THEN 'ACTIVE'
                ELSE onboarding_status
            END
        WHERE client_profile_id = $4`,
-      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, JSON.stringify(secondaryPhones), city ? city.city_id : null]
+      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, JSON.stringify(secondaryPhones), city ? city.city_id : null, honorificProvided, honorific]
     );
 
     await dbClient.query(
@@ -1168,7 +1179,7 @@ exports.getAdminClientBookingsPaginated = async (req, res) => {
          b.amount_paid,
          b.scheduled_end_time,
          b.actual_end_time,
-         p.full_name as patient_name,
+         NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
          sp.full_name as current_staff_name,
          sp.designation as current_staff_designation,
          q.quote_id,
@@ -1260,7 +1271,7 @@ exports.getClientServiceHistory = async (req, res) => {
         q.*,
         sr.payer_name,
         sr.payer_mobile,
-        sr.patient_name,
+        COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name,
         sr.service_type,
         sr.status as request_status
       FROM quotations q

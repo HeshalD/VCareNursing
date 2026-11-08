@@ -327,10 +327,10 @@ class ApiClient {
     });
   }
 
-  async updateClientProfile(clientId, { full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers, city_id }) {
+  async updateClientProfile(clientId, { full_name, honorific, mobile_number, email, primary_address, gender, secondary_phone_numbers, city_id }) {
     return this.request(`/client/${clientId}/profile`, {
       method: 'PATCH',
-      body: JSON.stringify({ full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers, city_id: city_id || undefined }),
+      body: JSON.stringify({ full_name, honorific, mobile_number, email, primary_address, gender, secondary_phone_numbers, city_id: city_id || undefined }),
     });
   }
 
@@ -597,6 +597,45 @@ class ApiClient {
 
   async registerPriorityMembership() {
     return this.request('/priority-membership/register/me', { method: 'POST' });
+  }
+  // ── Success stories ──
+  async getPublicSuccessStories({ page = 1, limit = 9 } = {}) {
+    return this.request(`/success-stories?page=${page}&limit=${limit}`);
+  }
+  async getFeaturedSuccessStories() {
+    return this.request('/success-stories/featured');
+  }
+  async getPublicSuccessStory(slug) {
+    return this.request(`/success-stories/${encodeURIComponent(slug)}`);
+  }
+  async getAdminSuccessStories() {
+    return this.request('/success-stories/admin/list');
+  }
+  async getAdminSuccessStory(id) {
+    return this.request(`/success-stories/admin/${id}`);
+  }
+  async createSuccessStory(payload) {
+    return this.request('/success-stories', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async updateSuccessStory(id, payload) {
+    return this.request(`/success-stories/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+  async setSuccessStoryPublished(id, published) {
+    return this.request(`/success-stories/${id}/publish`, { method: 'PATCH', body: JSON.stringify({ published }) });
+  }
+  async setSuccessStoryArchived(id, archived) {
+    return this.request(`/success-stories/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ archived }) });
+  }
+  async toggleSuccessStoryFeatured(id, featured) {
+    return this.request(`/success-stories/${id}/feature`, { method: 'PATCH', body: JSON.stringify({ featured }) });
+  }
+  async setSuccessStoryFeatured(orderedIds) {
+    return this.request('/success-stories/featured-order', { method: 'PUT', body: JSON.stringify({ ordered_ids: orderedIds }) });
+  }
+  async uploadSuccessStoryImage(file) {
+    const formData = new FormData();
+    formData.append('image', file);
+    return this.request('/success-stories/upload-image', { method: 'POST', body: formData });
   }
 
   async getSalespersons() {

@@ -11,6 +11,8 @@ import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { patientDisplayName } from '../../../utils/clientName';
+import { HONORIFICS, isGenderImplied, withHonorificGender } from '../../../constants/honorifics';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -182,6 +184,7 @@ export default function PatientDetailPage() {
 
   const openEditProfile = () => {
     setProfileForm({
+      honorific: data.patient.honorific || '',
       full_name: data.patient.full_name || '',
       age: data.patient.age || '',
       gender: data.patient.gender || '',
@@ -293,7 +296,14 @@ export default function PatientDetailPage() {
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
+              <div>
+                <label className={labelCls}>Honorific</label>
+                <select className={inputCls} value={profileForm.honorific} onChange={(e) => setProfileForm((f) => withHonorificGender(f, e.target.value))}>
+                  <option value="">-</option>
+                  {HONORIFICS.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className={labelCls}>Full Name <span className="text-red-500">*</span></label>
                 <input className={inputCls} value={profileForm.full_name} onChange={(e) => setProfileForm((f) => ({ ...f, full_name: e.target.value }))} />
               </div>
@@ -303,7 +313,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <label className={labelCls}>Gender</label>
-                <select className={inputCls} value={profileForm.gender} onChange={(e) => setProfileForm((f) => ({ ...f, gender: e.target.value }))}>
+                <select className={inputCls + (isGenderImplied(profileForm.honorific) ? ' bg-gray-50 text-gray-500 cursor-not-allowed' : '')} value={profileForm.gender} disabled={isGenderImplied(profileForm.honorific)} title={isGenderImplied(profileForm.honorific) ? `Set by ${profileForm.honorific}` : undefined} onChange={(e) => setProfileForm((f) => ({ ...f, gender: e.target.value }))}>
                   <option value="">- Select -</option>
                   {GENDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
@@ -373,6 +383,7 @@ export default function PatientDetailPage() {
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4">
+            <InfoRow label="Honorific" value={patient.honorific} />
             <InfoRow label="Full Name" value={patient.full_name} />
             <InfoRow label="Age" value={patient.age ? `${patient.age} years` : null} />
             <InfoRow label="Gender" value={genderLabel(patient.gender)} />
@@ -527,7 +538,7 @@ export default function PatientDetailPage() {
   };
 
   return (
-    <AdminLayout title={patient.full_name || 'Care Profile'} subtitle={`Care Profile Code: ${patient.patient_code || patient.patient_id}`}>
+    <AdminLayout title={patientDisplayName(patient) || 'Care Profile'} subtitle={`Care Profile Code: ${patient.patient_code || patient.patient_id}`}>
       {/* Toast */}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium flex items-center gap-2 ${
@@ -589,7 +600,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-[17px] font-semibold text-gray-900">{patient.full_name}</h1>
+                  <h1 className="text-[17px] font-semibold text-gray-900">{patientDisplayName(patient)}</h1>
                   {patient.patient_code && (
                     <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-mono font-medium text-gray-500">{patient.patient_code}</span>
                   )}
@@ -669,7 +680,7 @@ export default function PatientDetailPage() {
         preselectedClientId={patient.client_id}
         preselectedClientName={patient.client_name}
         preselectedPatientId={patient.patient_id}
-        preselectedPatientName={patient.full_name}
+        preselectedPatientName={patientDisplayName(patient)}
       />
 
       {deleteModalOpen && (
@@ -698,7 +709,7 @@ export default function PatientDetailPage() {
               )}
               <p className="text-sm text-gray-600">
                 Are you sure you want to delete{' '}
-                <span className="font-semibold text-gray-900">{patient.full_name || 'this care profile'}</span>?
+                <span className="font-semibold text-gray-900">{patientDisplayName(patient) || 'this care profile'}</span>?
                 This action cannot be undone. Care Profiles with active bookings cannot be deleted.
               </p>
               <label className="mt-4 block text-xs font-medium text-gray-600">

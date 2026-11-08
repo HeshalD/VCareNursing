@@ -1,52 +1,29 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Star, Quote, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import StoryCard from './StoryCard';
+import apiClient from '../../../api/api';
 
+// "Stories of Trust & Care": the success stories an admin has featured for the landing page.
+// Renders nothing until at least one story is featured, so there's never an empty heading.
 const ReviewSection = () => {
   const scrollRef = useRef(null);
+  const [stories, setStories] = useState([]);
 
-  const scrollLeft = () => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollBy({ left: -400, behavior: 'smooth' });
-    }
+  useEffect(() => {
+    let cancelled = false;
+    apiClient.getFeaturedSuccessStories()
+      .then((res) => { if (!cancelled) setStories(res.data || []); })
+      .catch(() => { /* leave the section hidden if stories can't load */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const scrollByCard = (direction) => {
+    scrollRef.current?.scrollBy({ left: direction * 400, behavior: 'smooth' });
   };
 
-  const scrollRight = () => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollBy({ left: 400, behavior: 'smooth' });
-    }
-  };
-  const reviews = [
-    {
-      id: 1,
-      name: "Dilshan Perera",
-      role: "Client - Elderly Care",
-      content: "Finding reliable care for my father was a nightmare until I found VCare. The nurse assigned, Sarah, is absolutely wonderful. She's punctual, professional, and treats my dad like family.",
-      rating: 5
-    },
-    {
-      id: 2,
-      name: "Chathurika Alwis",
-      role: "Client - Baby Care",
-      content: "I was hesitant about leaving my newborn, but the nanny from VCare put my mind at ease immediately. The background checks and verification process really make a difference.",
-      rating: 5
-    },
-    {
-      id: 3,
-      name: "Dr. K. Jayasuriya",
-      role: "Hospital Administrator",
-      content: "VCare allows us to fill staffing gaps in our emergency ward within hours. The quality of professionals we get is consistently high. It's an indispensable tool for our hospital.",
-      rating: 5
-    },
-
-    {
-      id: 4,
-      name: "Dr. M. Bandara",
-      role: "Hospital Administrator",
-      content: "VCare allows us to fill staffing gaps in our emergency ward within hours. The quality of professionals we get is consistently high. It's an indispensable tool for our hospital.",
-      rating: 4
-    }
-  ];
+  if (stories.length === 0) return null;
 
   return (
     <section className="py-24 bg-slate-50 relative overflow-hidden">
@@ -58,82 +35,57 @@ const ReviewSection = () => {
 
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         <div className="text-center max-w-3xl mx-auto mb-16">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-full shadow-sm mb-6"
-          >
-            <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-            <span className="text-sm font-semibold text-slate-800">4.9/5 Average Rating</span>
-          </motion.div>
-
           <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6">
-            Stories of <span className="text-blue-600">Trust & Care</span>.
+            Stories of <span className="text-blue-600">Trust &amp; Care</span>.
           </h2>
           <p className="text-lg text-slate-600">
             Join thousands of Sri Lankan families and healthcare facilities who have found peace of mind with VCare.
           </p>
         </div>
 
-        {/* Desktop Navigation Buttons */}
-
-
         <div
           ref={scrollRef}
           className="flex overflow-x-auto gap-8 px-4 sm:px-0 snap-x snap-mandatory scrollbar-hide py-4"
         >
-          {reviews.map((review, index) => (
+          {stories.map((story, index) => (
             <motion.div
-              key={review.id}
+              key={story.story_id}
               initial={{ opacity: 0, x: 50 }}
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.1, duration: 0.5 }}
-              className="min-w-[85vw] md:min-w-[400px] snap-center bg-white rounded-[32px] p-8 shadow-xl shadow-slate-200/50 border border-slate-100 relative group hover:-translate-y-2 transition-transform duration-300 flex flex-col"
+              className="min-w-[85vw] md:min-w-[400px] md:max-w-[400px] snap-center flex"
             >
-              <div className="absolute top-8 right-8 text-blue-100 group-hover:text-blue-50 transition-colors">
-                <Quote className="w-12 h-12 fill-current" />
-              </div>
-
-              <div className="flex gap-1 mb-6">
-                {[...Array(review.rating)].map((_, i) => (
-                  <Star key={i} className="w-5 h-5 text-yellow-400 fill-yellow-400" />
-                ))}
-              </div>
-
-              <p className="text-slate-700 text-lg leading-relaxed mb-8 relative z-10">
-                "{review.content}"
-              </p>
-
-              <div className="flex items-center gap-4 mt-auto">
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-slate-500">{review.role}</span>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
-                  </div>
-                </div>
-              </div>
+              <StoryCard story={story} className="w-full" />
             </motion.div>
           ))}
         </div>
 
-        {/* Navigation Buttons - Centered Bottom */}
-        <div className="flex justify-center gap-4 mt-8">
-          <button
-            onClick={scrollLeft}
-            className="w-12 h-12 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 hover:scale-105 transition-all"
-            aria-label="Previous reviews"
+        <div className="flex items-center justify-center gap-4 mt-8">
+          {stories.length > 1 && (
+            <button
+              onClick={() => scrollByCard(-1)}
+              className="w-12 h-12 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 hover:scale-105 transition-all"
+              aria-label="Previous stories"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
+          <Link
+            to="/success-stories"
+            className="inline-flex items-center gap-2 px-7 py-3.5 bg-blue-600 text-white rounded-full font-semibold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
           >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <button
-            onClick={scrollRight}
-            className="w-12 h-12 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 hover:scale-105 transition-all"
-            aria-label="Next reviews"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
+            View all success stories <ArrowRight className="w-4 h-4" />
+          </Link>
+          {stories.length > 1 && (
+            <button
+              onClick={() => scrollByCard(1)}
+              className="w-12 h-12 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 hover:scale-105 transition-all"
+              aria-label="Next stories"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
     </section>

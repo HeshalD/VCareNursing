@@ -52,6 +52,14 @@ router.get(
     patientController.getPatientById
 );
 
+// Route to change just the honorific (client portal + admin). Clients are limited to their own
+// care profiles inside the controller.
+router.patch(
+    '/:patient_id/honorific',
+    protect,
+    patientController.updatePatientHonorific
+);
+
 // Route to update patient profile
 router.put(
     '/:patient_id', 

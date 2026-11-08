@@ -118,7 +118,7 @@ async function queryBookingOverdueRows(clientId) {
        b.service_type,
        q.quote_id,
        q.estimate_number,
-       p.full_name as patient_name,
+       NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
        p.age as patient_age,
        led.total_invoiced as invoice_amount,
        led.total_paid as amount_paid,

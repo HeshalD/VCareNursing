@@ -9,6 +9,7 @@ import {
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
+import { patientDisplayName } from '../../utils/clientName';
 import { useAuth } from '../../context/AuthContext';
 import homeNursingBg from '../../assets/images/HomeNursing.webp';
 import DateRangePicker from '../../components/common/DateRangePicker';
@@ -631,7 +632,7 @@ const HomeNursingBookingPage = () => {
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex-1">
-                                  <h4 className="font-semibold text-white text-lg">{patient.full_name}</h4>
+                                  <h4 className="font-semibold text-white text-lg">{patientDisplayName(patient)}</h4>
                                   <div className="flex gap-4 mt-1 text-sm text-slate-400">
                                     <span className="flex items-center gap-1">
                                       <User className="w-4 h-4" />

@@ -36,7 +36,7 @@ exports.listQuotations = async (req, res) => {
         const result = await db.query(
             `SELECT q.quote_id, q.estimate_number, q.quote_type, q.status, q.total_amount,
                     q.estimate_date, q.created_at,
-                    sr.service_type, sr.patient_name,
+                    sr.service_type, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name,
                     COALESCE((SELECT SUM(pt.amount_received) FROM payment_tracking pt
                               WHERE pt.quote_id = q.quote_id AND pt.status = 'VERIFIED'), 0)
                     + COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip
@@ -302,7 +302,7 @@ exports.listStaffLog = async (req, res) => {
                     sp.full_name AS staff_name, sp.designation, sp.profile_picture_url,
                     b.booking_id, b.booking_code, b.service_type, b.service_model, b.status AS booking_status,
                     b.start_date::text AS booking_start_date,
-                    pp.full_name AS patient_name
+                    NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name
              FROM booking_staff_assignments bsa
              JOIN bookings b ON b.booking_id = bsa.booking_id
              JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id

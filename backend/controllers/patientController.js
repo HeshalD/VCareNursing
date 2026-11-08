@@ -1,5 +1,23 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { HONORIFICS, normalizeHonorific, genderForHonorific } = require('../utils/honorific');
+
+// Validates an optional honorific and applies the same gender lock the forms use: Mr. -> MALE,
+// Mrs./Miss/Ms. -> FEMALE. A missing gender is filled in; a conflicting one is rejected.
+// Returns { honorific, gender } or { error }.
+function resolveHonorificAndGender(rawHonorific, rawGender) {
+    const { value: honorific, valid } = normalizeHonorific(rawHonorific);
+    if (!valid) return { error: `Honorific must be one of: ${HONORIFICS.join(', ')}.` };
+    let gender = rawGender || null;
+    const implied = genderForHonorific(honorific);
+    if (implied) {
+        if (gender && gender !== implied) {
+            return { error: `${honorific} is for ${implied.toLowerCase()} care profiles, but gender is ${String(gender).toLowerCase()}.` };
+        }
+        gender = implied;
+    }
+    return { honorific, gender };
+}
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -21,8 +39,13 @@ exports.createPatientProfile = async (req, res) => {
         residential_address,    // "Mount Lavinia" (Crucial for Sponsored Booking)
         emergency_contact_name, // "Sunil's Wife"
         emergency_contact_number,
-        gender                  // 'MALE' | 'FEMALE' | 'OTHER'
+        gender,                 // 'MALE' | 'FEMALE' | 'OTHER'
+        honorific               // optional: Mr. | Mrs. | Miss | Ms. | Dr. | Prof. | Rev.
     } = req.body;
+
+    const resolved = resolveHonorificAndGender(honorific, gender);
+    if (resolved.error) return res.status(400).json({ message: resolved.error });
+    gender = resolved.gender;
 
     try {
         // A client can only create care profiles under their own client_id
@@ -49,8 +72,9 @@ exports.createPatientProfile = async (req, res) => {
                 emergency_contact_name,
                 emergency_contact_number,
                 gender,
+                honorific,
                 is_registration_fee_paid
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
             RETURNING *;
         `;
 
@@ -61,7 +85,8 @@ exports.createPatientProfile = async (req, res) => {
             client_id, full_name, age, relationship_to_client,
             medical_condition, residential_address,
             emergency_contact_name, emergency_contact_number,
-            gender || null
+            gender || null,
+            resolved.honorific
         ];
 
         const result = await db.query(query, values);
@@ -168,6 +193,14 @@ exports.updatePatientProfile = async (req, res) => {
         gender
     } = req.body;
 
+    // honorific is optional: leave it untouched when the key is absent (older callers), clear it
+    // when sent empty, otherwise validate it and apply the gender lock.
+    const honorificProvided = req.body.honorific !== undefined;
+    const resolved = honorificProvided
+        ? resolveHonorificAndGender(req.body.honorific, gender)
+        : { honorific: null, gender: gender || null };
+    if (resolved.error) return res.status(400).json({ message: resolved.error });
+
     try {
         const query = `
             UPDATE patient_profiles
@@ -179,7 +212,8 @@ exports.updatePatientProfile = async (req, res) => {
                 residential_address = $5,
                 emergency_contact_name = $6,
                 emergency_contact_number = $7,
-                gender = $8
+                gender = $8,
+                honorific = CASE WHEN $10::boolean THEN $11 ELSE honorific END
             WHERE patient_id = $9
             RETURNING *;
         `;
@@ -188,8 +222,10 @@ exports.updatePatientProfile = async (req, res) => {
             full_name, age, relationship_to_client,
             medical_condition, residential_address,
             emergency_contact_name, emergency_contact_number,
-            gender || null,
-            patient_id
+            resolved.gender,
+            patient_id,
+            honorificProvided,
+            resolved.honorific
         ];
 
         const result = await db.query(query, values);
@@ -222,6 +258,65 @@ exports.updatePatientProfile = async (req, res) => {
     } catch (error) {
         console.error("Update Patient Error:", error);
         res.status(500).json({ message: "Error updating patient profile" });
+    }
+};
+
+// Change only the honorific (and the gender it locks) of a care profile. Used by the client
+// portal, where clients can retitle their own care profiles without a full edit. Clients may only
+// touch profiles under their own client account.
+exports.updatePatientHonorific = async (req, res) => {
+    const { patient_id } = req.params;
+
+    try {
+        const existing = await db.query(
+            'SELECT patient_id, client_id, full_name, gender FROM patient_profiles WHERE patient_id = $1',
+            [patient_id]
+        );
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ message: 'Patient not found' });
+        }
+        const patient = existing.rows[0];
+
+        if (extractActorRole(req.user.role) === 'CLIENT') {
+            const own = await db.query(
+                'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
+                [req.user.user_id]
+            );
+            if (own.rows.length === 0 || own.rows[0].client_profile_id !== patient.client_id) {
+                return res.status(403).json({ message: 'You can only edit your own care profiles' });
+            }
+        }
+
+        const resolved = resolveHonorificAndGender(
+            req.body.honorific,
+            req.body.gender !== undefined ? req.body.gender : patient.gender
+        );
+        if (resolved.error) return res.status(400).json({ message: resolved.error });
+
+        const result = await db.query(
+            'UPDATE patient_profiles SET honorific = $1, gender = $2 WHERE patient_id = $3 RETURNING *',
+            [resolved.honorific, resolved.gender, patient_id]
+        );
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'PATIENT_UPDATED',
+                entityType: 'PATIENT',
+                entityId: patient_id,
+                details: { patient_name: patient.full_name, honorific: resolved.honorific }
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
+
+        res.status(200).json({ status: 'success', message: 'Honorific updated', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update Patient Honorific Error:', error);
+        res.status(500).json({ message: 'Error updating honorific' });
     }
 };
 

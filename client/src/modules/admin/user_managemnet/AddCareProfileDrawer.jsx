@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Plus, X } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { HONORIFICS, isGenderImplied, withHonorificGender } from '../../../constants/honorifics';
 
 const PATIENT_RELATIONSHIP_OPTIONS = [
   'Parent', 'Child', 'Sibling', 'Spouse / Partner',
@@ -13,6 +14,7 @@ const serializeEmergencyContacts = (contacts) => ({
 });
 
 const emptyForm = {
+  honorific: '',
   full_name: '',
   age: '',
   gender: '',
@@ -104,16 +106,29 @@ export default function AddCareProfileDrawer({ open, clientProfileId, clientAddr
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label className={labelCls}>Full Name *</label>
-                <input
-                  type="text"
-                  value={form.full_name}
-                  onChange={e => updateField('full_name', e.target.value)}
-                  className={inputCls}
-                  placeholder="e.g. Saman Kumara"
-                  required
-                />
+              <div className="sm:col-span-2 grid grid-cols-[110px_1fr] gap-4">
+                <div>
+                  <label className={labelCls}>Honorific</label>
+                  <select
+                    value={form.honorific}
+                    onChange={e => setForm(f => withHonorificGender(f, e.target.value))}
+                    className={selectCls}
+                  >
+                    <option value="">—</option>
+                    {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Full Name *</label>
+                  <input
+                    type="text"
+                    value={form.full_name}
+                    onChange={e => updateField('full_name', e.target.value)}
+                    className={inputCls}
+                    placeholder="e.g. Saman Kumara"
+                    required
+                  />
+                </div>
               </div>
 
               <div>
@@ -134,7 +149,9 @@ export default function AddCareProfileDrawer({ open, clientProfileId, clientAddr
                 <select
                   value={form.gender}
                   onChange={e => updateField('gender', e.target.value)}
-                  className={selectCls}
+                  disabled={isGenderImplied(form.honorific)}
+                  title={isGenderImplied(form.honorific) ? `Set by ${form.honorific}` : undefined}
+                  className={selectCls + (isGenderImplied(form.honorific) ? ' bg-gray-50 text-gray-500 cursor-not-allowed' : '')}
                 >
                   <option value="">— Select —</option>
                   <option value="MALE">Male</option>

@@ -18,7 +18,7 @@ const SHEET_NAMES = {
 
 const VALID_STAFF_ROLES = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
 const VALID_GENDERS = ['MALE', 'FEMALE', 'OTHER'];
-const { HONORIFICS: VALID_HONORIFICS, normalizeHonorific } = require('../utils/honorific');
+const { HONORIFICS: VALID_HONORIFICS, normalizeHonorific, genderForHonorific } = require('../utils/honorific');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ─── Spreadsheet parsing ────────────────────────────────────────────────────
@@ -229,13 +229,23 @@ function normalizeCareProfileRow(row) {
   if (!full_name) errors.push('full_name is required');
   if (!age || Number.isNaN(age)) errors.push('age is required and must be a number');
 
-  const gender = row.gender ? String(row.gender).trim().toUpperCase() : null;
+  let gender = row.gender ? String(row.gender).trim().toUpperCase() : null;
   if (gender && !VALID_GENDERS.includes(gender)) errors.push(`gender must be one of ${VALID_GENDERS.join(', ')}`);
+
+  // Optional honorific; Mr./Mrs./Miss/Ms. imply a gender (filled in if blank, error if it conflicts).
+  const honorificCheck = normalizeHonorific(row.honorific);
+  const honorific = honorificCheck.value;
+  if (!honorificCheck.valid) errors.push(`honorific must be one of ${VALID_HONORIFICS.join(', ')}`);
+  const impliedGender = genderForHonorific(honorific);
+  if (impliedGender) {
+    if (gender && gender !== impliedGender) errors.push(`honorific ${honorific} does not match gender ${gender}`);
+    else gender = impliedGender;
+  }
 
   return {
     errors,
     data: {
-      client_mobile_number, full_name, age: age || null, gender,
+      client_mobile_number, full_name, honorific, age: age || null, gender,
       relationship_to_client: row.relationship_to_client ? String(row.relationship_to_client).trim() : null,
       medical_condition: row.medical_condition ? String(row.medical_condition).trim() : null,
       residential_address: row.residential_address ? String(row.residential_address).trim() : null,
@@ -885,11 +895,12 @@ async function commitPatientRow(data, clientId) {
       `INSERT INTO patient_profiles (
          client_id, full_name, age, relationship_to_client, medical_condition,
          residential_address, emergency_contact_name, emergency_contact_number, gender,
-         is_registration_fee_paid
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)
+         honorific, is_registration_fee_paid
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
        RETURNING patient_id`,
       [clientId, data.full_name, data.age, data.relationship_to_client, data.medical_condition,
-        data.residential_address, data.emergency_contact_name, data.emergency_contact_number, data.gender]
+        data.residential_address, data.emergency_contact_name, data.emergency_contact_number, data.gender,
+        data.honorific]
     );
     await client.query('COMMIT');
     return { patient_id: res.rows[0].patient_id };
@@ -1344,14 +1355,14 @@ exports.downloadTemplate = (req, res) => {
   XLSX.utils.book_append_sheet(workbook, clientsSheet, SHEET_NAMES.clients);
 
   const patientsSheet = XLSX.utils.aoa_to_sheet([
-    ['client_mobile_number', 'full_name', 'age', 'gender', 'relationship_to_client', 'medical_condition', 'residential_address', 'emergency_contact_name', 'emergency_contact_number'],
-    ['0712345678', 'Mr. Sunil', '78', 'MALE', 'Father', 'Diabetes', 'Colombo 5', "Sunil's wife", '0719876543'],
+    ['client_mobile_number', 'full_name', 'honorific', 'age', 'gender', 'relationship_to_client', 'medical_condition', 'residential_address', 'emergency_contact_name', 'emergency_contact_number'],
+    ['0712345678', 'Sunil', 'Mr.', '78', 'MALE', 'Father', 'Diabetes', 'Colombo 5', "Sunil's wife", '0719876543'],
   ]);
   XLSX.utils.book_append_sheet(workbook, patientsSheet, SHEET_NAMES.patients);
 
   const bookingsSheet = XLSX.utils.aoa_to_sheet([
     ['client_mobile_number', 'patient_full_name', 'assigned_staff_mobile_number', 'staff_daily_rate', 'client_daily_rate', 'service_type', 'service_model', 'start_date', 'amount_paid', 'amount_outstanding', 'shift_count', 'shift_start_time', 'shift_duration_hours', 'booking_ref', 'shift_number'],
-    ['0712345678', 'Mr. Sunil', '0771234567', '3500', '5000', 'Live-in nursing care', 'LIVE_IN', '2025-06-01', '30000', '5000', '', '', '', '', ''],
+    ['0712345678', 'Sunil', '0771234567', '3500', '5000', 'Live-in nursing care', 'LIVE_IN', '2025-06-01', '30000', '5000', '', '', '', '', ''],
     // Two staff on one SHIFT_BASED booking: same booking_ref links both rows to
     // the same booking. The first row (shift_number 1) creates the booking —
     // client_daily_rate/service_type/etc apply only to this row. The second

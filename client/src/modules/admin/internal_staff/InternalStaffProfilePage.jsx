@@ -7,6 +7,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { patientDisplayName } from '../../../utils/clientName';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PayslipPreviewModal from '../internal_staff_salary/PayslipPreviewModal';
 import { ClientLink, PatientLink } from '../components/EntityLinks';
@@ -650,7 +651,7 @@ const InternalStaffProfilePage = () => {
                               <div key={p.patient_id} className="px-4 py-2.5 flex items-center justify-between text-[13px]">
                                 <div className="flex items-center gap-2">
                                   <HeartPulse className="w-3.5 h-3.5 text-gray-400" />
-                                  <span className="font-medium text-gray-900"><PatientLink id={p.patient_id}>{p.full_name}</PatientLink></span>
+                                  <span className="font-medium text-gray-900"><PatientLink id={p.patient_id}>{patientDisplayName(p)}</PatientLink></span>
                                 </div>
                                 <span className="text-xs text-gray-500"><ClientLink id={p.client_profile_id || p.client_id}>{p.client_name}</ClientLink></span>
                               </div>

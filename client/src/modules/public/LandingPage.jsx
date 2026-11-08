@@ -183,16 +183,16 @@ const ServiceGrid = () => {
           Specialized care solutions for every need
         </h2>
 
-        <div className="flex flex-wrap justify-center gap-6 max-w-5xl mx-auto">
+        <div className="flex flex-wrap justify-center gap-3 md:gap-6 max-w-5xl mx-auto">
           {services.map((service, index) => (
-            <Link key={index} to={service.link} className="block group w-full md:w-[calc((100%-3rem)/3)]">
-              <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:shadow-md transition-shadow h-full flex flex-col items-center">
-                <div className="w-full flex justify-between items-center mb-8">
-                  <span className="text-slate-800 font-medium text-lg">{service.title}</span>
-                  <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-800 transition-colors" />
+            <Link key={index} to={service.link} className="block group w-[calc((100%-0.75rem)/2)] md:w-[calc((100%-3rem)/3)]">
+              <div className="bg-white rounded-[16px] md:rounded-[24px] p-3 sm:p-4 md:p-6 shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:shadow-md transition-shadow h-full flex flex-col items-center">
+                <div className="w-full flex justify-between items-start gap-1 mb-3 md:mb-8">
+                  <span className="text-slate-800 font-medium text-sm sm:text-base md:text-lg leading-snug">{service.title}</span>
+                  <ChevronRight className="w-4 h-4 md:w-5 md:h-5 mt-0.5 flex-shrink-0 text-slate-400 group-hover:text-slate-800 transition-colors" />
                 </div>
-                <div className="w-full mt-auto flex justify-center pb-2">
-                  <img src={service.img} alt={service.title} className="h-[200px] w-auto object-contain" />
+                <div className="w-full mt-auto flex justify-center pb-1 md:pb-2">
+                  <img src={service.img} alt={service.title} className="h-[100px] sm:h-[140px] md:h-[200px] w-auto max-w-full object-contain" />
                 </div>
               </div>
             </Link>

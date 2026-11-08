@@ -7,6 +7,7 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
+const { withTermsUrl } = require('../services/managedDocuments');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
@@ -540,7 +541,7 @@ async function ensureInvoicePdf(invoiceId) {
     total_amount: parseFloat(invoice.amount) || 0,
   };
 
-  const html = estimateTemplate(data);
+  const html = estimateTemplate(await withTermsUrl(data));
   const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
   const pdfKey = `invoices/Invoice_${invoice.invoice_code}_${Date.now()}.pdf`;
   const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');

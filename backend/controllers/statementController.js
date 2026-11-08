@@ -134,7 +134,9 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
         ledger: statementLines.map((line) => ({
             date: new Date(line.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
             transactions: line.transactions,
-            details: line.details || '',
+            details: line.transactions === 'REGISTRATION_FEE'
+                ? [line.details, 'Valid for 1 year from date of commencement'].filter(Boolean).join('\n')
+                : (line.details || ''),
             amount: line.amount_invoiced ? parseFloat(line.amount_invoiced).toFixed(2) : '',
             payments: line.amount_paid ? parseFloat(line.amount_paid).toFixed(2) : '',
             balance: parseFloat(line.balance).toFixed(2),
@@ -437,7 +439,7 @@ exports.resendStatementFromHistory = async (req, res) => {
 
         // Best-effort: find most recent booking for this client to get context for the template
         const bookingRes = await db.query(
-            `SELECT b.booking_code, p.full_name AS patient_name
+            `SELECT b.booking_code, NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name
              FROM bookings b
              LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
              WHERE b.client_id = $1
@@ -508,7 +510,7 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
         let patientName = 'N/A';
         if (booking_id) {
             const bookingRes = await db.query(
-                `SELECT b.booking_code, p.full_name AS patient_name
+                `SELECT b.booking_code, NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name
                  FROM bookings b
                  LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
                  WHERE b.booking_id = $1`,

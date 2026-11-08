@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare, MessageCircle
+  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare, MessageCircle, Newspaper
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -113,6 +113,7 @@ const NAV_SECTIONS = [
       { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests', permKey: 'VIEW_CHANGE_REQUESTS' },
       { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers', match: (p) => p === '/admin/workers' || p.startsWith('/admin/workers/'), permKey: 'VIEW_WORKER_VERIFICATIONS' },
       { icon: Star, label: 'Reviews', path: '/admin/reviews', permKey: 'VIEW_STAFF_REVIEWS' },
+      { icon: Newspaper, label: 'Success Stories', path: '/admin/success-stories', match: (p) => p === '/admin/success-stories' || p.startsWith('/admin/success-stories/'), permKey: 'VIEW_SUCCESS_STORIES' },
     ],
   },
   {

@@ -28,4 +28,12 @@ async function getCurrentDocument(documentKey) {
   return FALLBACKS[documentKey] ? { document_key: documentKey, ...FALLBACKS[documentKey] } : null;
 }
 
-module.exports = { getCurrentDocument, AGREEMENT_KEY_BY_LANGUAGE };
+// Stamps the current Terms & Conditions file URL onto a document's data so the PDF
+// templates can link the "Terms & Conditions" heading to it. Null until an admin
+// has uploaded the file on the Documents page; the template then shows plain text.
+async function withTermsUrl(data) {
+  const doc = await getCurrentDocument('TERMS_OF_SERVICE');
+  return { ...data, terms_url: doc?.file_url || null };
+}
+
+module.exports = { getCurrentDocument, withTermsUrl, AGREEMENT_KEY_BY_LANGUAGE };

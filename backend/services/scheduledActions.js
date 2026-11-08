@@ -194,7 +194,7 @@ const executeTermination = async (client, params) => {
 
             if (booking.assigned_staff_id) {
                 const staffRes = await db.query(
-                    `SELECT u.mobile_number, sp.full_name, sr.patient_name
+                    `SELECT u.mobile_number, sp.full_name, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name
                      FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id
                      LEFT JOIN bookings b ON b.booking_id = $2
                      LEFT JOIN service_requests sr ON sr.request_id = b.request_id
@@ -296,7 +296,7 @@ const executeCompletion = async (client, params) => {
             if (booking.assigned_staff_id) {
                 const endDateStr = endTime.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
                 const staffRes = await db.query(
-                    `SELECT u.mobile_number, sp.full_name, sr.patient_name
+                    `SELECT u.mobile_number, sp.full_name, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name
                      FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id
                      LEFT JOIN bookings b ON b.booking_id = $2
                      LEFT JOIN service_requests sr ON sr.request_id = b.request_id
@@ -395,7 +395,7 @@ const executeStaffSwap = async (client, payload) => {
             });
 
             const ctx = await db.query(
-                `SELECT p.full_name AS patient_name,
+                `SELECT NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name,
                         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, uc.mobile_number AS client_mobile,
                         os.full_name AS old_name, uo.mobile_number AS old_mobile,
                         ns.full_name AS new_name, un.mobile_number AS new_mobile,

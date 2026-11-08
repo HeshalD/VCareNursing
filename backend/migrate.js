@@ -4079,6 +4079,36 @@ async function runMigration() {
     ON CONFLICT (document_key, version) DO NOTHING
   `);
 
+  // Success stories: admin-authored articles / YouTube videos shown on the public site.
+  // content_html is sanitised server-side before it is stored. featured_order only matters
+  // while is_featured is true (lower = earlier in the landing-page carousel).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS success_stories (
+      story_id SERIAL PRIMARY KEY,
+      title VARCHAR(200) NOT NULL,
+      slug VARCHAR(220) NOT NULL UNIQUE,
+      summary TEXT,
+      cover_image_url TEXT,
+      youtube_video_id VARCHAR(20),
+      content_html TEXT,
+      person_name VARCHAR(150),
+      display_date DATE,
+      status VARCHAR(12) NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','PUBLISHED')),
+      is_archived BOOLEAN NOT NULL DEFAULT false,
+      is_featured BOOLEAN NOT NULL DEFAULT false,
+      featured_order INTEGER NOT NULL DEFAULT 0,
+      published_at TIMESTAMP WITH TIME ZONE,
+      created_by UUID,
+      updated_by UUID,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_success_stories_public ON success_stories (status, is_archived, display_date DESC)`);
+
+  // Care profiles can carry an optional honorific too (existing rows stay NULL).
+  await db.query(`ALTER TABLE patient_profiles ADD COLUMN IF NOT EXISTS honorific VARCHAR(10)`);
+
   // Honorifics stay canonical in the database itself (Mr. not Mr, Dr. not Doc): normalises existing
   // rows once and installs a trigger on every table with an honorific column. See utils/honorificSql.js.
   for (const stmt of require('./utils/honorificSql').statements) {

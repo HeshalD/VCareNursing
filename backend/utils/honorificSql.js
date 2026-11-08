@@ -4,7 +4,7 @@
 //   and rejects anything it does not recognise.
 // Mirrors utils/honorific.js. A row whose honorific is not being changed is left alone, so a legacy
 // value never blocks an unrelated update.
-const TABLES = ['client_profiles', 'service_requests', 'pending_registrations'];
+const TABLES = ['client_profiles', 'service_requests', 'pending_registrations', 'patient_profiles'];
 
 const statements = [
   `CREATE OR REPLACE FUNCTION canonical_honorific(h text) RETURNS text AS $fn$

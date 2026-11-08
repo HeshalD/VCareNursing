@@ -433,7 +433,7 @@ const recordClientPayment = async (req, res) => {
           }
           const bId = alloc.type === 'NEW_BOOKING' ? alloc._booking_id : alloc.booking_id;
           const info = await db.query(
-            `SELECT b.booking_code, b.service_type, pp.full_name AS patient_name
+            `SELECT b.booking_code, b.service_type, NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name
              FROM bookings b
              LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
              WHERE b.booking_id = $1`,
@@ -586,7 +586,7 @@ const getPaymentRecordDetail = async (req, res) => {
          b.start_date    AS booking_start_date,
          b.amount_paid   AS booking_amount_paid,
          b.amount_quotated AS booking_amount_quotated,
-         pp.full_name    AS patient_name
+         NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '')    AS patient_name
        FROM client_payment_allocations a
        LEFT JOIN bookings b ON b.booking_id = a.booking_id
        LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id

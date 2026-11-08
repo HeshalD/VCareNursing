@@ -43,7 +43,7 @@ const TRANSACTION_SELECT_COLUMNS = `
   ${transactionEditColumns('t')},
   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
   sp.full_name          AS staff_name,
-  pp.full_name          AS patient_name,
+  NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '')          AS patient_name,
   b.service_type        AS booking_service_type,
   ba.account_nickname   AS bank_account_nickname,
   ba.bank_name          AS bank_name,

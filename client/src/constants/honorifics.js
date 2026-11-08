@@ -10,3 +10,10 @@ export const genderForHonorific = (honorific) => {
   return null;
 };
 export const isGenderImplied = (honorific) => genderForHonorific(honorific) !== null;
+
+// Applies a honorific to a form object and, when it implies a gender (Mr. / Mrs. / Miss / Ms.),
+// sets that gender too. The form's gender field is then locked via isGenderImplied(form.honorific).
+export const withHonorificGender = (form, honorific) => {
+  const gender = genderForHonorific(honorific);
+  return { ...form, honorific, ...(gender ? { gender } : {}) };
+};

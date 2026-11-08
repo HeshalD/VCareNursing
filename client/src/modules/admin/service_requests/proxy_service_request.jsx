@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { patientDisplayName } from '../../../utils/clientName';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
@@ -784,7 +785,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                   </div>
                   {selectedCareProfile && (
                     <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
-                      <span className="text-xs font-medium text-emerald-700 truncate max-w-[160px]">{selectedCareProfile.full_name}</span>
+                      <span className="text-xs font-medium text-emerald-700 truncate max-w-[160px]">{patientDisplayName(selectedCareProfile)}</span>
                       <button type="button" onClick={handleDeselectCareProfile} className="text-emerald-500 hover:text-emerald-700">
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -822,7 +823,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                               <Heart className={`w-4 h-4 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-900'}`}>{profile.full_name}</p>
+                              <p className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-900'}`}>{patientDisplayName(profile)}</p>
                               <p className="text-xs text-slate-500 mt-0.5">
                                 {[profile.age && `Age ${profile.age}`, profile.relationship_to_client].filter(Boolean).join(' · ')}
                               </p>

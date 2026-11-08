@@ -745,7 +745,7 @@ exports.getClientBookingsForAdmin = async (req, res) => {
       `SELECT b.booking_id, b.booking_code, b.service_type, b.service_model, b.service_mode,
               b.start_date, b.status, b.created_at, b.scheduled_end_time, b.actual_end_time,
               b.daily_rate, b.amount_quotated, b.amount_paid, b.preferred_gender,
-              p.full_name AS patient_name, p.age AS patient_age, p.gender AS patient_gender,
+              NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name, p.age AS patient_age, p.gender AS patient_gender,
               p.relationship_to_client, p.residential_address,
               sp.full_name AS assigned_staff_name, sp.staff_code AS assigned_staff_code,
               (SELECT COUNT(DISTINCT bsa.staff_profile_id)

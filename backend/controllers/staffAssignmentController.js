@@ -92,7 +92,7 @@ exports.getAssignmentFormData = async (req, res) => {
         q.total_amount,
         COALESCE(cp.wallet_balance, 0) AS wallet_balance,
         COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), ''), sr.payer_name) AS client_name,
-        COALESCE(pp.full_name, sr.patient_name) AS patient_name,
+        COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), ''), sr.patient_name) AS patient_name,
         sr.payer_mobile,
         sr.location_address
       FROM bookings b
@@ -644,7 +644,7 @@ exports.assignStaffToBooking = async (req, res) => {
           ),
           db.query(
             `SELECT
-               COALESCE(pp.full_name, sr.patient_name) AS patient_name,
+               COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), ''), sr.patient_name) AS patient_name,
                COALESCE(pp.medical_condition, sr.patient_condition) AS medical_condition,
                sr.location_address
              FROM bookings b
@@ -825,8 +825,8 @@ exports.getStaffAssignmentBookings = async (req, res) => {
         b.ot_rate,
         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
         uc.mobile_number as client_mobile,
-        COALESCE(pp.full_name, sr.patient_name) as patient_name,
-        pp.full_name as patient_full_name,
+        COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), ''), sr.patient_name) as patient_name,
+        NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') as patient_full_name,
         pp.age as patient_age,
         pp.gender as patient_gender,
         pp.medical_condition,

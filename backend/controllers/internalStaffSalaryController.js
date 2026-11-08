@@ -890,7 +890,7 @@ exports.getCoordinatorWork = async (req, res) => {
         [staffId]
       ),
       db.query(
-        `SELECT pp.patient_id, pp.full_name, pp.age, pp.relationship_to_client, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
+        `SELECT pp.patient_id, pp.honorific, pp.full_name, pp.age, pp.relationship_to_client, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
          FROM patient_profiles pp LEFT JOIN client_profiles cp ON cp.client_profile_id = pp.client_id
          WHERE pp.coordinator_staff_id = $1 ORDER BY pp.created_at DESC LIMIT 100`,
         [staffId]

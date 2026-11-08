@@ -10,7 +10,7 @@ exports.getClientPaymentSlips = async (req, res) => {
                    q.daily_rate,
                    q.total_amount,
                    sr.request_id,
-                   sr.patient_name,
+                   COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name,
                    sr.service_type,
                    sr.payer_name,
                    sr.payer_mobile,

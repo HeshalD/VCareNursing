@@ -47,7 +47,7 @@ exports.getUpcomingEvents = async (req, res) => {
                     sa.status, sa.payload, sa.reason, sa.created_at,
                     b.booking_id, b.booking_code,
                     NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
-                    p.full_name AS patient_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name,
                     os.full_name AS current_staff_name,
                     ns.full_name AS incoming_staff_name,
                     b.client_id, b.patient_id,
@@ -72,7 +72,7 @@ exports.getUpcomingEvents = async (req, res) => {
                     st.requested_end_date::text AS requested_end_date, st.reason, st.created_at,
                     b.booking_id, b.booking_code,
                     NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
-                    p.full_name AS patient_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name,
                     b.client_id, b.patient_id
                 FROM service_terminations st
                 JOIN bookings b ON st.booking_id = b.booking_id
@@ -86,7 +86,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 SELECT
                     b.booking_id, b.booking_code, b.daily_rate,
                     NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
-                    p.full_name AS patient_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name,
                     b.client_id, b.patient_id,
                     ROUND((COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0)) / b.daily_rate, 1) AS balance_days_remaining,
                     (COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0)) AS remaining_balance
@@ -113,7 +113,7 @@ exports.getUpcomingEvents = async (req, res) => {
                     bsa.assignment_id, bsa.booking_id,
                     b.booking_code,
                     NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
-                    p.full_name AS patient_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name,
                     sp.full_name AS current_staff_name,
                     b.client_id, b.patient_id, sp.staff_profile_id AS current_staff_id
                 FROM booking_staff_assignments bsa

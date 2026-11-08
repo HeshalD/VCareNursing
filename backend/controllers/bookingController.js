@@ -326,7 +326,7 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
                 try {
                     const endDateStr = endTime.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
                     const staffRes = await db.query(
-                        `SELECT u.mobile_number, sp.full_name, sr.patient_name
+                        `SELECT u.mobile_number, sp.full_name, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name
                          FROM staff_profiles sp
                          JOIN users u ON sp.user_id = u.user_id
                          LEFT JOIN bookings b ON b.booking_id = $2
@@ -879,7 +879,7 @@ exports.resumeWithStaff = async (req, res) => {
             (async () => {
                 try {
                     const infoRes = await db.query(
-                        `SELECT COALESCE(p.full_name, 'the patient') AS patient_name,
+                        `SELECT COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), ''), 'the patient') AS patient_name,
                                 COALESCE(sr.location_address, cp.primary_address, 'the client location') AS location,
                                 COALESCE(p.medical_condition, 'None specified') AS conditions
                          FROM bookings b
@@ -1314,7 +1314,7 @@ exports.getByBookingID = async (req, res) => {
                 c.primary_address as client_address,
                 uc.mobile_number as client_mobile,
                 p.patient_id,
-                p.full_name as patient_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
                 p.age as patient_age,
                 p.relationship_to_client,
                 p.medical_condition,
@@ -1416,7 +1416,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             uc.email as client_email,
             p.patient_id as resolved_patient_id,
             p.patient_code,
-            p.full_name as patient_name,
+            NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
             p.age as patient_age,
             p.relationship_to_client,
             p.medical_condition,
@@ -3162,7 +3162,7 @@ exports.getPendingTerminationRequests = async (req, res) => {
                 b.service_type,
                 NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as location,
-                p.full_name as patient_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
                 b.client_id, b.patient_id,
                 s.staff_profile_id,
                 s.full_name as staff_name,
@@ -3225,7 +3225,7 @@ exports.getTerminationHistory = async (req, res) => {
                 b.service_type,
                 NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as location,
-                p.full_name as patient_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
                 b.client_id, b.patient_id,
                 s.staff_profile_id,
                 s.full_name as staff_name,
@@ -3694,7 +3694,7 @@ exports.forceStopBooking = async (req, res) => {
                     `SELECT
                         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, cu.mobile_number AS client_mobile,
                         sp.full_name AS staff_name, su.mobile_number AS staff_mobile,
-                        sr.patient_name
+                        COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name
                      FROM bookings b
                      JOIN client_profiles cp ON cp.client_profile_id = b.client_id
                      JOIN users cu ON cu.user_id = cp.user_id
@@ -3780,7 +3780,7 @@ const buildBookingsListSql = (salesFilter) => `
                 c.primary_address as client_address,
                 uc.mobile_number as client_mobile,
                 p.patient_id,
-                p.full_name as patient_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name,
                 p.age as patient_age,
                 p.relationship_to_client,
                 p.medical_condition,
@@ -4402,7 +4402,7 @@ exports.swapStaff = async (req, res) => {
                     u.mobile_number as old_staff_mobile,
                     NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                     uc.mobile_number as client_mobile,
-                    p.full_name as patient_name
+                    NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') as patient_name
              FROM bookings b
              LEFT JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
              LEFT JOIN users u ON sp.user_id = u.user_id
@@ -5400,7 +5400,7 @@ exports.sendStaffProfileToClient = async (req, res) => {
             `SELECT b.booking_id,
                     COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), ''), sr.payer_name) AS client_name,
                     COALESCE(uc.mobile_number, sr.payer_mobile) AS client_mobile,
-                    COALESCE(p.full_name, sr.patient_name)     AS patient_name
+                    COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), ''), sr.patient_name)     AS patient_name
              FROM bookings b
              LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
              LEFT JOIN users uc ON cp.user_id = uc.user_id
@@ -5516,13 +5516,13 @@ exports.getClientBookings = async (req, res) => {
             SELECT b.*, 
                    sp.full_name as staff_name,
                    u.mobile_number as staff_mobile,
-                   sr.patient_name,
+                   COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name,
                    sr.service_type,
                    sr.payer_name,
                    sr.payer_mobile,
                    NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    uc.mobile_number as client_mobile,
-                   pp.full_name as patient_full_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') as patient_full_name,
                    pp.age as patient_age,
                    pp.gender as patient_gender
             FROM bookings b
@@ -5557,7 +5557,7 @@ exports.getStaffBookings = async (req, res) => {
             SELECT b.*,
                    NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile,
-                   pp.full_name as patient_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') as patient_name,
                    pp.age as patient_age,
                    pp.gender as patient_gender,
                    pp.medical_condition,
@@ -5614,6 +5614,7 @@ exports.adminDirectBooking = async (req, res) => {
         new_patient_residential_address,
         new_patient_emergency_contact_name,
         new_patient_emergency_contact_number,
+        new_patient_honorific,
         // booking fields
         service_type,
         service_model,
@@ -5681,20 +5682,33 @@ exports.adminDirectBooking = async (req, res) => {
 
         // If no existing patient, create one
         if (!patient_id) {
+            // Optional honorific; Mr./Mrs./Miss/Ms. lock the gender, same as the forms.
+            const { normalizeHonorific, genderForHonorific, HONORIFICS } = require('../utils/honorific');
+            const honorificCheck = normalizeHonorific(new_patient_honorific);
+            if (!honorificCheck.valid) {
+                await dbClient.query('ROLLBACK');
+                return res.status(400).json({ message: `Honorific must be one of: ${HONORIFICS.join(', ')}.` });
+            }
+            const impliedGender = genderForHonorific(honorificCheck.value);
+            if (impliedGender && new_patient_gender && new_patient_gender !== impliedGender) {
+                await dbClient.query('ROLLBACK');
+                return res.status(400).json({ message: `${honorificCheck.value} does not match the selected gender.` });
+            }
             const patientRes = await dbClient.query(
-                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, residential_address, emergency_contact_name, emergency_contact_number, coordinator_staff_id)
-                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10) RETURNING patient_id`,
+                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, residential_address, emergency_contact_name, emergency_contact_number, coordinator_staff_id, honorific)
+                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10, $11) RETURNING patient_id`,
                 [
                     client_profile_id,
                     new_patient_full_name,
                     new_patient_age ? parseInt(new_patient_age) : null,
-                    new_patient_gender || null,
+                    impliedGender || new_patient_gender || null,
                     new_patient_relationship_to_client || null,
                     new_patient_medical_condition || null,
                     new_patient_residential_address || null,
                     new_patient_emergency_contact_name || null,
                     new_patient_emergency_contact_number || null,
                     coordinatorStaffId,
+                    honorificCheck.value,
                 ]
             );
             finalPatientId = patientRes.rows[0].patient_id;

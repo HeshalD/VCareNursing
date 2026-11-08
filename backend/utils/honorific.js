@@ -21,6 +21,13 @@ function normalizeHonorific(input) {
   return canonical ? { value: canonical, valid: true } : { value: null, valid: false };
 }
 
+// Gender a honorific implies (mirrors client/src/constants/honorifics.js), or null if it implies none.
+const genderForHonorific = (honorific) => {
+  if (honorific === 'Mr.') return 'MALE';
+  if (['Mrs.', 'Miss', 'Ms.'].includes(honorific)) return 'FEMALE';
+  return null;
+};
+
 // Express middleware: auto-corrects req.body.honorific (Mr -> Mr., Doc -> Dr.) or rejects an unknown one.
 const normalizeHonorificBody = (req, res, next) => {
   if (req.body && req.body.honorific !== undefined) {
@@ -33,4 +40,4 @@ const normalizeHonorificBody = (req, res, next) => {
   next();
 };
 
-module.exports = { HONORIFICS, normalizeHonorific, normalizeHonorificBody };
+module.exports = { HONORIFICS, normalizeHonorific, normalizeHonorificBody, genderForHonorific };

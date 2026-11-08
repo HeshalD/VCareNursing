@@ -1,6 +1,8 @@
 const { logoCss, logoHtml } = require('./logoBlock');
 const { withHonorific } = require('../utils/clientName');
 
+const REG_FEE_DESCRIPTION = 'Valid for 1 year from date of commencement';
+
 module.exports = (data) => {
     // Generate current date
     const now = new Date();
@@ -23,7 +25,7 @@ module.exports = (data) => {
               <td>1</td>
               <td>
                 Registration
-                <div class="item-desc">Valid for 1 year from date of commencement</div>
+                <div class="item-desc">${REG_FEE_DESCRIPTION}</div>
               </td>
               <td>1.00</td>
               <td>${parseFloat(data.registration_fee || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
@@ -54,13 +56,15 @@ module.exports = (data) => {
             const unitPrice = parseFloat(item.unit_price) || 0;
             const amount = parseFloat(item.amount) || 0;
             const isDiscount = item.item_type === 'DISCOUNT';
-            
+            const isRegFee = !isDiscount && (item.is_registration_fee === true || /registration/i.test(item.description || ''));
+
             return `
                 <tr>
                   <td>${itemNumber++}</td>
                   <td>
                     ${item.description}
                     ${isDiscount ? '<div class="item-desc" style="color: #d32f2f;">Discount</div>' : ''}
+                    ${isRegFee ? `<div class="item-desc">${REG_FEE_DESCRIPTION}</div>` : ''}
                   </td>
                   <td>${quantity.toFixed(2)}${isDiscount ? '' : '<br><span style="font-size:10px;color:#888;">Units</span>'}</td>
                   <td>${unitPrice.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
@@ -219,7 +223,7 @@ module.exports = (data) => {
 
         <!-- Terms & Conditions -->
         <div class="notes-section">
-          <h4>Terms &amp; Conditions</h4>
+          <h4>${data.terms_url ? `<a href="${data.terms_url}" style="color: inherit; text-decoration: underline;">Terms &amp; Conditions</a>` : 'Terms &amp; Conditions'}</h4>
           <p>${data.terms_conditions || 'Please note: The initial estimated amount is non-refundable. Our work includes a Service Guarantee.'}</p>
         </div>
 

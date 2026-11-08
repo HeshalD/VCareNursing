@@ -91,7 +91,7 @@ exports.getSalespersonBookings = async (req, res) => {
       `SELECT bsa.id, bsa.booking_id, b.booking_code, b.status AS booking_status,
               b.service_type, b.start_date, b.amount_paid, b.client_id, b.patient_id,
               NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
-              COALESCE(pp.full_name, sr.patient_name) AS patient_name,
+              COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), ''), sr.patient_name) AS patient_name,
               bsa.credited_amount, bsa.is_current, bsa.is_origin, bsa.action,
               bsa.switch_reason, bsa.assigned_at
        FROM booking_salesperson_assignments bsa

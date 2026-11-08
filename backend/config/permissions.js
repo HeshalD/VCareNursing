@@ -39,6 +39,7 @@ const PERMISSIONS = {
   VIEW_STAFF_LEAVES:           { label: 'View Staff Leaves',                module: 'Staff Leaves',         category: 'page' },
   VIEW_BULK_IMPORT:            { label: 'View Bulk Import',                 module: 'Bulk Import',          category: 'page' },
   VIEW_UPCOMING_EVENTS:        { label: 'View Upcoming Events',             module: 'Upcoming Events',      category: 'page' },
+  VIEW_SUCCESS_STORIES:        { label: 'View Success Stories',             module: 'Success Stories',      category: 'page' },
 
   // ── Bookings ──────────────────────────────────────────────────────────────
   BOOKING_RECORD_PAYMENT:      { label: 'Record Booking Payment',           module: 'Bookings', entity: 'Booking Payment',   verb: 'Record',                    category: 'action' },
@@ -188,6 +189,12 @@ const PERMISSIONS = {
   REVIEW_TOGGLE_VISIBILITY:    { label: 'Toggle Review Visibility',         module: 'Staff Reviews', entity: 'Staff Review', verb: 'Toggle Visibility', category: 'action' },
   REVIEW_SEND_REQUEST:         { label: 'Send Review Request to Client',    module: 'Staff Reviews', entity: 'Staff Review', verb: 'Send Request',      category: 'action' },
   REVIEW_ADMIN_CREATE:         { label: 'Admin-Create Staff Review',        module: 'Staff Reviews', entity: 'Staff Review', verb: 'Admin-Create',      category: 'action' },
+
+  // ── Success Stories ───────────────────────────────────────────────────────
+  STORY_CREATE_EDIT:           { label: 'Create / Edit Success Story',      module: 'Success Stories', entity: 'Success Story', verb: 'Create / Edit', category: 'action' },
+  STORY_PUBLISH:               { label: 'Publish / Unpublish Success Story', module: 'Success Stories', entity: 'Success Story', verb: 'Publish',      category: 'action' },
+  STORY_ARCHIVE:               { label: 'Archive / Restore Success Story',  module: 'Success Stories', entity: 'Success Story', verb: 'Archive',      category: 'action' },
+  STORY_FEATURE:               { label: 'Feature Stories on Landing Page',  module: 'Success Stories', entity: 'Success Story', verb: 'Feature',      category: 'action' },
 
   // ── Settings ──────────────────────────────────────────────────────────────
   SETTINGS_TOGGLE_MAINTENANCE: { label: 'Toggle Public Maintenance Mode',   module: 'Settings', entity: 'Maintenance Mode', verb: 'Toggle', category: 'action' },

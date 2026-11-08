@@ -4,6 +4,8 @@ import { X, Loader2, ChevronDown, AlertCircle } from 'lucide-react';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
+import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
+import { patientDisplayName } from '../../../utils/clientName';
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
 
@@ -170,6 +172,7 @@ const AdminDirectBookingDrawer = ({
   const [selectedPatientId, setSelectedPatientId] = useState(preselectedPatientId || '');
 
   // New patient form
+  const [npHonorific, setNpHonorific] = useState('');
   const [npFullName, setNpFullName] = useState('');
   const [npAge, setNpAge] = useState('');
   const [npGender, setNpGender] = useState('');
@@ -230,7 +233,7 @@ const AdminDirectBookingDrawer = ({
       setPatientMode('existing');
       setPatients([]);
       setSelectedPatientId(preselectedPatientId || '');
-      setNpFullName(''); setNpAge(''); setNpGender(''); setNpRelationship('');
+      setNpHonorific(''); setNpFullName(''); setNpAge(''); setNpGender(''); setNpRelationship('');
       setNpMedicalCondition(''); setNpResidentialAddress('');
       setNpEmergencyContacts([{ name: '', number: '' }]);
       setServiceType(''); setServiceModel(''); setPreferredGender('ANY');
@@ -281,6 +284,7 @@ const AdminDirectBookingDrawer = ({
       const res = await apiClient.getClientProfile(selectedClientId);
       const profile = res?.data || {};
       setNpFullName(profile.full_name || preselectedClientName || '');
+      setNpHonorific(profile.honorific || '');
       setNpGender(profile.gender || '');
       setNpRelationship('Self');
       setNpResidentialAddress(profile.primary_address || '');
@@ -359,6 +363,7 @@ const AdminDirectBookingDrawer = ({
       payload.patient_id = selectedPatientId;
     } else {
       payload.new_patient_full_name = npFullName.trim();
+      if (npHonorific) payload.new_patient_honorific = npHonorific;
       if (npAge) payload.new_patient_age = parseInt(npAge);
       if (npGender) payload.new_patient_gender = npGender;
       if (npRelationship) payload.new_patient_relationship_to_client = npRelationship;
@@ -554,7 +559,7 @@ const AdminDirectBookingDrawer = ({
                     </option>
                     {patients.map((p) => (
                       <option key={p.patient_id} value={p.patient_id}>
-                        {p.full_name}{p.age ? `, age ${p.age}` : ''}{p.gender ? ` (${p.gender})` : ''}
+                        {patientDisplayName(p)}{p.age ? `, age ${p.age}` : ''}{p.gender ? ` (${p.gender})` : ''}
                       </option>
                     ))}
                   </select>
@@ -566,6 +571,22 @@ const AdminDirectBookingDrawer = ({
                       Using the client's own details as the patient. Name, gender, relationship and address are locked — switch off "Client is the Patient (Self)" above to edit them.
                     </p>
                   )}
+                  <Field label="Honorific">
+                    <select
+                      value={npHonorific}
+                      onChange={(e) => {
+                        const h = e.target.value;
+                        setNpHonorific(h);
+                        const implied = genderForHonorific(h);
+                        if (implied) setNpGender(implied);
+                      }}
+                      disabled={isSelfPatient}
+                      className={inputCls(false) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
+                    >
+                      <option value="">None</option>
+                      {HONORIFICS.map((h) => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </Field>
                   <Field label="Full Name" required error={errors.npFullName}>
                     <input
                       type="text"
@@ -593,8 +614,9 @@ const AdminDirectBookingDrawer = ({
                       <select
                         value={npGender}
                         onChange={(e) => setNpGender(e.target.value)}
-                        disabled={isSelfPatient}
-                        className={inputCls(false) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
+                        disabled={isSelfPatient || isGenderImplied(npHonorific)}
+                        title={isGenderImplied(npHonorific) ? `Set by ${npHonorific}` : undefined}
+                        className={inputCls(false) + (isSelfPatient || isGenderImplied(npHonorific) ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
                       >
                         <option value="">Select…</option>
                         {GENDERS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}

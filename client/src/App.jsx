@@ -18,6 +18,10 @@ import MedicineDeliveryPage from './modules/public/MedicineDeliveryPage';
 import HomeLabServicePage from './modules/public/HomeLabServicePage';
 import AmbulanceServicePage from './modules/public/AmbulanceServicePage';
 import PriorityMembershipPage from './modules/public/PriorityMembershipPage';
+import SuccessStoriesPage from './modules/public/SuccessStoriesPage';
+import SuccessStoryDetailPage from './modules/public/SuccessStoryDetailPage';
+import AdminSuccessStoriesPage from './modules/admin/success_stories/AdminSuccessStoriesPage';
+import AdminSuccessStoryEditorPage from './modules/admin/success_stories/AdminSuccessStoryEditorPage';
 import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
 import PatientCarePage from './modules/public/PatientCarePage';
 import PatientCareBookingPage from './modules/public/PatientCareBookingPage';
@@ -169,6 +173,8 @@ function App() {
             <Route path="/services/medicine-delivery" element={<MedicineDeliveryPage />} />
             <Route path="/services/home-lab" element={<HomeLabServicePage />} />
             <Route path="/priority-membership" element={<PriorityMembershipPage />} />
+            <Route path="/success-stories" element={<SuccessStoriesPage />} />
+            <Route path="/success-stories/:slug" element={<SuccessStoryDetailPage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
             <Route path="/services/patient-care" element={<PatientCarePage />} />
             <Route path="/services/patient-care/book" element={<PatientCareBookingPage />} />
@@ -458,6 +464,21 @@ function App() {
             <Route path="/admin/reviews" element={
               <AdminAuthProvider>
                 <AdminReviewsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/success-stories" element={
+              <AdminAuthProvider>
+                <AdminSuccessStoriesPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/success-stories/new" element={
+              <AdminAuthProvider>
+                <AdminSuccessStoryEditorPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/success-stories/:storyId" element={
+              <AdminAuthProvider>
+                <AdminSuccessStoryEditorPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/transactions" element={

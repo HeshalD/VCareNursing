@@ -660,7 +660,7 @@ async function editClientPayment(client, { receipt, changes, newTotal, actor, re
       lineItems.push({ label: a.description, description: 'Not linked to a booking or quotation', amount: amt });
     } else {
       const info = await client.query(
-        `SELECT b.booking_code, b.service_type, pp.full_name AS patient_name
+        `SELECT b.booking_code, b.service_type, NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name
          FROM bookings b LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
          WHERE b.booking_id = $1`,
         [a.booking_id]
@@ -862,7 +862,7 @@ async function getEditContext(receipt_id) {
   if (receipt.source_type === 'CLIENT_PAYMENT') {
     const keep = (ctx.allocations || []).map((a) => a.booking_id).filter(Boolean);
     ctx.bookings = (await db.query(
-      `SELECT b.booking_id, b.booking_code, b.service_type, b.status, pp.full_name AS patient_name
+      `SELECT b.booking_id, b.booking_code, b.service_type, b.status, NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name
        FROM bookings b LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
        WHERE b.client_id = $1 AND (b.status IN ('ACTIVE', 'OVERDUE') OR b.booking_id = ANY($2::uuid[]))
        ORDER BY b.created_at DESC`,

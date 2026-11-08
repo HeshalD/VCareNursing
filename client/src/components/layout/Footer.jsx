@@ -76,7 +76,7 @@ const Footer = () => {
             <ul className="space-y-4 text-sm text-slate-600">
               <li><Link to="/about" className="hover:text-blue-600 transition-colors">About Us</Link></li>
               <li><Link to="/priority-membership" className="hover:text-blue-600 transition-colors">Priority Membership</Link></li>
-              <li><a href="#" className="hover:text-blue-600 transition-colors">Success Stories</a></li>
+              <li><Link to="/success-stories" className="hover:text-blue-600 transition-colors">Success Stories</Link></li>
               <li><a href="#" className="hover:text-blue-600 transition-colors">Contact Support</a></li>
             </ul>
           </div>
@@ -139,7 +139,6 @@ const Footer = () => {
             {legal.terms_of_service && (
               <a href={legal.terms_of_service} target="_blank" rel="noopener noreferrer" className="hover:text-slate-900 transition-colors">Terms of Service</a>
             )}
-            <a href="#" className="hover:text-slate-900 transition-colors">Cookie Policy</a>
           </div>
         </div>
       </div>

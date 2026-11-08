@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Plus, Trash2, X, CreditCard, Wallet, CalendarDays } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { patientDisplayName } from '../../../utils/clientName';
 import DateInput from '../../../components/common/DateInput';
 
 const PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -127,7 +128,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
                 <option value="">Select care profile…</option>
                 {patients.map(p => (
                   <option key={p.patient_id} value={p.patient_id}>
-                    {p.full_name} {p.age ? `(Age ${p.age})` : ''}
+                    {patientDisplayName(p)} {p.age ? `(Age ${p.age})` : ''}
                   </option>
                 ))}
               </select>

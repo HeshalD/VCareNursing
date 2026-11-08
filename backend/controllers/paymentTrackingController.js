@@ -475,7 +475,7 @@ const recordPayment = async (req, res) => {
         let lineItem;
         if (quotation.booking_id) {
           const info = await db.query(
-            `SELECT b.booking_code, b.service_type, pp.full_name AS patient_name
+            `SELECT b.booking_code, b.service_type, NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name
              FROM bookings b
              LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
              WHERE b.booking_id = $1`,
@@ -1443,7 +1443,7 @@ const recordBookingPayment = async (req, res) => {
     ;(async () => {
       try {
         const info = await db.query(
-          `SELECT b.booking_code, b.service_type, pp.full_name AS patient_name
+          `SELECT b.booking_code, b.service_type, NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), '') AS patient_name
            FROM bookings b
            LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
            WHERE b.booking_id = $1`,

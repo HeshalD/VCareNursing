@@ -27,15 +27,19 @@ module.exports = (data) => {
     const lineItems = Array.isArray(data.line_items) ? data.line_items : [];
     const itemsTotal = lineItems.reduce((s, it) => s + parseFloat(it.amount || 0), 0);
 
-    const itemRows = lineItems.map((it) => `
+    const itemRows = lineItems.map((it) => {
+        const isRegFee = /registration/i.test(it.label || '');
+        const desc = isRegFee ? 'Valid for 1 year from date of commencement' : it.description;
+        return `
         <tr>
             <td>
                 <div class="item-label">${it.label || '—'}</div>
-                ${it.description ? `<div class="item-desc">${it.description}</div>` : ''}
+                ${desc ? `<div class="item-desc">${desc}</div>` : ''}
             </td>
             <td class="tr">LKR ${fmt(it.amount)}</td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 
     return `<!DOCTYPE html>
 <html>

@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
+const { withTermsUrl } = require('../services/managedDocuments');
 const { billingName } = require('../utils/clientName');
 const { sendClientQuotation, sendClientProductQuotation, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { uploadBufferToS3 } = require('../config/s3Config');
@@ -97,7 +98,7 @@ exports.getQuoteByRequest = async (req, res) => {
 
     try {
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+            SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type,
                    s.status as request_status, s.active_quote_id,
                    pq.quote_id as product_quote_id
             FROM quotations q
@@ -127,7 +128,7 @@ exports.getQuotesByRequest = async (req, res) => {
 
     try {
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+            SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type,
                    s.status as request_status, s.active_quote_id, s.client_id as request_client_id,
                    cp.honorific as client_honorific,
                    pq.quote_id as product_quote_id,
@@ -179,7 +180,7 @@ exports.getClientQuotes = async (req, res) => {
             SELECT q.*, 
                    sr.payer_name, 
                    sr.payer_mobile, 
-                   sr.patient_name, 
+                   COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name, 
                    sr.service_type,
                    sr.status as request_status,
                    sr.created_at as request_created_at,
@@ -211,7 +212,7 @@ exports.generateAndSendPDF = async (req, res) => {
     try {
         // 1. Fetch Quote & Patient Data (including line items)
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
+            SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type, cp.honorific AS client_honorific,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id,
@@ -228,7 +229,7 @@ exports.generateAndSendPDF = async (req, res) => {
             LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             WHERE q.quote_id = $1
-            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.patient_id, s.service_type, cp.honorific
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -245,7 +246,7 @@ exports.generateAndSendPDF = async (req, res) => {
         }
 
         // 2. Generate PDF Buffer
-        const html = estimateTemplate(data);
+        const html = estimateTemplate(await withTermsUrl(data));
         const file = { content: html };
         const pdfBuffer = await html_to_pdf.generatePdf(file, { format: 'A4' });
 
@@ -357,7 +358,7 @@ exports.generatePdfOnly = async (req, res) => {
     const { product_quote_id } = req.body || {};
     try {
         const result = await db.query(
-            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
+            `SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type, cp.honorific AS client_honorific,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id,
@@ -374,7 +375,7 @@ exports.generatePdfOnly = async (req, res) => {
              LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
              WHERE q.quote_id = $1
-             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific`,
+             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.patient_id, s.service_type, cp.honorific`,
             [quote_id]
         );
         if (result.rows.length === 0) {
@@ -384,7 +385,7 @@ exports.generatePdfOnly = async (req, res) => {
         if (product_quote_id) {
             await mergeProductQuoteIntoData(data, product_quote_id);
         }
-        const html = estimateTemplate(data);
+        const html = estimateTemplate(await withTermsUrl(data));
         const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
         const pdfKey = `estimates/Estimate_${data.estimate_number}_${Date.now()}.pdf`;
         const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
@@ -755,7 +756,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
 
     try {
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model,
+            SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type, s.service_model,
                 s.client_id as request_client_id,
                 cp.honorific as client_honorific,
                 pq.quote_id as product_quote_id,
@@ -778,7 +779,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
             WHERE q.quote_id = $1
-            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model, s.client_id, cp.honorific, pq.quote_id
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.patient_id, s.service_type, s.service_model, s.client_id, cp.honorific, pq.quote_id
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -1386,7 +1387,7 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false, rege
     }
 
     const result = await db.query(`
-        SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
+        SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type, cp.honorific AS client_honorific,
             COALESCE(json_agg(
                 json_build_object(
                     'line_item_id', li.line_item_id,
@@ -1403,7 +1404,7 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false, rege
         LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
         WHERE q.quote_id = $1
-        GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific
+        GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.patient_id, s.service_type, cp.honorific
     `, [serviceQuoteId]);
     if (result.rows.length === 0) return null;
     const data = result.rows[0];
@@ -1437,7 +1438,7 @@ async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false, rege
     data.document_label = 'Invoice';
     data.document_number = invoice_code;
 
-    const html = estimateTemplate(data);
+    const html = estimateTemplate(await withTermsUrl(data));
     const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
     const pdfKey = `invoices/Invoice_${invoice_code}_${Date.now()}.pdf`;
     const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
@@ -1470,7 +1471,7 @@ exports.renderQuotePdfBuffer = async (quote_id) => {
         data = await buildProductQuotePdfData(quote_id);
     } else {
         const result = await db.query(
-            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific AS client_honorific,
+            `SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type, cp.honorific AS client_honorific,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id, 'item_type', li.item_type,
@@ -1483,13 +1484,13 @@ exports.renderQuotePdfBuffer = async (quote_id) => {
              LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
              WHERE q.quote_id = $1
-             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, cp.honorific`,
+             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.patient_id, s.service_type, cp.honorific`,
             [quote_id]
         );
         data = result.rows[0];
     }
     if (!data) return null;
-    const buffer = await html_to_pdf.generatePdf({ content: estimateTemplate(data) }, { format: 'A4' });
+    const buffer = await html_to_pdf.generatePdf({ content: estimateTemplate(await withTermsUrl(data)) }, { format: 'A4' });
     return { buffer, estimate_number: data.estimate_number };
 };
 exports.ensureRegFeeInvoiceRecord = ensureRegFeeInvoiceRecord;
@@ -1645,7 +1646,7 @@ exports.generateProductQuotePdf = async (req, res) => {
         if (!data) {
             return res.status(404).json({ message: 'Product quote not found' });
         }
-        const html = estimateTemplate(data);
+        const html = estimateTemplate(await withTermsUrl(data));
         const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
         const pdfKey = `estimates/Estimate_${data.estimate_number}_${Date.now()}.pdf`;
         const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
@@ -1669,7 +1670,7 @@ exports.sendProductQuotePDF = async (req, res) => {
             return res.status(400).json({ message: 'No mobile number on file for this recipient — cannot send via WhatsApp' });
         }
 
-        const html = estimateTemplate(data);
+        const html = estimateTemplate(await withTermsUrl(data));
         const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
         const pdfKey = `estimates/Estimate_${data.estimate_number}_${Date.now()}.pdf`;
         const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');

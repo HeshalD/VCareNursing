@@ -10,13 +10,15 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
-import { clientDisplayName } from '../../../utils/clientName';
+import { clientDisplayName, patientDisplayName } from '../../../utils/clientName';
+import { HONORIFICS, isGenderImplied, withHonorificGender } from '../../../constants/honorifics';
 
 const fmt = (v) =>
   v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
 const EMPTY_FORM = {
   client_id: '',
+  honorific: '',
   full_name: '',
   age: '',
   gender: '',
@@ -227,14 +229,26 @@ const PatientDrawer = ({ mode, initial, editingClientAddress, clients, onClose, 
 
           <SectionHeader title="Personal Information" />
           <div className="px-5 pt-4 pb-2 space-y-3">
-            <Field label="Full Name" required error={errors.full_name}>
-              <input
-                type="text"
-                value={form.full_name}
-                onChange={(e) => set('full_name', e.target.value)}
-                className={inputCls(!!errors.full_name)}
-              />
-            </Field>
+            <div className="grid grid-cols-[110px_1fr] gap-3">
+              <Field label="Honorific">
+                <select
+                  value={form.honorific || ''}
+                  onChange={(e) => setForm((f) => withHonorificGender(f, e.target.value))}
+                  className={inputCls(false)}
+                >
+                  <option value="">—</option>
+                  {HONORIFICS.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </Field>
+              <Field label="Full Name" required error={errors.full_name}>
+                <input
+                  type="text"
+                  value={form.full_name}
+                  onChange={(e) => set('full_name', e.target.value)}
+                  className={inputCls(!!errors.full_name)}
+                />
+              </Field>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Age" required error={errors.age}>
                 <input
@@ -246,7 +260,13 @@ const PatientDrawer = ({ mode, initial, editingClientAddress, clients, onClose, 
                 />
               </Field>
               <Field label="Gender">
-                <select value={form.gender || ''} onChange={(e) => set('gender', e.target.value)} className={inputCls(false)}>
+                <select
+                  value={form.gender || ''}
+                  onChange={(e) => set('gender', e.target.value)}
+                  disabled={isGenderImplied(form.honorific)}
+                  title={isGenderImplied(form.honorific) ? `Set by ${form.honorific}` : undefined}
+                  className={inputCls(false) + (isGenderImplied(form.honorific) ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
+                >
                   <option value="">— Select —</option>
                   {GENDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
@@ -356,7 +376,7 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
           </div>
         </div>
         <p className="text-sm text-slate-600 mb-4">
-          Are you sure you want to delete <span className="font-semibold text-slate-800">{patient.full_name}</span>?
+          Are you sure you want to delete <span className="font-semibold text-slate-800">{patientDisplayName(patient)}</span>?
           Care Profiles with active bookings cannot be deleted.
         </p>
         <label className="block text-xs font-medium text-slate-600 mb-1.5">
@@ -447,7 +467,7 @@ const ClientRow = ({ clientId, clientName, clientMobile, patients, proxyMode, se
                         </td>
                       )}
                       <td className="px-4 py-2.5">
-                        <p className="font-medium text-slate-900 leading-tight"><PatientLink id={p.patient_id}>{p.full_name}</PatientLink></p>
+                        <p className="font-medium text-slate-900 leading-tight"><PatientLink id={p.patient_id}>{patientDisplayName(p)}</PatientLink></p>
                         {p.patient_code && <p className="text-xs text-slate-400 font-mono">{p.patient_code}</p>}
                       </td>
                       <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
@@ -943,6 +963,7 @@ export default function PatientsPage() {
         <PatientDrawer
           mode="edit"
           initial={{
+            honorific: editTarget.honorific || '',
             full_name: editTarget.full_name || '',
             age: editTarget.age || '',
             gender: editTarget.gender || '',

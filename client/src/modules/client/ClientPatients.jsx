@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   Search, Plus, Trash2, User, Calendar, MapPin,
-  Phone, AlertCircle, ChevronDown, ChevronRight,
+  Phone, AlertCircle, ChevronDown, ChevronRight, Pencil,
   Clock, FileText, Shield, X, Save, Loader2, CheckCircle, MessageCircle
 } from 'lucide-react';
 import apiClient from '../../api/api';
+import { HONORIFICS, isGenderImplied, withHonorificGender } from '../../constants/honorifics';
+import { patientDisplayName } from '../../utils/clientName';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,7 +39,7 @@ const RELATIONSHIP_OPTIONS = [
 ];
 
 const FORM_EMPTY = {
-  full_name: '', age: '', gender: '', relationship_to_client: '',
+  honorific: '', full_name: '', age: '', gender: '', relationship_to_client: '',
   medical_condition: '', residential_address: '',
   emergency_contacts: [{ name: '', number: '' }],
 };
@@ -49,7 +51,7 @@ const serializeEmergencyContacts = (contacts) => ({
 
 // ─── PatientCard ──────────────────────────────────────────────────────────────
 
-const PatientCard = ({ patient, onDelete, expanded, onToggle }) => {
+const PatientCard = ({ patient, onDelete, onEditHonorific, expanded, onToggle }) => {
   const initials = patient.full_name
     ? patient.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?';
@@ -64,10 +66,13 @@ const PatientCard = ({ patient, onDelete, expanded, onToggle }) => {
         <div style={s.cardHeader}>
           <div style={s.avatarSmall}>{initials}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={s.patientName}>{patient.full_name}</p>
+            <p style={s.patientName}>{patientDisplayName(patient)}</p>
             <p style={s.patientSub}>{patient.relationship_to_client}</p>
           </div>
           <div style={s.cardActions}>
+            <button onClick={() => onEditHonorific(patient)} style={s.iconBtn} title="Change honorific (Mr., Mrs., Dr. ...)">
+              <Pencil size={13} />
+            </button>
             <button onClick={() => onDelete(patient)} style={{ ...s.iconBtn, color: '#ef4444' }} title="Delete">
               <Trash2 size={13} />
             </button>
@@ -121,6 +126,7 @@ const PatientCard = ({ patient, onDelete, expanded, onToggle }) => {
             <div style={s.metaGrid}>
               <MetaPair label="Profile ID" value={patient.patient_code || `#${patient.patient_id}`} mono />
               <MetaPair label="Added" value={patient.created_at ? new Date(patient.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'} />
+              <MetaPair label="Honorific" value={patient.honorific} />
               <MetaPair label="Age" value={`${patient.age} years`} />
               <MetaPair label="Gender" value={GENDER_BADGE[patient.gender]?.label} />
               <MetaPair label="Relationship" value={patient.relationship_to_client} />
@@ -164,7 +170,7 @@ const MetaPair = ({ label, value, mono, valueStyle }) => (
 
 // ─── PatientFormModal ─────────────────────────────────────────────────────────
 
-const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clientAddress, clientContact }) => {
+const PatientFormModal = ({ formData, onChange, onHonorificChange, onSubmit, onClose, saving, clientAddress, clientContact }) => {
   const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
   const isClientContact = c => c.name === clientContact?.name && c.number === clientContact?.number;
   const clientIsContact = formData.emergency_contacts.some(isClientContact);
@@ -185,7 +191,9 @@ const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clien
         <select
           value={formData[key]}
           onChange={e => onChange(key, e.target.value)}
-          style={s.input}
+          disabled={opts.disabled}
+          title={opts.disabled ? `Set by ${formData.honorific}` : undefined}
+          style={opts.disabled ? { ...s.input, background: '#f8fafc', color: '#94a3b8', cursor: 'not-allowed' } : s.input}
         >
           <option value="">— Select —</option>
           {opts.options
@@ -224,10 +232,23 @@ const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clien
 
         {/* Modal body */}
         <div style={s.modalBody}>
-          {field('Full Name', 'full_name', { required: true, placeholder: 'e.g. Saman Kumara' })}
+          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '16px 20px' }}>
+            <div style={s.fieldWrap}>
+              <label style={s.fieldLabel}>Honorific</label>
+              <select
+                value={formData.honorific}
+                onChange={e => onHonorificChange(e.target.value)}
+                style={s.input}
+              >
+                <option value="">—</option>
+                {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            {field('Full Name', 'full_name', { required: true, placeholder: 'e.g. Saman Kumara' })}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px 20px' }}>
             {field('Age', 'age', { type: 'number', required: true })}
-            {field('Gender', 'gender', { select: true })}
+            {field('Gender', 'gender', { select: true, disabled: isGenderImplied(formData.honorific) })}
           </div>
           {field('Relationship', 'relationship_to_client', { select: true, required: true, options: RELATIONSHIP_OPTIONS })}
           {field('Medical Condition', 'medical_condition', { textarea: true, required: true })}
@@ -346,6 +367,47 @@ const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clien
   );
 };
 
+// ─── HonorificModal ───────────────────────────────────────────────────────────
+
+const HonorificModal = ({ patient, onSave, onClose, saving }) => {
+  const [honorific, setHonorific] = useState(patient.honorific || '');
+  const implied = isGenderImplied(honorific);
+  return (
+    <div style={s.overlay}>
+      <div style={{ ...s.modal, maxWidth: 400 }}>
+        <div style={s.modalHeader}>
+          <h2 style={s.modalTitle}>Change Honorific</h2>
+          <button onClick={onClose} style={s.modalClose}><X size={16} /></button>
+        </div>
+        <div style={{ padding: '24px 28px' }}>
+          <p style={{ fontSize: 13, color: '#64748b', marginBottom: 14 }}>
+            {patient.full_name}
+          </p>
+          <div style={s.fieldWrap}>
+            <label style={s.fieldLabel}>Honorific</label>
+            <select value={honorific} onChange={e => setHonorific(e.target.value)} style={s.input}>
+              <option value="">None</option>
+              {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          {implied && (
+            <p style={{ fontSize: 12, color: '#64748b', marginTop: 10 }}>
+              {honorific} sets this care profile's gender to {withHonorificGender({}, honorific).gender === 'MALE' ? 'Male' : 'Female'}.
+            </p>
+          )}
+        </div>
+        <div style={s.modalFooter}>
+          <button onClick={onClose} style={s.cancelBtn}>Cancel</button>
+          <button onClick={() => onSave(honorific)} disabled={saving} style={s.saveBtn}>
+            {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={13} />}
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── DeleteModal ──────────────────────────────────────────────────────────────
 
 const DeleteModal = ({ patient, onConfirm, onClose }) => (
@@ -365,7 +427,7 @@ const DeleteModal = ({ patient, onConfirm, onClose }) => (
           <Trash2 size={20} style={{ color: '#ef4444' }} />
         </div>
         <p style={{ fontSize: 14, color: '#1e293b', fontWeight: 500, marginBottom: 8 }}>
-          Are you sure you want to delete <strong>{patient?.full_name}</strong>?
+          Are you sure you want to delete <strong>{patientDisplayName(patient)}</strong>?
         </p>
         <p style={{ fontSize: 13, color: '#64748b' }}>
           This action cannot be undone.
@@ -408,6 +470,7 @@ const ClientPatients = () => {
   const [searchTerm, setSearchTerm]         = useState('');
   const [showAddModal, setShowAddModal]     = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [honorificTarget, setHonorificTarget] = useState(null);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [expandedPatients, setExpandedPatients] = useState(new Set());
   const [saving, setSaving]                 = useState(false);
@@ -465,6 +528,25 @@ const ClientPatients = () => {
       setFormData(FORM_EMPTY);
       await fetchPatients(clientProfile.client_profile_id);
       flash('Care Profile added successfully.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveHonorific = async (honorific) => {
+    try {
+      setSaving(true);
+      const res = await fetch(`/api/patients/${honorificTarget.patient_id}/honorific`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ honorific }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || 'Failed to update honorific'); }
+      setHonorificTarget(null);
+      await fetchPatients(clientProfile.client_profile_id);
+      flash('Honorific updated.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -556,7 +638,7 @@ const ClientPatients = () => {
         {/* Contact-to-edit notice */}
         <div style={s.contactBanner}>
           <MessageCircle size={14} style={{ color: '#475569', flexShrink: 0 }} />
-          <span>To edit an existing care profile's details, please contact VCare Nursing.</span>
+          <span>To edit an existing care profile's details (other than its honorific), please contact VCare Nursing.</span>
         </div>
 
         {/* Stats + search row */}
@@ -606,6 +688,7 @@ const ClientPatients = () => {
                 <PatientCard
                   patient={patient}
                   onDelete={p => { setSelectedPatient(p); setShowDeleteModal(true); }}
+                  onEditHonorific={p => setHonorificTarget(p)}
                   expanded={expandedPatients.has(patient.patient_id)}
                   onToggle={() => toggleExpanded(patient.patient_id)}
                 />
@@ -620,11 +703,20 @@ const ClientPatients = () => {
         <PatientFormModal
           formData={formData}
           onChange={(k, v) => setFormData(p => ({ ...p, [k]: v }))}
+          onHonorificChange={h => setFormData(p => withHonorificGender(p, h))}
           onSubmit={handleAddPatient}
           onClose={() => { setShowAddModal(false); setFormData(FORM_EMPTY); }}
           saving={saving}
           clientAddress={clientProfile?.primary_address}
           clientContact={{ name: clientProfile?.full_name || '', number: clientProfile?.mobile_number || '' }}
+        />
+      )}
+      {honorificTarget && (
+        <HonorificModal
+          patient={honorificTarget}
+          onSave={handleSaveHonorific}
+          onClose={() => setHonorificTarget(null)}
+          saving={saving}
         />
       )}
       {showDeleteModal && (
