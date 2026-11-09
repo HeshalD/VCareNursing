@@ -17,6 +17,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    // Source maps roughly double the memory/time of `vite build` and the production
+    // image doesn't use them. Opt in with BUILD_SOURCEMAP=true when debugging a prod bug.
+    sourcemap: process.env.BUILD_SOURCEMAP === 'true'
   }
 })

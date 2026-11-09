@@ -13,9 +13,11 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Give Vite enough heap so `vite build` doesn't OOM on small build hosts
-# (the default cap on a 1–2 GB instance is too low for this app).
-ENV NODE_OPTIONS=--max-old-space-size=2048
+# Cap Vite's heap BELOW the build host's physical RAM. The production EC2 box has
+# ~1.9 GB total, so a 2048 MB cap was never reached: Node just kept growing into
+# swap and the build took ~5 min. With source maps off (see vite.config.js) the
+# build fits comfortably in 1536 MB; raise this only if the build OOMs.
+ENV NODE_OPTIONS=--max-old-space-size=1536
 
 # Build the application
 RUN npm run build
