@@ -3,6 +3,7 @@ const router = express.Router();
 const clientPaymentController = require('../controllers/clientPaymentController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
+const { attachRegisterSession } = require('../middleware/registerSession');
 
 const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 
@@ -20,6 +21,7 @@ router.post(
   protect,
   requirePermission('CLIENT_RECORD_PAYMENT'),
   upload.single('payment_slip'),
+  attachRegisterSession,
   clientPaymentController.recordClientPayment
 );
 

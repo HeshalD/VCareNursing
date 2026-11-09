@@ -2582,7 +2582,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
   );
 }
 
-function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
+export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
   const [bankAccounts, setBankAccounts] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [paymentDate, setPaymentDate] = useState(todayISO());

@@ -3562,6 +3562,87 @@ async function runMigration() {
   await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS emergency_contact_number TEXT`);
 
   // =========================================================
+  // FRONTDESK CASH REGISTER
+  // One shared till per business day. A session is opened with a cash float and
+  // closed against a counted total; ledger rows taken at the desk are stamped with
+  // the session they belong to (transactions.register_session_id) so the day's
+  // entries, per-method totals and expected cash can all be derived from the
+  // existing transactions ledger rather than a parallel one.
+  // =========================================================
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS cash_register_sessions (
+      session_id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      business_date       DATE NOT NULL UNIQUE,
+      status              VARCHAR(10) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
+      opening_float       NUMERIC(12,2) NOT NULL DEFAULT 0,
+      suggested_float     NUMERIC(12,2),
+      opening_float_note  TEXT,
+      opened_by           UUID REFERENCES users(user_id),
+      opened_by_name      VARCHAR(255),
+      opened_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      expected_cash       NUMERIC(12,2),
+      counted_cash        NUMERIC(12,2),
+      variance            NUMERIC(12,2),
+      variance_note       TEXT,
+      flagged             BOOLEAN NOT NULL DEFAULT FALSE,
+      closed_by           UUID REFERENCES users(user_id),
+      closed_by_name      VARCHAR(255),
+      closed_at           TIMESTAMP WITH TIME ZONE,
+      reviewed_by         UUID REFERENCES users(user_id),
+      reviewed_by_name    VARCHAR(255),
+      reviewed_at         TIMESTAMP WITH TIME ZONE,
+      review_note         TEXT,
+      reopen_count        INTEGER NOT NULL DEFAULT 0,
+      last_reopened_by    UUID REFERENCES users(user_id),
+      last_reopened_by_name VARCHAR(255),
+      last_reopened_at    TIMESTAMP WITH TIME ZONE,
+      last_reopen_reason  TEXT
+    );
+  `);
+  // At most one session can be open at a time - yesterday has to be closed before
+  // today's can be opened.
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_register_one_open
+    ON cash_register_sessions ((status)) WHERE status = 'OPEN'
+  `);
+
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS register_session_id UUID REFERENCES cash_register_sessions(session_id)`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS register_cashier_id UUID REFERENCES users(user_id)`);
+  // PAYMENT | PETTY_CASH | CLIENT_REFUND | BANKING - what kind of desk entry this is.
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS register_entry_kind VARCHAR(20)`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS register_voided_at TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS register_voided_by UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS register_void_reason TEXT`);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_register_session
+    ON transactions(register_session_id) WHERE register_session_id IS NOT NULL
+  `);
+  // A payment taken at the desk is reconciled on its receipt (one receipt = one payment,
+  // however many ledger lines it fans out into). Stamped by receiptService when the
+  // request carries a register scope; an edit's replacement receipt inherits both.
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS register_session_id UUID REFERENCES cash_register_sessions(session_id)`);
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS register_cashier_id UUID REFERENCES users(user_id)`);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_payment_receipts_register_session
+    ON payment_receipts(register_session_id) WHERE register_session_id IS NOT NULL
+  `);
+
+  // Audit trail of everything that happens to a session (open, close, reopen,
+  // review, entry void/edit) so a manager can reconstruct the day.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS cash_register_events (
+      event_id      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      session_id    UUID NOT NULL REFERENCES cash_register_sessions(session_id) ON DELETE CASCADE,
+      event_type    VARCHAR(30) NOT NULL,
+      actor_id      UUID REFERENCES users(user_id),
+      actor_name    VARCHAR(255),
+      details       JSONB NOT NULL DEFAULT '{}',
+      created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_cash_register_events_session ON cash_register_events(session_id, created_at)`);
+
+  // =========================================================
   // Secondary phone numbers: TEXT[] -> JSONB, so each entry can optionally
   // carry a name (e.g. "Son - Kasun") for numbers that aren't the person's
   // own. Existing plain-string entries are wrapped as {number, name: ''}.

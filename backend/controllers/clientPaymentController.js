@@ -2,7 +2,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
-const { creditClientWallet } = require('../services/walletService');
+const { creditClientWallet, settleBookingOutstandingFromWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -260,6 +260,18 @@ const recordClientPayment = async (req, res) => {
           notes: notes || `Payment toward booking ${alloc.booking_id} credited to wallet`,
           verified_by: actorUserId,
           created_at: ledgerTimestamp,
+        });
+
+        // A payment recorded late (or dated in the past) lands after the booking's
+        // days were already invoiced, and the wallet is otherwise only drawn when a
+        // NEW invoice is raised — so without this the money would sit in the wallet
+        // while those earlier invoices stayed overdue. Same step quotation payments
+        // already take (see paymentTrackingController). Uses this booking's own
+        // earmark first, and only ever draws what is actually owed.
+        await settleBookingOutstandingFromWallet(pgClient, {
+          booking_id: alloc.booking_id,
+          client_id,
+          verified_by: actorUserId,
         });
 
         const allocResult = await pgClient.query(

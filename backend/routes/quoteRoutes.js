@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { attachRegisterSession } = require('../middleware/registerSession');
 const quoteController = require('../controllers/quoteController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
 const invoiceController = require('../controllers/invoiceController');
@@ -269,6 +270,7 @@ router.post(
     protect,
     requirePermission('QUOTATION_RECORD_PAYMENT'),
     upload.single('payment_slip'),
+    attachRegisterSession,
     paymentTrackingController.recordPayment
 );
 
@@ -286,6 +288,7 @@ router.post(
     protect,
     requirePermission('QUOTATION_RECORD_PAYMENT'),
     upload.single('payment_slip'),
+    attachRegisterSession,
     paymentTrackingController.recordAllocatedPayment
 );
 

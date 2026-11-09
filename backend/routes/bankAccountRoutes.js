@@ -1,7 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const bankAccountController = require('../controllers/bankAccountController');
-const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission, userHasPermission } = require('../middleware/authMiddleware');
+
+// The frontdesk Cash Register needs the account list to pick a bank for transfers,
+// cheques and cash banked, but not the balances - getAllBankAccounts redacts those for
+// callers without VIEW_BANK_ACCOUNTS.
+const canListBankAccounts = async (req, res, next) => {
+  try {
+    if (await userHasPermission(req.user, 'VIEW_BANK_ACCOUNTS')) return next();
+    if (await userHasPermission(req.user, 'CASH_REGISTER_OPERATE')) return next();
+    return res.status(403).json({ message: 'Permission Denied: You do not have access to this action.' });
+  } catch (err) {
+    console.error('canListBankAccounts error:', err);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
 
 /**
  * Bank Account Routes
@@ -16,7 +30,7 @@ const { protect, restrictTo, requirePermission } = require('../middleware/authMi
 router.get(
   '/',
   protect,
-  requirePermission('VIEW_BANK_ACCOUNTS'),
+  canListBankAccounts,
   bankAccountController.getAllBankAccounts
 );
 

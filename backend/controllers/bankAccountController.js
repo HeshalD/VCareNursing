@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { MANUAL_CATEGORIES, flowOf } = require('../utils/transactionFlow');
+const { userHasPermission } = require('../middleware/authMiddleware');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -39,11 +40,21 @@ const getAllBankAccounts = async (req, res) => {
       ORDER BY ba.created_at DESC
     `);
 
+    // Cash-register staff may list accounts to choose one, but never see balances or
+    // full account numbers - those stay with the Bank Accounts page permission.
+    let rows = result.rows;
+    if (!(await userHasPermission(req.user, 'VIEW_BANK_ACCOUNTS'))) {
+      rows = rows.map(({ account_id, account_nickname, bank_name, branch_name, account_holder_name, is_active, currency, is_petty_cash }) => ({
+        account_id, account_nickname, bank_name, branch_name, account_holder_name, is_active, currency, is_petty_cash,
+        account_number: null,
+      }));
+    }
+
     res.status(200).json({
       status: 'success',
       message: 'Bank accounts retrieved successfully',
-      data: result.rows,
-      count: result.rows.length
+      data: rows,
+      count: rows.length
     });
   } catch (error) {
     console.error('Error fetching bank accounts:', error);

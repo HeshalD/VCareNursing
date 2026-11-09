@@ -2081,6 +2081,37 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
         throw err;
     }
 
+    // A LIVE_IN/VISITING day can be billed EITHER as one day-level invoice (nightly cron,
+    // or a whole-day manual confirm) OR split per staff assignment — never both, or the
+    // client is charged twice for the same day (e.g. the cron pre-bills tomorrow, then a
+    // same-day swap lets the admin invoice each staff member again). The per-slot and
+    // per-reschedule rows are separate billing units and are excluded here.
+    if (!shift_slot_id && !reschedule_id) {
+        const settled = await client.query(
+            `SELECT assignment_id, amount, entry_mode FROM booking_daily_invoices
+             WHERE booking_id = $1 AND service_date = $2
+               AND shift_slot_id IS NULL AND reschedule_id IS NULL
+               AND status = 'INVOICED'
+               AND (($3::uuid IS NOT NULL AND assignment_id IS NULL)
+                 OR ($3::uuid IS NULL AND assignment_id IS NOT NULL))
+             LIMIT 1`,
+            [booking_id, service_date, assignment_id || null]
+        );
+        if (settled.rows.length > 0) {
+            const row = settled.rows[0];
+            const amt = Number(row.amount || 0).toLocaleString();
+            const err = new Error(
+                assignment_id
+                    ? `${service_date} is already invoiced as a whole day (Rs.${amt}${row.entry_mode === 'AUTO' ? ', billed automatically' : ''}). ` +
+                      `It can't also be invoiced per staff member — use "Correct" to change the amount, or revoke the day's invoice first to re-split it.`
+                    : `${service_date} has already been invoiced per staff member. It can't also be invoiced as a whole day — ` +
+                      `correct the individual staff invoices, or revoke them first.`
+            );
+            err.statusCode = 409;
+            throw err;
+        }
+    }
+
     // The nightly cron (and the backfill script) seed one day-level PENDING row with no
     // assignment. Deciding that day for a specific staff assignment must settle that
     // seed, not add a second row next to it — otherwise the seed stays PENDING forever

@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare, MessageCircle, Newspaper
+  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare, MessageCircle, Newspaper, Calculator
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -96,6 +96,7 @@ const NAV_SECTIONS = [
     icon: DollarSign,
     items: [
       { icon: DollarSign, label: 'Financials', path: '/admin/financial', permKey: 'VIEW_FINANCIAL' },
+      { icon: Calculator, label: 'Cash Register', path: '/admin/cash-register', permKey: 'VIEW_CASH_REGISTER' },
       { icon: ArrowLeftRight, label: 'Transactions', path: '/admin/transactions', permKey: 'VIEW_TRANSACTIONS' },
       { icon: Receipt, label: 'Client Payments', path: '/admin/client-payments', permKey: 'VIEW_USER_MANAGEMENT' },
       { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests', permKey: 'VIEW_ADVANCE_REQUESTS' },

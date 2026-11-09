@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { attachRegisterSession } = require('../middleware/registerSession');
 const invoiceController = require('../controllers/invoiceController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
@@ -37,6 +38,7 @@ router.post(
   protect,
   requirePermission('INVOICE_RECORD_PAYMENT'),
   upload.single('payment_slip'),
+  attachRegisterSession,
   invoiceController.recordInvoicePayment
 );
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ClientLink } from '../components/EntityLinks';
 import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X, Trash2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
@@ -79,6 +79,11 @@ const StatusBadge = ({ status }) => {
 
 const ClientManagement = () => {
   const navigate = useNavigate();
+  // The frontdesk Cash Register sends new walk-ins here (?add=1&returnTo=/admin/cash-register)
+  // to use the normal full client form, then brings them back to take the payment.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawReturnTo = searchParams.get('returnTo');
+  const returnTo = rawReturnTo && /^\/admin\/[a-z0-9\-/]*$/i.test(rawReturnTo) ? rawReturnTo : null;
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -167,6 +172,16 @@ const ClientManagement = () => {
     setCreatedClientId(null);
     setShowDrawer(true);
   };
+
+  useEffect(() => {
+    if (searchParams.get('add') === '1') {
+      openAdd();
+      const next = new URLSearchParams(searchParams);
+      next.delete('add');
+      setSearchParams(next, { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const closeDrawer = () => {
     setShowDrawer(false);
@@ -786,7 +801,15 @@ const ClientManagement = () => {
                   {formLoading ? 'Creating…' : 'Create Client'}
                 </button>
               )}
-              {formSuccess && createdClientId && (
+              {formSuccess && createdClientId && returnTo && (
+                <button
+                  onClick={() => { closeDrawer(); navigate(`${returnTo}?client=${createdClientId}`); }}
+                  className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 transition-colors"
+                >
+                  Continue to Payment
+                </button>
+              )}
+              {formSuccess && createdClientId && !returnTo && (
                 <button
                   onClick={() => { closeDrawer(); navigate(`/admin/users/${createdClientId}/detail`); }}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors"

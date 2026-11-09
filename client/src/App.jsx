@@ -120,6 +120,7 @@ import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/Curren
 import PatientsPage from './modules/admin/patients/patients';
 import PatientDetailPage from './modules/admin/patients/patient_details';
 import TransactionsPage from './modules/admin/transactions/TransactionsPage';
+import CashRegisterPage from './modules/admin/cash_register/CashRegisterPage';
 import ClientPaymentsLedgerPage from './modules/admin/payments/ClientPaymentsLedgerPage';
 import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
 import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
@@ -484,6 +485,11 @@ function App() {
             <Route path="/admin/transactions" element={
               <AdminAuthProvider>
                 <TransactionsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/cash-register" element={
+              <AdminAuthProvider>
+                <CashRegisterPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/client-payments" element={

@@ -33,7 +33,9 @@ const newRow = (a = {}) => ({
 
 // Super-admin editor for the payment behind a receipt. Only what the admin changes is sent;
 // the server voids the receipt and issues a replacement.
-const EditPaymentModal = ({ receipt, onClose, onSaved }) => {
+// `loadContext` / `saveEdit` let another screen (the frontdesk Cash Register) route the same
+// editor through its own, permission-checked endpoints; they default to the admin ones.
+const EditPaymentModal = ({ receipt, onClose, onSaved, loadContext, saveEdit }) => {
   const [ctx, setCtx] = useState(null);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -51,7 +53,7 @@ const EditPaymentModal = ({ receipt, onClose, onSaved }) => {
   useEffect(() => {
     let alive = true;
     Promise.all([
-      apiClient.getPaymentEditContext(receipt.receipt_id),
+      (loadContext || ((id) => apiClient.getPaymentEditContext(id)))(receipt.receipt_id),
       apiClient.getBankAccounts().catch(() => ({ data: [] })),
     ])
       .then(([c, banks]) => {
@@ -76,6 +78,7 @@ const EditPaymentModal = ({ receipt, onClose, onSaved }) => {
       .catch((err) => alive && setLoadError(err?.message || 'Failed to load the payment.'))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt.receipt_id]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -167,7 +170,7 @@ const EditPaymentModal = ({ receipt, onClose, onSaved }) => {
 
     setSaving(true);
     try {
-      const res = await apiClient.editPaymentReceipt(receipt.receipt_id, fields, slipFile);
+      const res = await (saveEdit || ((id, f, file) => apiClient.editPaymentReceipt(id, f, file)))(receipt.receipt_id, fields, slipFile);
       onSaved(res);
     } catch (err) {
       setError(err?.message || 'Failed to save the changes.');

@@ -6352,6 +6352,11 @@ const BookingDetailPageV2 = () => {
         // invoicing_mode='MANUAL' the moment this happens, so manualInvoiceDay below
         // already covers the invoice-decision side; this is only for the banner.
         const isConcurrentDay = isLiveIn && dayModal.assignments.filter(a => !a.shift_slot_id).length > 1;
+        // A day already billed as ONE whole-day invoice (the nightly cron pre-bills the
+        // next day, or an earlier whole-day confirm) must not also be invoiced per
+        // staff member — that would charge the client twice. Revoke it to re-split.
+        const dayAlreadyInvoicedWhole = Boolean(invoiceRecord && invoiceRecord.status === 'INVOICED');
+        const splitInvoicePerStaff = isConcurrentDay && !dayAlreadyInvoicedWhole;
         const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
@@ -7107,21 +7112,24 @@ const BookingDetailPageV2 = () => {
                       {!manualInvoiceDay && isLastDayInvoiceDecision && (
                         <p className="text-xs text-gray-400 mt-1">Last day — this booking normally bills automatically, but decide whether to charge the client for today since the staff member's service ends today.</p>
                       )}
-                      {isConcurrentDay && (
+                      {splitInvoicePerStaff && (
                         <p className="text-xs text-gray-400 mt-1">Two staff on duty today — invoice the client for each one's share separately, instead of one lump amount for the day.</p>
+                      )}
+                      {isConcurrentDay && dayAlreadyInvoicedWhole && (
+                        <p className="text-xs text-amber-700 mt-1">Two staff are on duty today, but the client has already been invoiced for the whole day, so it can't also be billed per staff member. Use Correct to change the amount, or revoke the day's invoice first to split it.</p>
                       )}
                     </div>
                     <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                       <table className="w-full text-sm border-collapse">
                         <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                           <tr>
-                            <th className={thCls}>{isShiftBased ? 'Shift' : isConcurrentDay ? 'Staff' : 'Day'}</th>
+                            <th className={thCls}>{isShiftBased ? 'Shift' : splitInvoicePerStaff ? 'Staff' : 'Day'}</th>
                             <th className={thCls}>Amount (Rs.)</th>
                             <th className={thCls}>Action</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {isConcurrentDay ? dayModal.assignments.filter(a => !a.shift_slot_id).map((a, idx) => {
+                          {splitInvoicePerStaff ? dayModal.assignments.filter(a => !a.shift_slot_id).map((a, idx) => {
                             const staffLabel = a.full_name || a.staff_name || 'Staff';
                             const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
                             const assignmentInvoiceRecord = dateInvoiceRecords.find(r => r.assignment_id === a.assignment_id);

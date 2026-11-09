@@ -60,6 +60,14 @@ class ApiClient {
 
     }
 
+    // Set while the frontdesk Cash Register screen is open: tells the payment endpoints
+    // that this payment is being taken at the desk, so it lands in that day's till.
+    if (this.registerSessionId) {
+
+      config.headers['X-Register-Session'] = this.registerSessionId;
+
+    }
+
 
 
     try {
@@ -2071,6 +2079,68 @@ class ApiClient {
     });
     if (slipFile) formData.append('payment_slip', slipFile);
     return this.request(`/payment-receipts/${receiptId}/edit`, { method: 'PATCH', body: formData });
+  }
+
+  // ── Frontdesk cash register ────────────────────────────────────────────────────────
+  // While the register screen is mounted it sets this so every payment recorded from it
+  // (client payment, quotation, invoice, booking) is stamped with the open day.
+  setRegisterSession(sessionId) {
+    this.registerSessionId = sessionId || null;
+  }
+
+  async getCashRegisterCurrent() {
+    return this.request('/cash-register/current');
+  }
+
+  async openCashRegister({ opening_float, note }) {
+    return this.request('/cash-register/open', { method: 'POST', body: JSON.stringify({ opening_float, note }) });
+  }
+
+  async closeCashRegister(sessionId, { counted_cash, variance_note }) {
+    return this.request(`/cash-register/sessions/${sessionId}/close`, { method: 'POST', body: JSON.stringify({ counted_cash, variance_note }) });
+  }
+
+  async reopenCashRegister(sessionId, reason) {
+    return this.request(`/cash-register/sessions/${sessionId}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+
+  async reviewCashRegister(sessionId, note) {
+    return this.request(`/cash-register/sessions/${sessionId}/review`, { method: 'POST', body: JSON.stringify({ note }) });
+  }
+
+  async getCashRegisterSession(sessionId) {
+    return this.request(`/cash-register/sessions/${sessionId}`);
+  }
+
+  async listCashRegisterSessions(params = {}) {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return this.request(qs ? `/cash-register/sessions?${qs}` : '/cash-register/sessions');
+  }
+
+  async recordCashRegisterCashOut(payload) {
+    return this.request('/cash-register/cash-out', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async voidCashRegisterCashOut(transactionId, reason) {
+    return this.request(`/cash-register/cash-outs/${transactionId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+
+  async voidCashRegisterPayment(receiptId, reason) {
+    return this.request(`/cash-register/payments/${receiptId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+
+  async getCashRegisterPaymentEditContext(receiptId) {
+    return this.request(`/cash-register/payments/${receiptId}/edit-context`);
+  }
+
+  async editCashRegisterPayment(receiptId, fields, slipFile = null) {
+    const formData = new FormData();
+    Object.entries(fields).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      formData.append(key, key === 'allocations' ? JSON.stringify(value) : value);
+    });
+    if (slipFile) formData.append('payment_slip', slipFile);
+    return this.request(`/cash-register/payments/${receiptId}/edit`, { method: 'PATCH', body: formData });
   }
 
   async confirmBookingDailyInvoice(bookingId, payload) {

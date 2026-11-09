@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { attachRegisterSession } = require('../middleware/registerSession');
 const bookingController = require('../controllers/bookingController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
 const bookingNotesController = require('../controllers/bookingNotesController');
@@ -125,6 +126,7 @@ router.post(
     protect,
     requirePermission('BOOKING_RECORD_PAYMENT'),
     upload.single('payment_slip'),
+    attachRegisterSession,
     paymentTrackingController.recordBookingPayment
 );
 

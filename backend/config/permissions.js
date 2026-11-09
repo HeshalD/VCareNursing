@@ -40,6 +40,7 @@ const PERMISSIONS = {
   VIEW_BULK_IMPORT:            { label: 'View Bulk Import',                 module: 'Bulk Import',          category: 'page' },
   VIEW_UPCOMING_EVENTS:        { label: 'View Upcoming Events',             module: 'Upcoming Events',      category: 'page' },
   VIEW_SUCCESS_STORIES:        { label: 'View Success Stories',             module: 'Success Stories',      category: 'page' },
+  VIEW_CASH_REGISTER:          { label: 'View Cash Register',               module: 'Cash Register',        category: 'page' },
 
   // ── Bookings ──────────────────────────────────────────────────────────────
   BOOKING_RECORD_PAYMENT:      { label: 'Record Booking Payment',           module: 'Bookings', entity: 'Booking Payment',   verb: 'Record',                    category: 'action' },
@@ -149,6 +150,15 @@ const PERMISSIONS = {
 
   // ── Transactions ──────────────────────────────────────────────────────────
   TRANSACTION_ADD_MANUAL:      { label: 'Add Manual Transaction',           module: 'Transactions', entity: 'Transaction', verb: 'Add Manual', category: 'action' },
+
+  // ── Cash Register (frontdesk till) ────────────────────────────────────────
+  // OPERATE covers the whole desk routine: open/close the day, take payments, pay money
+  // out of the till, and edit/void the caller's OWN entries while the day is open.
+  CASH_REGISTER_OPERATE:       { label: 'Operate Cash Register (open/close day, take payments, cash out)', module: 'Cash Register', entity: 'Cash Register', verb: 'Operate',        category: 'action' },
+  CASH_REGISTER_VIEW_ALL:      { label: 'View All Register Days & Every Cashier Entry',               module: 'Cash Register', entity: 'Cash Register', verb: 'View All',       category: 'action' },
+  CASH_REGISTER_MANAGE_ENTRIES: { label: 'Edit/Void Any Cashier Entry (open day)',                      module: 'Cash Register', entity: 'Cash Register', verb: 'Manage Entries', category: 'action' },
+  CASH_REGISTER_REVIEW:        { label: 'Review Flagged Cash Variances',     module: 'Cash Register', entity: 'Cash Register', verb: 'Review Variance', category: 'action' },
+  CASH_REGISTER_REOPEN:        { label: 'Reopen a Closed Register Day',      module: 'Cash Register', entity: 'Cash Register', verb: 'Reopen Day',      category: 'action' },
 
   // ── Patients / Care Profiles ──────────────────────────────────────────────
   PATIENT_CREATE:              { label: 'Create Care Profile',              module: 'Patients', entity: 'Care Profile', verb: 'Create', category: 'action' },
@@ -375,6 +385,15 @@ const ROLE_TEMPLATES = {
     'PRODUCT_CREATE', 'PRODUCT_EDIT', 'PRODUCT_CATEGORY_MANAGE',
     'RENTAL_UNIT_CREATE', 'RENTAL_UNIT_EDIT', 'RENTAL_AGREEMENT_CREATE', 'RENTAL_UNIT_RETURN',
     'RENTAL_DEPOSIT_REFUND', 'RENTAL_DEPOSIT_FORFEIT',
+  ],
+  FRONTDESK: [
+    'VIEW_CASH_REGISTER', 'CASH_REGISTER_OPERATE',
+    'VIEW_USER_MANAGEMENT', 'VIEW_BOOKINGS', 'VIEW_SERVICE_REQUESTS', 'VIEW_PATIENTS',
+    'VIEW_QUOTATIONS', 'VIEW_INVOICES', 'VIEW_RECEIPTS', 'VIEW_PRODUCTS', 'VIEW_RENTALS',
+    'CLIENT_RECORD_PAYMENT', 'QUOTATION_RECORD_PAYMENT', 'INVOICE_RECORD_PAYMENT', 'BOOKING_RECORD_PAYMENT',
+    'WALKIN_CUSTOMER_CREATE', 'CLIENT_PROXY_CREATE', 'PATIENT_CREATE',
+    'SERVICE_REQUEST_CREATE', 'BOOKING_CREATE_DIRECT',
+    'RECEIPT_SEND', 'CLIENT_ADD_NOTE',
   ],
   SALES: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_QUOTATIONS', 'VIEW_USER_MANAGEMENT',

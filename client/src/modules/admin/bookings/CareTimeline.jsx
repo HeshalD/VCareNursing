@@ -621,11 +621,37 @@ const CareTimeline = ({
     return map;
   }, [attendanceRecords]);
 
+  // One entry per date. A whole-day (LIVE_IN / VISITING) can legitimately carry several
+  // rows — a day-level row, or one row per staff member when a swap day is split — so
+  // keeping only "the last row" would show an arbitrary one (e.g. a SKIPPED staff row
+  // hiding an INVOICED one). Combine them instead: INVOICED wins, amounts add up, and a
+  // day that has BOTH a whole-day invoice and per-staff invoices is flagged `duplicate`
+  // (the client was billed twice — the backend now blocks creating this).
+  // SHIFT_BASED rows keep the previous "last row per date" behaviour.
   const invoiceByDate = useMemo(() => {
-    const map = new Map();
+    const dayRows = new Map();   // dateISO -> non-shift rows
+    const shiftLast = new Map(); // dateISO -> last shift row
     dailyInvoiceRecords.forEach((r) => {
       const key = r.service_date?.slice(0, 10);
-      if (key) map.set(key, r);
+      if (!key) return;
+      if (r.shift_slot_id) { shiftLast.set(key, r); return; }
+      if (!dayRows.has(key)) dayRows.set(key, []);
+      dayRows.get(key).push(r);
+    });
+
+    const map = new Map(shiftLast);
+    const PRIORITY = ['INVOICED', 'PENDING', 'REVOKED', 'SKIPPED'];
+    dayRows.forEach((rows, key) => {
+      const invoiced = rows.filter((r) => r.status === 'INVOICED');
+      const status = PRIORITY.find((s) => rows.some((r) => r.status === s)) || rows[rows.length - 1].status;
+      const rep = (status === 'INVOICED' ? invoiced : rows.filter((r) => r.status === status))
+        .slice().sort((a, b) => (a.assignment_id ? 1 : 0) - (b.assignment_id ? 1 : 0))[0] || rows[rows.length - 1];
+      map.set(key, {
+        ...rep,
+        status,
+        amount: status === 'INVOICED' ? invoiced.reduce((s, r) => s + Number(r.amount || 0), 0) : rep.amount,
+        duplicate: invoiced.some((r) => !r.assignment_id) && invoiced.some((r) => r.assignment_id),
+      });
     });
     return map;
   }, [dailyInvoiceRecords]);
@@ -797,7 +823,7 @@ const CareTimeline = ({
     const invRec = invoiceByDate.get(dateISO);
     let invoice = null;
     if (invRec) {
-      invoice = { status: invRec.status, decidedBy: invRec.decided_by_name || null, amount: Number(invRec.amount || 0) };
+      invoice = { status: invRec.status, decidedBy: invRec.decided_by_name || null, amount: Number(invRec.amount || 0), duplicate: Boolean(invRec.duplicate) };
     } else if (manualInvoiceDay) {
       invoice = { status: 'PENDING', decidedBy: null, amount: 0 };
     }
@@ -1675,6 +1701,9 @@ const CareTimeline = ({
                               {cell.invoiceMeta.decidedBy && (
                                 <div className="text-[10px] text-[#7E786D] ml-4">by {cell.invoiceMeta.decidedBy}</div>
                               )}
+                              {cell.invoiceMeta.duplicate && (
+                                <div className="text-[10px] font-semibold text-[#B4452F] ml-4">⚠ Billed twice — whole-day and per-staff invoices both exist</div>
+                              )}
                             </div>
                           )}
                         </>
@@ -2239,6 +2268,9 @@ const CareTimeline = ({
                       </span>
                     </div>
                     {cell.invoiceMeta.decidedBy && <div className="text-[10px] text-[#9A9488] ml-5">by {cell.invoiceMeta.decidedBy}</div>}
+                    {cell.invoiceMeta.duplicate && (
+                      <div className="text-[10px] font-semibold text-[#B4452F] ml-5">⚠ Billed twice — whole-day and per-staff invoices both exist</div>
+                    )}
                   </div>
                 )}
               </>

@@ -735,13 +735,14 @@ async function editReceiptPayment({ receipt_id, changes = {}, reason, actor }) {
       `INSERT INTO payment_receipts
          (client_id, source_type, source_id, total_amount, payment_method, payment_date,
           reference_number, cheque_number, bank_account_id, received_from, line_items,
-          generated_by, replaces_receipt_id)
-       VALUES ($1,$2,$3,$4,$5,COALESCE($6::timestamptz, $7::timestamptz),$8,$9,$10,$11,$12::jsonb,$13,$14)
+          generated_by, replaces_receipt_id, register_session_id, register_cashier_id)
+       VALUES ($1,$2,$3,$4,$5,COALESCE($6::timestamptz, $7::timestamptz),$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16)
        RETURNING *`,
       [receipt.client_id, receipt.source_type, receipt.source_id, result.total_amount,
         details.payment_method, details.ledger_ts, receipt.payment_date, details.reference_number,
         details.cheque_number, details.bank_account_id, receipt.received_from,
-        JSON.stringify(result.line_items || []), actor.user_id, receipt.receipt_id]
+        JSON.stringify(result.line_items || []), actor.user_id, receipt.receipt_id,
+        receipt.register_session_id || null, receipt.register_cashier_id || null]
     );
     newReceipt = ins.rows[0];
     await client.query(
@@ -786,6 +787,93 @@ async function editReceiptPayment({ receipt_id, changes = {}, reason, actor }) {
     before: result.before,
     after: result.after,
   };
+}
+
+// ─── Void ────────────────────────────────────────────────────────────────────────────
+// Cancels a payment that should never have been taken (frontdesk "void entry"). Only the
+// Record Payment flow (CLIENT_PAYMENT) is supported: every allocation there is either a
+// wallet credit (optionally earmarked to a booking) or a plain income row, so the reversal
+// is exactly the "remove allocation" step of editClientPayment, applied to all of them.
+// Quotation, invoice and booking payments fan out into too many side effects (invoices
+// flipping paid, deposits, registration-fee splits) to reverse blindly - those are edited
+// or reversed by a manager instead.
+//
+// Like an edit it runs in one DB transaction, re-opens wallet draw-downs if the credit was
+// already spent (restoreWalletFloor), voids the receipt (kept, with the reason - no
+// replacement is issued) and writes a payment_edit_log row. The payment record itself is
+// deleted, so nothing about the voided payment can leak into the client's payment history.
+async function voidReceiptPayment({ receipt_id, reason, actor }) {
+  const cleanReason = String(reason || '').trim();
+  if (cleanReason.length < 3) fail(400, 'A reason for voiding is required');
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const recRes = await client.query('SELECT * FROM payment_receipts WHERE receipt_id = $1 FOR UPDATE', [receipt_id]);
+    const receipt = recRes.rows[0];
+    if (!receipt) fail(404, 'Receipt not found');
+    if (receipt.voided_at) fail(409, 'This receipt has already been voided');
+    if (receipt.source_type !== 'CLIENT_PAYMENT') {
+      fail(422, 'Only wallet/booking-advance payments can be voided at the desk. Quotation, invoice and booking payments must be reversed by a manager.');
+    }
+
+    const record = (await client.query('SELECT * FROM client_payment_records WHERE record_id = $1 FOR UPDATE', [receipt.source_id])).rows[0];
+    if (!record) fail(404, 'The payment record behind this receipt no longer exists');
+    const clientId = record.client_id;
+
+    const existing = (await client.query(
+      'SELECT * FROM client_payment_allocations WHERE record_id = $1 ORDER BY created_at FOR UPDATE',
+      [record.record_id]
+    )).rows;
+    if (existing.some((a) => a.allocation_type === 'NEW_BOOKING')) {
+      fail(409, 'This payment created a new booking, so it cannot be voided at the desk. A manager must cancel the booking first.');
+    }
+    await lockWallet(client, clientId);
+
+    const before = {
+      total_amount: money(record.total_amount),
+      payment_method: record.payment_method,
+      reference_number: record.reference_number,
+      allocations: existing.map((a) => ({ type: a.allocation_type, amount: money(a.amount), booking_id: a.booking_id, description: a.description })),
+    };
+
+    for (const a of existing) {
+      if (a.allocation_type !== 'OTHER') {
+        await adjustWallet(client, clientId, -num(a.amount));
+        await adjustEarmark(client, a.booking_id, -num(a.amount));
+      }
+      await client.query('DELETE FROM client_payment_allocations WHERE allocation_id = $1', [a.allocation_id]);
+      if (a.transaction_id) await client.query('DELETE FROM transactions WHERE transaction_id = $1', [a.transaction_id]);
+    }
+
+    const reopened = await restoreWalletFloor(client, clientId);
+    await client.query('DELETE FROM client_payment_records WHERE record_id = $1', [record.record_id]);
+
+    await client.query(
+      `UPDATE payment_receipts
+       SET voided_at = NOW(), voided_by = $2, void_reason = $3
+       WHERE receipt_id = $1`,
+      [receipt.receipt_id, actor.user_id, cleanReason]
+    );
+    await client.query(
+      `INSERT INTO payment_edit_log
+         (client_id, source_type, source_id, old_receipt_id, new_receipt_id, reason,
+          before_state, after_state, reopened, edited_by, edited_by_name)
+       VALUES ($1,$2,$3,$4,NULL,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10)`,
+      [receipt.client_id, receipt.source_type, receipt.source_id, receipt.receipt_id, cleanReason,
+        JSON.stringify(before), JSON.stringify({ voided: true }), JSON.stringify(reopened),
+        actor.user_id, actor.name]
+    );
+
+    await client.query('COMMIT');
+    return { receipt, reopened, before };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // What the edit form needs to open pre-filled: the payment's current details, whether (and
@@ -872,4 +960,4 @@ async function getEditContext(receipt_id) {
   return ctx;
 }
 
-module.exports = { editReceiptPayment, getEditContext, PaymentEditError };
+module.exports = { editReceiptPayment, voidReceiptPayment, getEditContext, PaymentEditError };

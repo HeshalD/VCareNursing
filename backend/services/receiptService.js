@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { generateAndUploadReceipt } = require('../utils/receiptPdf');
 const { billingName } = require('../utils/clientName');
+const { getRegisterScope } = require('../utils/registerContext');
 
 // Build the data object the HTML template expects from a payment_receipts row.
 function buildTemplateData(receipt) {
@@ -69,17 +70,22 @@ async function createPaymentReceipt({
         );
         const received_from = billingName(clientRes.rows[0]) || 'Valued Client';
 
+        // Set when the payment was taken through the frontdesk Cash Register (see
+        // middleware/registerSession.js) - the receipt is what the day's till reconciles on.
+        const registerScope = getRegisterScope();
+
         const insertRes = await db.query(
             `INSERT INTO payment_receipts
                (client_id, source_type, source_id, total_amount, payment_method,
                 payment_date, reference_number, cheque_number, bank_account_id,
-                received_from, line_items, generated_by)
-             VALUES ($1,$2,$3,$4,$5,COALESCE($6, NOW()),$7,$8,$9,$10,$11::jsonb,$12)
+                received_from, line_items, generated_by, register_session_id, register_cashier_id)
+             VALUES ($1,$2,$3,$4,$5,COALESCE($6, NOW()),$7,$8,$9,$10,$11::jsonb,$12,$13,$14)
              RETURNING *`,
             [
                 client_id, source_type, source_id, total_amount, payment_method,
                 payment_date, reference_number, cheque_number, bank_account_id,
                 received_from, JSON.stringify(line_items), generated_by,
+                registerScope?.sessionId || null, registerScope?.cashierId || null,
             ]
         );
         receipt = insertRes.rows[0];
