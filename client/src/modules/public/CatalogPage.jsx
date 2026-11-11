@@ -71,6 +71,10 @@ const CatalogPage = () => {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL'); // 'ALL' | 'ITEM' | 'RENTAL' | 'ONE_TIME_SERVICE'
 
+  // Arriving from the landing page keeps its scroll position (e.g. the services
+  // section far down the page), so start the catalog at the top.
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
   useEffect(() => {
     (async () => {
       try {

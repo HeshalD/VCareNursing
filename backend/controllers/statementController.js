@@ -34,7 +34,24 @@ const normalizeDateRange = (req) => {
     };
 };
 
+// The business runs on Sri Lanka time (UTC+5:30) but the server is UTC. Nightly
+// invoices are stamped 23:59 UTC (= 05:29 next day in Sri Lanka), so dates must
+// be bucketed and displayed in Asia/Colombo or each invoice lands on the wrong day.
+const STATEMENT_TZ = 'Asia/Colombo';
+const fmtStatementDate = (d) => new Date(d).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric', timeZone: STATEMENT_TZ
+});
+// Date-only values (YYYY-MM-DD) are treated as Sri Lanka calendar days.
+const toColomboBound = (value, isEnd) => {
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return isEnd ? `${value}T23:59:59.999+05:30` : `${value}T00:00:00+05:30`;
+    }
+    return value;
+};
+
 const buildStatementPayload = async (client_id, start_date, end_date) => {
+    start_date = toColomboBound(start_date, false);
+    end_date = toColomboBound(end_date, true);
     // Compute opening sums separately so balance = payments - invoices
     const openingSumsRes = await db.query(`
         SELECT
@@ -123,8 +140,8 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
 
     const pdfData = {
         clientName: billingName,
-        periodStart: new Date(start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-        periodEnd: new Date(end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        periodStart: fmtStatementDate(start_date),
+        periodEnd: fmtStatementDate(end_date),
         summary: {
             openingBalance: parseFloat(openingBalance || 0).toFixed(2),
             invoicedAmount: parseFloat(totalInvoiced || 0).toFixed(2),
@@ -132,7 +149,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
             balanceDue: parseFloat(currentBalance || 0).toFixed(2)
         },
         ledger: statementLines.map((line) => ({
-            date: new Date(line.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            date: fmtStatementDate(line.date),
             transactions: line.transactions,
             details: line.transactions === 'REGISTRATION_FEE'
                 ? [line.details, 'Valid for 1 year from date of commencement'].filter(Boolean).join('\n')
@@ -462,8 +479,8 @@ exports.resendStatementFromHistory = async (req, res) => {
         }
 
         const fmtAmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const periodStart = new Date(stmt.period_start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-        const periodEnd = new Date(stmt.period_end).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const periodStart = fmtStatementDate(stmt.period_start);
+        const periodEnd = fmtStatementDate(stmt.period_end);
         const filename = `Statement_${bookingCode}_${stmt.client_name.replace(/\s+/g, '_')}.pdf`;
 
         await sendClientBookingStatement(

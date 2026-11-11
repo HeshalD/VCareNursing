@@ -16,7 +16,7 @@ import { CONTACT_NUMBERS } from '../../constants/contactNumbers';
 import { OFFICE_ADDRESS_LINES, OFFICE_MAP_URL, OFFICE_MAP_EMBED_URL, OFFICE_EMAIL } from '../../constants/company';
 
 // Reusing the background image from Login for consistency, but using it differently
-import heroBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
+import heroBg from '../../assets/images/Caring VCare Team in a Bright Clinic.png';
 import elderyCareImg from '../../assets/images/eldery_care.webp';
 import babyCareImg from '../../assets/images/baby_care.webp';
 import homeNursingImg from '../../assets/images/home_nursing.webp';
@@ -26,6 +26,7 @@ import patientCareImg from '../../assets/images/patient_care.png';
 import ambulanceImg from '../../assets/images/ambulance.PNG';
 import medicineDeliveryImg from '../../assets/images/Medicine Delivey.jpg';
 import homeLabImg from '../../assets/images/Home Visti Lab Service.jpg';
+import medicalEquipmentImg from '../../assets/images/Medical Equipment.jpg';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 import patternBg from '../../assets/images/abstract-seamless-geometric-shape-lines-pattern-design-background_84443-23990.png';
 
@@ -174,6 +175,9 @@ const ServiceGrid = () => {
     { title: 'Ambulance Service', img: ambulanceImg, link: '/services/ambulance' },
     { title: 'Medicine Delivery', img: medicineDeliveryImg, link: '/services/medicine-delivery' },
     { title: 'Home Visit Lab Service', img: homeLabImg, link: '/services/home-lab' },
+    // Mobile only: desktop keeps the original 9 services (3x3 grid). On the 2-column
+    // mobile grid this 10th card also avoids a lone card on the last row.
+    { title: 'Medical Equipment', img: medicalEquipmentImg, link: '/products', mobileOnly: true },
   ];
 
   return (
@@ -185,7 +189,7 @@ const ServiceGrid = () => {
 
         <div className="flex flex-wrap justify-center gap-3 md:gap-6 max-w-5xl mx-auto">
           {services.map((service, index) => (
-            <Link key={index} to={service.link} className="block group w-[calc((100%-0.75rem)/2)] md:w-[calc((100%-3rem)/3)]">
+            <Link key={index} to={service.link} className={`block group w-[calc((100%-0.75rem)/2)] md:w-[calc((100%-3rem)/3)] ${service.mobileOnly ? 'md:hidden' : ''}`}>
               <div className="bg-white rounded-[16px] md:rounded-[24px] p-3 sm:p-4 md:p-6 shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:shadow-md transition-shadow h-full flex flex-col items-center">
                 <div className="w-full flex justify-between items-start gap-1 mb-3 md:mb-8">
                   <span className="text-slate-800 font-medium text-sm sm:text-base md:text-lg leading-snug">{service.title}</span>
