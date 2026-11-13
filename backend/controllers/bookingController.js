@@ -1666,6 +1666,10 @@ exports.getAdminBookingDetail = async (req, res) => {
                 payment_summary: {
                     payment_count: paymentHistoryResult.rows.length,
                     total_paid: walletAvailable,
+                    // What the booking's own ledger has settled (same rule/source as
+                    // invoice_summary.total_invoiced). total_paid above is wallet money
+                    // still available, so it must not be netted against total_invoiced.
+                    ledger_total_paid: verifiedPaid,
                     remaining_amount: Math.max((totalAmount - registrationFeeAmount) - walletAvailable, 0),
                     // Same figure as total_paid — kept as a separate, explicitly-named
                     // field for BookingDetailPageV2's shiftBank/days-covered math to
@@ -4383,10 +4387,20 @@ exports.swapStaff = async (req, res) => {
         // admin-approved leave is logged for start_date..end_date, same as the Leave
         // Requests screen would.
         old_staff_leave,
+        // Schedule the outgoing staff member's departure for a FUTURE date without
+        // naming a replacement yet (new_staff_id omitted). If none is chosen by that
+        // date the booking is paused; one chosen earlier turns this into a normal
+        // swap (see scheduledActionsController.assignReplacement). scheduled_out_time
+        // is optional — it defaults to the end of the swap date.
+        no_replacement,
+        scheduled_out_time,
     } = req.body;
 
-    if (!new_staff_id) {
+    if (!new_staff_id && !no_replacement) {
         return res.status(400).json({ status: 'error', message: 'new_staff_id is required' });
+    }
+    if (!new_staff_id && !(await userHasPermission(req.user, 'BOOKING_PAUSE'))) {
+        return res.status(403).json({ status: 'error', message: 'Scheduling a swap with no replacement can pause the booking, which needs the BOOKING_PAUSE permission.' });
     }
 
     const oldStaffDays = Array.isArray(backdated_pay?.old_staff_days) ? backdated_pay.old_staff_days : [];
@@ -4489,6 +4503,106 @@ exports.swapStaff = async (req, res) => {
             return res.status(400).json({
                 status: 'error',
                 message: `Cannot swap staff on a booking with status ${booking.status}`
+            });
+        }
+
+        // 1.5 Swap scheduled with no replacement yet: queue the outgoing staff member's
+        // departure only. Nothing is reserved and nobody else is touched.
+        if (!new_staff_id) {
+            const reject = async (message) => {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message });
+            };
+            if (booking.service_model !== 'LIVE_IN') {
+                return reject('Scheduling a swap with no replacement is only available for live-in bookings. For shift-based bookings, use the shift reassignment.');
+            }
+            const swapDateStr = toDateStr(new_staff_start_date);
+            const todayStr = await getBusinessDate(client);
+            if (!swapDateStr || !isFutureDate(swapDateStr, todayStr)) {
+                return reject('A swap with no replacement must be scheduled for a future date.');
+            }
+            if (old_staff_out_time || oldStaffDays.length > 0 || newStaffDays.length > 0) {
+                return reject('Past-day pay decisions only apply to a backdated swap, not a scheduled one.');
+            }
+            if (await hasOpenAction(client, booking_id, 'STAFF_SWAP')) {
+                return reject('A staff swap is already scheduled for this booking.');
+            }
+            const outgoing = (await client.query(
+                `SELECT assignment_id, service_start_date
+                 FROM booking_staff_assignments
+                 WHERE booking_id = $1 AND staff_profile_id = $2 AND status = 'ACTIVE'
+                   AND service_end_date IS NULL AND shift_slot_id IS NULL
+                 ORDER BY service_start_date DESC LIMIT 1
+                 FOR UPDATE`,
+                [booking_id, currentStaffId]
+            )).rows[0];
+            if (!outgoing) {
+                return reject(`${currentStaffName || 'The current staff member'} has no open assignment on this booking to end.`);
+            }
+            const outTime = scheduled_out_time || `${swapDateStr}T23:59:00+05:30`;
+            if (toDateStr(outTime) !== swapDateStr) {
+                return reject(`The log-out time must fall on the swap date (${swapDateStr}).`);
+            }
+
+            // Optional leave: starts on the swap date (that's when they're relieved).
+            let noReplacementLeave = null;
+            const leaveActor = old_staff_leave ? await getActorName(req.user.user_id) : null;
+            if (old_staff_leave) {
+                const leaveEnd = toDateStr(old_staff_leave.end_date);
+                if (!leaveEnd) return reject('The leave needs an end date.');
+                if (leaveEnd < swapDateStr) return reject('Leave end date cannot be before the swap date.');
+                noReplacementLeave = await createApprovedLeave(client, {
+                    staff_profile_id: currentStaffId, start_date: swapDateStr, end_date: leaveEnd,
+                    out_time: outTime, reason: swap_reason || null,
+                    actorUserId: req.user.user_id, actorName: leaveActor,
+                });
+                noReplacementLeave.conflicts = await findLeaveConflicts(client, {
+                    staff_profile_id: currentStaffId, start_date: swapDateStr, end_date: leaveEnd, exclude_booking_id: booking_id,
+                });
+            }
+
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: 'STAFF_SWAP',
+                effective_date: swapDateStr,
+                payload: {
+                    old_staff_id: currentStaffId,
+                    old_assignment_id: outgoing.assignment_id,
+                    new_staff_id: null,
+                    new_assignment_id: null,
+                    swap_reason: swap_reason || null,
+                    out_time: new Date(outTime).toISOString(),
+                    swapped_by: req.user.user_id,
+                    leave: noReplacementLeave
+                        ? { leave_id: noReplacementLeave.leave.leave_id, start_date: swapDateStr, end_date: toDateStr(old_staff_leave.end_date) }
+                        : null,
+                },
+                reason: swap_reason || null,
+                created_by: req.user.user_id,
+            });
+
+            await client.query('COMMIT');
+
+            if (noReplacementLeave) {
+                notifyLeaveApproved(noReplacementLeave);
+                logActivity({
+                    actorUserId: req.user.user_id, actorName: leaveActor, actorRole: extractActorRole(req.user.role),
+                    actionType: 'LEAVE_LOGGED_BY_ADMIN', entityType: 'STAFF_LEAVE', entityId: String(noReplacementLeave.leave.leave_id),
+                    details: { staff_profile_id: currentStaffId, start_date: swapDateStr, end_date: toDateStr(old_staff_leave.end_date), days: noReplacementLeave.days, reason: swap_reason || null, booking_id, via: 'STAFF_SWAP' },
+                }).catch((e) => console.error('Activity log failed (swap leave):', e.message));
+            }
+            logActivity({
+                actorUserId: req.user.user_id, actorName: await getActorName(req.user.user_id), actorRole: extractActorRole(req.user.role),
+                actionType: 'STAFF_SWAP_SCHEDULED_NO_REPLACEMENT', entityType: 'BOOKING', entityId: String(booking_id),
+                details: { booking_id, old_staff_id: currentStaffId, effective_date: swapDateStr, swap_reason: swap_reason || null },
+            }).catch((e) => console.error('Activity log failed (no-replacement swap):', e.message));
+
+            return res.status(200).json({
+                status: 'success',
+                scheduled: true,
+                no_replacement: true,
+                message: `${currentStaffName || 'The current staff member'} is scheduled to leave this booking on ${swapDateStr} with no replacement chosen yet. Pick one before then to make it a normal swap; otherwise the booking pauses that day.`,
+                data: { booking_id, effective_date: swapDateStr, leave: noReplacementLeave?.leave || null, leave_conflicts: noReplacementLeave?.conflicts || [] },
             });
         }
 
@@ -5175,6 +5289,7 @@ exports.closeStaffAssignment = async (req, res) => {
             const dueSwapRes = await client.query(
                 `SELECT * FROM scheduled_actions
                  WHERE booking_id = $1 AND action_type = 'STAFF_SWAP'
+                   AND payload->>'new_staff_id' IS NOT NULL
                    AND status = 'SCHEDULED' AND effective_date <= $2
                  ORDER BY effective_date ASC
                  LIMIT 1
@@ -6022,4 +6137,7 @@ exports._internal = {
     applyInvoiceDecision,
     applyWaiveDecision,
     getActorName,
+    // Used by the scheduled "swap with no replacement" executor (services/scheduledActions.js).
+    enterPauseInTxn,
+    reverseDaysAfterAssignmentEnd,
 };

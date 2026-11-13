@@ -365,10 +365,14 @@ exports.assignStaffToSlot = async (req, res) => {
  */
 exports.reassignSlotStaff = async (req, res) => {
     const { booking_id, shift_slot_id } = req.params;
-    const { new_staff_id, effective_date, reason, old_staff_out_time, new_staff_in_time, new_staff_daily_rate } = req.body;
+    const { new_staff_id, effective_date, reason, old_staff_out_time, new_staff_in_time, new_staff_daily_rate, no_replacement } = req.body;
     const actorUserId = req.user?.user_id || null;
 
-    if (!new_staff_id || !effective_date) {
+    // no_replacement: schedule the current staff member's departure from this shift
+    // for a FUTURE date without naming who covers it yet. The slot is simply left
+    // empty on that date (the booking is not paused) unless a replacement is picked
+    // first — see scheduledActionsController.assignReplacement.
+    if (!effective_date || (!new_staff_id && !no_replacement)) {
         return res.status(400).json({ status: 'error', message: 'new_staff_id and effective_date are required' });
     }
 
@@ -388,6 +392,42 @@ exports.reassignSlotStaff = async (req, res) => {
             [shift_slot_id]
         );
         const current = currentRes.rows[0] || null;
+
+        if (!new_staff_id) {
+            const effStr = toDateStr(effective_date);
+            const todayStr = await getBusinessDate(client);
+            const reject = async (message) => {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message });
+            };
+            if (!effStr || !isFutureDate(effStr, todayStr)) return reject('A reassignment with no replacement must be scheduled for a future date.');
+            if (!current) return reject('This shift has no staff member to take off it.');
+            if (await hasOpenAction(client, booking_id, 'SHIFT_REASSIGNMENT')) return reject('A shift reassignment is already scheduled for this booking.');
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: 'SHIFT_REASSIGNMENT',
+                effective_date: effStr,
+                payload: {
+                    shift_slot_id,
+                    old_staff_id: current.staff_profile_id,
+                    new_staff_id: null,
+                    new_assignment_id: null,
+                    reason: reason || null,
+                    old_staff_out_time: old_staff_out_time || null,
+                    new_staff_in_time: null,
+                },
+                reason: reason || null,
+                created_by: actorUserId,
+            });
+            await client.query('COMMIT');
+            return res.status(200).json({
+                status: 'success',
+                scheduled: true,
+                no_replacement: true,
+                message: `This shift's current staff member is scheduled to leave it on ${effStr} with no replacement chosen yet. Pick one before then; otherwise the shift is left empty that day.`,
+                data: { booking_id, shift_slot_id, effective_date: effStr },
+            });
+        }
 
         const newStaffRes = await client.query(
             `SELECT staff_profile_id, full_name, current_status, can_dual_book FROM staff_profiles WHERE staff_profile_id = $1`,

@@ -24,6 +24,14 @@ router.post(
     scheduledActionsController.cancelScheduledAction
 );
 
+// Permission is checked in the handler (BOOKING_SWAP_STAFF for a live-in swap,
+// ASSIGNMENT_UPDATE for a shift reassignment).
+router.post(
+    '/:action_id/assign-replacement',
+    protect,
+    scheduledActionsController.assignReplacement
+);
+
 router.post(
     '/:action_id/execute-now',
     protect,

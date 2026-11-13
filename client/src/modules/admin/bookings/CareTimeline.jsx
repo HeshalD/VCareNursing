@@ -732,9 +732,11 @@ const CareTimeline = ({
     scheduledActions.forEach((sa) => {
       const cfg = EVENT_CFG[sa.action_type];
       if (!cfg || !sa.effective_date) return;
+      // A swap scheduled with nobody to take over yet (the outgoing staff just leaves).
+      const noReplacement = ['STAFF_SWAP', 'SHIFT_REASSIGNMENT'].includes(sa.action_type) && !sa.payload?.new_staff_id;
       add(sa.effective_date, {
         type:   sa.action_type,
-        label:  cfg.label + (sa.reason ? ` — ${sa.reason}` : ''),
+        label:  (noReplacement ? 'Staff leaves — no replacement yet' : cfg.label) + (sa.reason ? ` — ${sa.reason}` : ''),
         color:  cfg.color,
         Icon:   cfg.Icon,
       });

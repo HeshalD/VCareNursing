@@ -11,13 +11,23 @@
 
 const { dispatchScheduledAction, SYSTEM_ACTOR } = require('../services/scheduledActions');
 
-const PRE_BILLING_TYPES = ['ASSIGNMENT_START', 'STAFF_SWAP', 'SHIFT_PATTERN_CHANGE', 'SHIFT_REASSIGNMENT'];
+// STAFF_RELIEVE (outgoing staff goes on leave) must run here too: it was missing from
+// both lists, so a swap with a leave attached left the outgoing assignment open forever.
+const PRE_BILLING_TYPES = ['ASSIGNMENT_START', 'STAFF_SWAP', 'STAFF_RELIEVE', 'SHIFT_PATTERN_CHANGE', 'SHIFT_REASSIGNMENT'];
 const POST_BILLING_TYPES = ['TERMINATION', 'COMPLETION'];
 
-const runDueActions = async (client, businessDate, actionTypes) => {
+// A STAFF_SWAP scheduled with no replacement (payload.new_staff_id is null) logs the
+// outgoing staff out and pauses the booking. It runs POST-billing, like a termination,
+// so the swap date is billed/paid as the last day served; a normal swap runs pre-billing.
+const UNFILLED_SWAP_SQL = `(action_type = 'STAFF_SWAP' AND payload->>'new_staff_id' IS NULL)`;
+
+const runDueActions = async (client, businessDate, actionTypes, { includeUnfilledSwaps = false } = {}) => {
+    const typeFilter = includeUnfilledSwaps
+        ? `(action_type = ANY($2::text[]) OR ${UNFILLED_SWAP_SQL})`
+        : `action_type = ANY($2::text[]) AND NOT ${UNFILLED_SWAP_SQL}`;
     const dueRes = await client.query(
         `SELECT * FROM scheduled_actions
-         WHERE status = 'SCHEDULED' AND effective_date <= $1 AND action_type = ANY($2::text[])
+         WHERE status = 'SCHEDULED' AND effective_date <= $1 AND ${typeFilter}
          ORDER BY effective_date ASC
          FOR UPDATE SKIP LOCKED`,
         [businessDate, actionTypes]
@@ -61,6 +71,6 @@ const runDueActions = async (client, businessDate, actionTypes) => {
 };
 
 const runPreBillingScheduledActions = (client, businessDate) => runDueActions(client, businessDate, PRE_BILLING_TYPES);
-const runPostBillingScheduledActions = (client, businessDate) => runDueActions(client, businessDate, POST_BILLING_TYPES);
+const runPostBillingScheduledActions = (client, businessDate) => runDueActions(client, businessDate, POST_BILLING_TYPES, { includeUnfilledSwaps: true });
 
 module.exports = { runPreBillingScheduledActions, runPostBillingScheduledActions, runDueActions };

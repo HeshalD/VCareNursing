@@ -39,6 +39,9 @@ const ACTION_TYPE_CONFIG = {
   TERMINATION: { label: 'Scheduled Termination', Icon: AlertTriangle, color: 'text-red-600 bg-red-50' },
   COMPLETION: { label: 'Scheduled Completion', Icon: CheckCircle, color: 'text-emerald-600 bg-emerald-50' },
   STAFF_SWAP: { label: 'Scheduled Staff Swap', Icon: ArrowLeftRight, color: 'text-blue-600 bg-blue-50' },
+  SHIFT_REASSIGNMENT: { label: 'Scheduled Shift Reassignment', Icon: ArrowLeftRight, color: 'text-blue-600 bg-blue-50' },
+  // A swap (live-in) or shift reassignment that was scheduled before anyone was chosen to take over.
+  REPLACEMENT_NEEDED: { label: 'Replacement Needed', Icon: UserPlus, color: 'text-amber-600 bg-amber-50' },
   ASSIGNMENT_START: { label: 'Scheduled Assignment Start', Icon: UserPlus, color: 'text-blue-600 bg-blue-50' },
   PENDING_TERMINATION: { label: 'Termination Approval', Icon: Clock, color: 'text-amber-600 bg-amber-50' },
   NEGATIVE_BALANCE: { label: 'Negative Balance', Icon: AlertTriangle, color: 'text-red-600 bg-red-50' },
@@ -61,8 +64,29 @@ const NEEDS_ACTION_SOURCES = ['PENDING_APPROVAL', 'ATTENDANCE', 'PENDING_LEAVE']
 
 // EXPIRING_LEAVE is informational while the leave is still running — it only
 // becomes something to act on once the staff member is overdue to report back.
+// A swap scheduled with no replacement chosen is also something a person has to resolve:
+// if nobody is picked by the swap date the booking pauses (live-in) or the shift is left empty.
+const isReplacementNeeded = (e) => e.source === 'SCHEDULED_ACTION' && e.no_replacement;
+
 const isNeedsAction = (e) =>
-  NEEDS_ACTION_SOURCES.includes(e.source) || (e.source === 'EXPIRING_LEAVE' && e.due_bucket === 'OVERDUE');
+  NEEDS_ACTION_SOURCES.includes(e.source)
+  || (e.source === 'EXPIRING_LEAVE' && e.due_bucket === 'OVERDUE')
+  || isReplacementNeeded(e);
+
+// Whole days from today to a 'YYYY-MM-DD' date (0 = today, negative = already passed).
+const daysUntil = (dateStr, todayStr) => {
+  if (!dateStr || !todayStr) return null;
+  const toUTC = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((toUTC(dateStr) - toUTC(todayStr)) / 86400000);
+};
+
+const countdownLabel = (days) => {
+  if (days === null) return '';
+  if (days < 0) return `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago`;
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days} days`;
+};
 
 const BucketBadge = ({ bucket }) => {
   const cfg = BUCKET_CONFIG[bucket] || BUCKET_CONFIG.LATER;
@@ -122,6 +146,7 @@ const BookingLink = ({ event, navigate }) =>
 const UpcomingEvents = () => {
   const navigate = useNavigate();
   const [events, setEvents] = useState([]);
+  const [todayStr, setTodayStr] = useState(null); // server's business date (Asia/Colombo)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -138,6 +163,7 @@ const UpcomingEvents = () => {
       setError(null);
       const res = await apiClient.getUpcomingEvents();
       setEvents(res.data || []);
+      setTodayStr(res.today || null);
     } catch (err) {
       console.error('Upcoming events fetch error:', err);
       setError(`Failed to fetch upcoming events: ${err.message || 'Unknown error'}`);
@@ -161,6 +187,11 @@ const UpcomingEvents = () => {
   const filtered = events.filter(matchesSearch);
   const needsAction = filtered.filter(isNeedsAction);
   const informational = filtered.filter((e) => !isNeedsAction(e));
+  // Swaps waiting for someone to be chosen — shown in a banner too, unfiltered by search,
+  // so they can't be missed. Soonest first.
+  const awaitingReplacement = events
+    .filter(isReplacementNeeded)
+    .sort((a, b) => String(a.effective_date).localeCompare(String(b.effective_date)));
 
   const handleCancel = async (event) => {
     try {
@@ -226,6 +257,26 @@ const UpcomingEvents = () => {
         </div>
       </div>
 
+      {awaitingReplacement.length > 0 && (() => {
+        const first = awaitingReplacement[0];
+        const days = daysUntil(first.effective_date, todayStr);
+        const urgent = days !== null && days <= 2;
+        return (
+          <div className={`mb-4 flex items-start gap-3 rounded-xl border px-4 py-3 ${urgent ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+            <UserPlus className={`w-5 h-5 mt-0.5 flex-shrink-0 ${urgent ? 'text-red-500' : 'text-amber-600'}`} />
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold ${urgent ? 'text-red-800' : 'text-amber-900'}`}>
+                {awaitingReplacement.length} scheduled swap{awaitingReplacement.length === 1 ? ' is' : 's are'} waiting for a replacement
+              </p>
+              <p className={`text-xs mt-0.5 ${urgent ? 'text-red-700' : 'text-amber-800'}`}>
+                The next one is {first.booking_code || 'a booking'} on {fmt(first.effective_date)} ({countdownLabel(days)}).
+                If nobody is chosen by the swap date, a live-in booking is paused and a shift is left empty. Choose replacements below.
+              </p>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="space-y-6">
         {/* ── Needs Action ─────────────────────────────────────────────── */}
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -243,10 +294,32 @@ const UpcomingEvents = () => {
               {needsAction.map((event) => (
                 <div key={`${event.source}-${event.id}`} className="flex items-center gap-4 px-4 py-3.5 hover:bg-slate-50/60 transition-colors">
                   <div className="w-56 shrink-0">
-                    <ActionTypeTag actionType={event.action_type} />
+                    <ActionTypeTag actionType={isReplacementNeeded(event) ? 'REPLACEMENT_NEEDED' : event.action_type} />
                   </div>
 
                   <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+                    {isReplacementNeeded(event) && (() => {
+                      const days = daysUntil(event.effective_date, todayStr);
+                      const isShift = event.action_type === 'SHIFT_REASSIGNMENT';
+                      return (
+                        <>
+                          <Detail label="Booking" value={<BookingLink event={event} navigate={navigate} />} />
+                          <Detail label="Client / Care Profile" value={<><ClientLink id={event.client_id}>{event.client_name || '—'}</ClientLink> · <PatientLink id={event.patient_id}>{event.patient_name || '—'}</PatientLink></>} />
+                          <Detail label="Leaving" value={(event.leaving_staff_name || event.current_staff_name) ? <StaffLink id={event.leaving_staff_id || event.current_staff_id}>{event.leaving_staff_name || event.current_staff_name}</StaffLink> : (isShift ? 'Shift staff member' : '—')} />
+                          <Detail
+                            label="Leaves On"
+                            value={`${fmt(event.effective_date)}${days !== null ? ` · ${countdownLabel(days)}` : ''}`}
+                            tone={days !== null && days <= 2 ? 'text-red-600 font-medium' : 'text-amber-700 font-medium'}
+                          />
+                          <Detail
+                            label="If nobody is chosen"
+                            value={isShift ? 'The shift is left empty from that day' : 'The booking is paused from that day'}
+                            tone="text-slate-600"
+                          />
+                          <Detail label="Reason" value={event.reason} />
+                        </>
+                      );
+                    })()}
                     {event.source === 'PENDING_APPROVAL' && (
                       <>
                         <Detail label="Booking" value={<BookingLink event={event} navigate={navigate} />} />
@@ -291,6 +364,26 @@ const UpcomingEvents = () => {
                   </div>
 
                   <div className="w-40 shrink-0 flex justify-end">
+                    {isReplacementNeeded(event) && (
+                      <div className="flex flex-col items-end gap-1.5">
+                        <button
+                          onClick={() => navigate(`/admin/bookings/${event.booking_id}/v2?replace=${event.id}`)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition-colors"
+                        >
+                          <UserPlus className="w-3.5 h-3.5" />
+                          Choose Replacement
+                        </button>
+                        <button
+                          disabled={busyId === event.id}
+                          onClick={() => setConfirmAction(event)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                          title="Cancel this scheduled departure"
+                        >
+                          <Ban className="w-3 h-3" />
+                          Cancel swap
+                        </button>
+                      </div>
+                    )}
                     {event.source === 'PENDING_APPROVAL' && (
                       <button
                         onClick={() => navigate('/admin/termination-requests')}
@@ -378,6 +471,9 @@ const UpcomingEvents = () => {
                           </span>
                         ) : (
                           <StaffLink id={event.current_staff_id}>{event.current_staff_name || '—'}</StaffLink>
+                        )}
+                        {event.no_replacement && (
+                          <span className="ml-2 inline-block text-[10px] font-semibold uppercase tracking-wide text-amber-800 bg-amber-100 border border-amber-200 rounded-full px-2 py-0.5">No replacement yet</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">

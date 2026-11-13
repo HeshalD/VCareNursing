@@ -328,7 +328,117 @@ const executeCompletion = async (client, params) => {
 // (bookingController.closeStaffAssignment). See that file's header comment for
 // the full rationale.
 
+// A swap scheduled with NO replacement yet (payload.new_staff_id is null). If an
+// admin picks a replacement before the date, assignReplacement fills the payload in
+// and this becomes an ordinary swap. If nobody has been picked by the date, the
+// outgoing staff member is logged out (out_time in the payload) and, when that
+// leaves the booking uncovered, the booking is paused from that day — the same
+// outcome as closeStaffAssignment on the last staff member. A replacement chosen
+// later goes through the normal Resume-with-staff flow.
+//
+// Runs POST-billing (see cron/scheduledActions.js) so the swap date is billed and
+// paid as the last day served, like a termination.
+const executeUnfilledStaffSwap = async (client, payload) => {
+    const {
+        booking_id, old_staff_id, old_assignment_id, out_time, effective_date,
+        swap_reason = null, leave = null, actor = SYSTEM_ACTOR,
+    } = payload;
+    // Lazy: bookingController requires this module, so a top-level require would be circular.
+    const { enterPauseInTxn, reverseDaysAfterAssignmentEnd } = require('../controllers/bookingController')._internal;
+
+    const bRes = await client.query(
+        `SELECT status, client_id, assigned_staff_id FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+        [booking_id]
+    );
+    const booking = bRes.rows[0];
+    if (!booking || !['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+        return { result: { booking_id, skipped: `booking is ${booking?.status || 'missing'}` }, notify: null };
+    }
+
+    const aRes = await client.query(
+        `SELECT assignment_id, staff_profile_id, status, service_start_date, service_end_date
+         FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2 FOR UPDATE`,
+        [old_assignment_id, booking_id]
+    );
+    const assignment = aRes.rows[0];
+    if (!assignment || assignment.status !== 'ACTIVE' || assignment.service_end_date) {
+        // Already logged out by hand in the meantime (which paused the booking if needed).
+        return { result: { booking_id, skipped: 'already closed' }, notify: null };
+    }
+
+    const closeDateStr = toDateStr(out_time) || toDateStr(effective_date);
+    const otherActive = await client.query(
+        `SELECT 1 FROM booking_staff_assignments
+         WHERE booking_id = $1 AND status = 'ACTIVE' AND assignment_id <> $2 LIMIT 1`,
+        [booking_id, old_assignment_id]
+    );
+    const leavesNoStaff = otherActive.rows.length === 0;
+
+    await endAssignmentAt(client, { booking_id, assignment, out_time: out_time || `${closeDateStr}T23:59:00+05:30` });
+
+    if (leave?.start_date && leave?.end_date) {
+        await client.query(
+            `UPDATE staff_profiles SET current_status = 'ON_LEAVE'
+             WHERE staff_profile_id = $1 AND current_status = 'AVAILABLE'
+               AND $2::date <= CURRENT_DATE AND $3::date >= CURRENT_DATE`,
+            [assignment.staff_profile_id, leave.start_date, leave.end_date]
+        );
+    }
+
+    const afterEnd = await reverseDaysAfterAssignmentEnd(client, {
+        booking_id, client_id: booking.client_id, assignment, end_date: closeDateStr,
+        reverseInvoices: leavesNoStaff, userId: actor.user_id || null, userName: actor.name,
+    });
+
+    if (leavesNoStaff) {
+        await enterPauseInTxn(client, {
+            booking_id,
+            paused_date: closeDateStr,
+            reason: `Scheduled staff swap on ${closeDateStr} had no replacement — booking paused`,
+            userId: actor.user_id || null,
+            userName: actor.name,
+        });
+        // A replacement already booked for later means "waiting to restart", not paused.
+        await client.query(
+            `UPDATE bookings SET status = 'SCHEDULED'
+             WHERE booking_id = $1 AND EXISTS (
+                 SELECT 1 FROM booking_staff_assignments
+                 WHERE booking_id = $1 AND status = 'SCHEDULED' AND shift_slot_id IS NULL)`,
+            [booking_id]
+        );
+    } else if (booking.assigned_staff_id === assignment.staff_profile_id) {
+        await client.query(
+            `UPDATE bookings SET assigned_staff_id = (
+                 SELECT staff_profile_id FROM booking_staff_assignments
+                 WHERE booking_id = $1 AND status = 'ACTIVE' AND shift_slot_id IS NULL
+                 ORDER BY service_start_date DESC LIMIT 1)
+             WHERE booking_id = $1`,
+            [booking_id]
+        );
+    }
+
+    const notify = async () => {
+        try {
+            await logActivity({
+                actorUserId: actor.user_id, actorName: actor.name, actorRole: actor.role,
+                actionType: 'STAFF_SWAPPED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: {
+                    booking_id, old_staff_id, new_staff_id: null, swap_reason, scheduled: true,
+                    no_replacement: true, closed_on: closeDateStr, paused: leavesNoStaff, reversed_after_end: afterEnd,
+                },
+            });
+        } catch (e) {
+            console.error('[executeUnfilledStaffSwap] notify error:', e.message);
+        }
+    };
+    return { result: { booking_id, no_replacement: true, closed_on: closeDateStr, paused: leavesNoStaff }, notify };
+};
+
 const executeStaffSwap = async (client, payload) => {
+    if (!payload.new_staff_id) return executeUnfilledStaffSwap(client, payload);
+
     const {
         booking_id,
         old_staff_id,
@@ -551,19 +661,24 @@ const executeShiftReassignment = async (client, payload) => {
 
     const effDateStr = toDateStr(effective_date);
 
+    // new_staff_id/new_assignment_id are null for a reassignment scheduled with no
+    // replacement yet: the old staff member just leaves and the slot is left empty
+    // (no booking pause for SHIFT_BASED), to be filled via the slot's normal Assign.
     const closedRes = await client.query(
         `UPDATE booking_staff_assignments
          SET service_end_date = $1, status = 'COMPLETED'
-         WHERE shift_slot_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3
+         WHERE shift_slot_id = $2 AND status = 'ACTIVE' AND ($3::uuid IS NULL OR assignment_id <> $3::uuid)
          RETURNING assignment_id`,
-        [effDateStr, shift_slot_id, new_assignment_id]
+        [effDateStr, shift_slot_id, new_assignment_id || null]
     );
     const oldAssignmentId = closedRes.rows[0]?.assignment_id || null;
 
-    await client.query(
-        `UPDATE booking_staff_assignments SET status = 'ACTIVE' WHERE assignment_id = $1`,
-        [new_assignment_id]
-    );
+    if (new_assignment_id) {
+        await client.query(
+            `UPDATE booking_staff_assignments SET status = 'ACTIVE' WHERE assignment_id = $1`,
+            [new_assignment_id]
+        );
+    }
 
     if (old_staff_id) {
         await client.query(
@@ -576,7 +691,9 @@ const executeShiftReassignment = async (client, payload) => {
             [old_staff_id]
         );
     }
-    await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
+    if (new_staff_id) {
+        await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
+    }
 
     // Out/in time capture — reassignment's old and new assignments both use
     // effective_date as the boundary day (old's service_end_date, new's
@@ -587,7 +704,7 @@ const executeShiftReassignment = async (client, payload) => {
             service_date: effDateStr, out_time: old_staff_out_time, shift_slot_id,
         });
     }
-    if (new_staff_in_time) {
+    if (new_staff_in_time && new_assignment_id) {
         await applyPartialAttendanceTime(client, {
             booking_id, assignment_id: new_assignment_id,
             service_date: effDateStr, in_time: new_staff_in_time, shift_slot_id,
@@ -603,7 +720,7 @@ const executeShiftReassignment = async (client, payload) => {
                 actionType: 'SHIFT_STAFF_REASSIGNED',
                 entityType: 'BOOKING',
                 entityId: String(booking_id),
-                details: { booking_id, shift_slot_id, old_staff_id, new_staff_id, reason, scheduled: true },
+                details: { booking_id, shift_slot_id, old_staff_id, new_staff_id, reason, scheduled: true, no_replacement: !new_staff_id },
             });
         } catch (e) {
             console.error('[executeShiftReassignment] notify error:', e.message);

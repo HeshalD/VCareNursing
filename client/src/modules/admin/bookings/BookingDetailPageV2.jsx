@@ -464,6 +464,12 @@ const BookingDetailPageV2 = () => {
   const [swapModalLeaveStart, setSwapModalLeaveStart]   = useState('');
   const [swapModalLeaveEnd, setSwapModalLeaveEnd]       = useState('');
   const [swapModalLeaveOutTime, setSwapModalLeaveOutTime] = useState(''); // HH:mm on the leave's start date
+  // A swap scheduled with NO replacement yet (the outgoing staff member's departure
+  // only). swapModalFillAction is that scheduled action when the modal was opened from
+  // its badge to pick the replacement (step 5); swapModalNoReplOutTime is the optional
+  // HH:mm out time when scheduling one (step 6 — blank means end of the swap date).
+  const [swapModalFillAction, setSwapModalFillAction]   = useState(null);
+  const [swapModalNoReplOutTime, setSwapModalNoReplOutTime] = useState('');
   // Sharing a candidate's profile with the client happens straight from the staff
   // picker — it's a "show the client who's available" step, independent of whether
   // this staff member ends up being the one assigned.
@@ -844,8 +850,12 @@ const BookingDetailPageV2 = () => {
         invoiceDecided: visitInvoiceDecided,
       })
     : null;
-  const overdueAmount = totalPaid > totalInvoiced ? 0 : totalInvoiced - totalPaid;
-  const remainingBalance = totalPaid - totalInvoiced;
+  // Settled-vs-invoiced must both come from the booking ledger. totalPaid is only the
+  // wallet money still available, so netting it against totalInvoiced (which includes
+  // charges already paid) showed paid bookings as overdue.
+  const ledgerPaid = paymentSummary.ledger_total_paid != null ? Number(paymentSummary.ledger_total_paid) : totalPaid;
+  const overdueAmount = ledgerPaid > totalInvoiced ? 0 : totalInvoiced - ledgerPaid;
+  const remainingBalance = ledgerPaid - totalInvoiced;
   const walletBalance    = Number(clientDetails.wallet_balance || 0);
   const maxPayoff        = Math.min(walletBalance, overdueAmount);
   const canPayoff        = walletBalance > 0 && overdueAmount > 0;
@@ -2104,8 +2114,42 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalNewRate(''); setSwapModalPastPay({}); setSwapModalOldLeft(true); setSwapModalOldOutDate(''); setSwapModalOnLeave(null); setSwapModalLeaveStart(''); setSwapModalLeaveEnd(''); setSwapModalLeaveOutTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
-  const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalNewRate(''); setSwapModalPastPay({}); setSwapModalOldLeft(true); setSwapModalOldOutDate(''); setSwapModalOnLeave(null); setSwapModalLeaveStart(''); setSwapModalLeaveEnd(''); setSwapModalLeaveOutTime(''); setSwapModalFillAction(null); setSwapModalNoReplOutTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
+  const selectSwapStaff = (s) => {
+    setSwapModalSelectedStaff(s);
+    if (swapModalFillAction) {
+      // Naming the replacement for an already-scheduled swap: only pay (and an
+      // optional in-time) is left to set — the date and reason are already fixed.
+      const cur = swapCurrentPayRate();
+      setSwapModalNewRate(cur !== null ? String(cur) : '');
+      setSwapModalStep(5);
+      return;
+    }
+    setSwapModalStep(2);
+  };
+  // A swap scheduled for a future date with nobody to take over yet.
+  const startNoReplacement = () => {
+    const d = new Date(`${todayISO()}T00:00:00`); d.setDate(d.getDate() + 1);
+    setSwapModalStartDate(toLocalDateStr(d));
+    setSwapModalOnLeave(null); setSwapModalLeaveEnd(''); setSwapModalError('');
+    setSwapModalStep(6);
+  };
+  // Opened from the "no replacement yet" badge: pick the person for that swap.
+  const openFillReplacement = (action) => {
+    setSwapModalFillAction(action);
+    setSwapModalStartDate(String(action.effective_date).slice(0, 10));
+    if (action.action_type === 'SHIFT_REASSIGNMENT') setSwapModalSlotId(action.payload?.shift_slot_id || null);
+    setShowSwapModal(true);
+  };
+  // Deep link from Upcoming Events ("Choose Replacement" -> ?replace=<action_id>): open
+  // the picker for that swap once, as soon as the booking's scheduled actions are loaded.
+  const replaceParam = searchParams.get('replace');
+  const replaceOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!replaceParam || replaceOpenedRef.current) return;
+    const sa = bookingScheduledActions.find(a => a.action_id === replaceParam && !a.payload?.new_staff_id);
+    if (sa) { replaceOpenedRef.current = true; openFillReplacement(sa); }
+  }, [replaceParam, bookingScheduledActions]);
   // WhatsApp one candidate's profile to this booking's client, straight from the picker.
   // Deliberately independent of the swap itself: the admin can send several candidates
   // for the client to choose from, and can resend the same one.
@@ -2149,6 +2193,9 @@ const BookingDetailPageV2 = () => {
   // Sending the outgoing staff member on leave is a whole-booking swap option, and
   // logging a leave needs its own permission.
   const swapLeaveApplies = !swapModalSlotId && !swapModalIsAssign && hasPermission('STAFF_LEAVE_CREATE');
+  // "No replacement yet": live-in (pauses the booking on the day, so needs the pause
+  // permission) or a shift slot that currently has someone on it (the slot is left empty).
+  const canScheduleNoReplacement = swapModalSlotId ? !swapModalIsAssign : (isLiveIn && hasPermission('BOOKING_PAUSE'));
   const swapLeaveStartDate = swapModalLeaveStart || swapModalStartDate;
   const swapLeaveIncomplete = swapLeaveApplies && (
     swapModalOnLeave === null
@@ -2242,6 +2289,54 @@ const BookingDetailPageV2 = () => {
         window.alert(response.message || 'Change scheduled for the future date.');
       }
     } catch (err) { setSwapModalError(err?.message || 'Failed to update staff assignment'); }
+    finally { setSwapModalSubmitting(false); }
+  };
+
+  // Step 5: name the replacement for a swap that was scheduled without one.
+  const confirmFillReplacement = async () => {
+    if (!swapModalFillAction || !swapModalSelectedStaff) return;
+    try {
+      setSwapModalSubmitting(true); setSwapModalError('');
+      apiClient.setToken(adminToken);
+      const dateISO = String(swapModalFillAction.effective_date).slice(0, 10);
+      const payRate = swapModalNewRate !== '' && Number(swapModalNewRate) >= 0 ? Number(swapModalNewRate) : undefined;
+      const res = await apiClient.assignScheduledSwapReplacement(swapModalFillAction.action_id, {
+        new_staff_id: swapModalSelectedStaff.staff_profile_id,
+        new_staff_daily_rate: payRate,
+        new_staff_in_time: swapModalNewInTime ? `${dateISO}T${swapModalNewInTime}` : undefined,
+      });
+      closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
+      window.alert(res?.message || 'Replacement assigned.');
+    } catch (err) { setSwapModalError(err?.message || 'Failed to assign the replacement'); }
+    finally { setSwapModalSubmitting(false); }
+  };
+
+  // Step 6: schedule the outgoing staff member's departure with no replacement yet.
+  const confirmNoReplacement = async () => {
+    try {
+      setSwapModalSubmitting(true); setSwapModalError('');
+      apiClient.setToken(adminToken);
+      let res;
+      if (swapModalSlotId) {
+        res = await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, {
+          no_replacement: true,
+          effective_date: swapModalStartDate,
+          reason: swapModalReason.trim() || null,
+          old_staff_out_time: swapModalNoReplOutTime ? `${swapModalStartDate}T${swapModalNoReplOutTime}` : null,
+        });
+      } else {
+        res = await apiClient.swapBookingStaff(bookingId, {
+          no_replacement: true,
+          swap_reason: swapModalReason.trim(),
+          new_staff_start_date: swapModalStartDate,
+          // Sent as a real instant — the server runs in UTC. Blank = end of the swap date.
+          scheduled_out_time: swapModalNoReplOutTime ? new Date(`${swapModalStartDate}T${swapModalNoReplOutTime}`).toISOString() : undefined,
+          old_staff_leave: hasPermission('STAFF_LEAVE_CREATE') && swapModalOnLeave === true ? { end_date: swapModalLeaveEnd } : undefined,
+        });
+      }
+      closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
+      window.alert(res?.message || 'Swap scheduled.');
+    } catch (err) { setSwapModalError(err?.message || 'Failed to schedule the swap'); }
     finally { setSwapModalSubmitting(false); }
   };
 
@@ -2973,6 +3068,9 @@ const BookingDetailPageV2 = () => {
   const scheduledCompletion   = bookingScheduledActions.find(sa => sa.action_type === 'COMPLETION');
   const scheduledTermination  = bookingScheduledActions.find(sa => sa.action_type === 'TERMINATION');
   const scheduledFinalization = scheduledCompletion || scheduledTermination || null;
+  // Swaps scheduled for a future date with nobody named to take over yet.
+  const unfilledSwaps = bookingScheduledActions.filter(sa =>
+    ['STAFF_SWAP', 'SHIFT_REASSIGNMENT'].includes(sa.action_type) && !sa.payload?.new_staff_id);
   const requiresBank      = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
   const isCheque          = paymentForm.payment_method === 'CHEQUE';
 
@@ -3432,6 +3530,42 @@ const BookingDetailPageV2 = () => {
                   </div>
                 </div>
               )}
+
+              {/* ── SWAP SCHEDULED, NO REPLACEMENT YET ── */}
+              {!isTerminated && unfilledSwaps.map((sa) => {
+                const isSlot = sa.action_type === 'SHIFT_REASSIGNMENT';
+                const slot = isSlot ? shiftSlots.find(s => s.shift_slot_id === sa.payload?.shift_slot_id) : null;
+                const slotName = isSlot ? (slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'a shift')) : null;
+                const canAssign = hasPermission(isSlot ? 'ASSIGNMENT_UPDATE' : 'BOOKING_SWAP_STAFF');
+                return (
+                  <div
+                    key={sa.action_id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18, padding: '14px 18px', borderRadius: 10, background: '#FFFBEB', border: '1px solid #F5D98B' }}
+                  >
+                    <AlertTriangle style={{ width: 18, height: 18, color: '#B7791F', flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', background: '#FDE9B0', color: '#8A5A00', borderRadius: 999, padding: '2px 9px' }}>No replacement yet</span>
+                        Swap scheduled for {formatDate(sa.effective_date)}{slotName ? ` — ${slotName}` : ''}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 3 }}>
+                        {isSlot
+                          ? 'If nobody is picked by then, this shift is left empty from that day.'
+                          : 'If nobody is picked by then, the booking is paused from that day.'}
+                        {sa.reason ? ` — ${sa.reason}` : ''}
+                      </div>
+                    </div>
+                    {canAssign && (
+                      <button
+                        onClick={() => openFillReplacement(sa)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#374151', border: 'none', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <UserPlus style={{ width: 14, height: 14 }} /> Choose replacement
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
 
               {/* ── SHIFT BANK — SHIFT_BASED only: shifts paid vs delivered ── */}
               {isShiftBased && shiftBank && (
@@ -5411,10 +5545,16 @@ const BookingDetailPageV2 = () => {
             <div className="flex items-start justify-between p-6 border-b border-slate-200 shrink-0">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
-                  {swapModalSlotId ? (() => { const slot = shiftSlots.find(s => s.shift_slot_id === swapModalSlotId); return `${swapModalIsAssign ? 'Assign Staff' : 'Reassign Staff'} — ${slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift')}`; })() : 'Swap Staff Member'}
+                  {swapModalSlotId ? (() => { const slot = shiftSlots.find(s => s.shift_slot_id === swapModalSlotId); return `${swapModalFillAction ? 'Choose Replacement' : swapModalIsAssign ? 'Assign Staff' : 'Reassign Staff'} — ${slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift')}`; })() : swapModalFillAction ? 'Choose Replacement' : 'Swap Staff Member'}
                 </h2>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  {swapModalStep === 1
+                  {swapModalStep === 5
+                    ? `Confirm: ${swapModalSelectedStaff?.full_name} takes over on ${formatDate(swapModalStartDate)}`
+                  : swapModalStep === 6
+                    ? 'Schedule a departure now and choose the replacement later'
+                  : swapModalFillAction && swapModalStep === 1
+                    ? `Choose who takes over on ${formatDate(swapModalStartDate)}`
+                  : swapModalStep === 1
                     ? 'Select a replacement from available staff'
                     : swapModalStep === 4
                       ? 'Step 4 of 4 — decide who is paid for the days already calculated'
@@ -5440,6 +5580,17 @@ const BookingDetailPageV2 = () => {
               return (
                 <>
                   <div className="px-6 py-3 border-b border-slate-100 shrink-0 space-y-2">
+                    {swapModalFillAction && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                        {swapModalFillAction.payload?.old_staff_id ? 'The outgoing staff member' : 'The current staff member'} leaves on {formatDate(swapModalStartDate)}. Whoever you pick takes over that day as a normal scheduled swap.
+                      </div>
+                    )}
+                    {!swapModalFillAction && !swapModalIsAssign && canScheduleNoReplacement && (
+                      <button type="button" onClick={startNoReplacement}
+                        className="w-full text-left rounded-lg border border-dashed border-amber-300 bg-amber-50/60 hover:bg-amber-50 px-3 py-2 text-xs text-amber-900 transition">
+                        <span className="font-semibold">No replacement yet?</span> Schedule {swapModalSlotId ? 'this shift’s' : (normCurrentStaff?.name ? `${normCurrentStaff.name}’s` : 'the current staff member’s')} departure for a future date and pick who takes over later.
+                      </button>
+                    )}
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                       <input type="text" autoFocus placeholder="Search by name, phone (0778885555 / +94778885555 / 778885555), staff ID (EMP-0541 / 0541), or designation…" value={swapModalSearch} onChange={e => { setSwapModalSearch(e.target.value); setSwapModalPage(1); }} className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
@@ -5794,6 +5945,115 @@ const BookingDetailPageV2 = () => {
                     <button onClick={confirmSwap} disabled={swapModalSubmitting || Boolean(badAmount) || !swapModalReason.trim()} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                       {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
                       {swapModalSubmitting ? 'Saving…' : 'Confirm Swap & Pay'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {/* Step 5 — replacement chosen for a swap that was scheduled without one */}
+            {swapModalStep === 5 && swapModalSelectedStaff && swapModalFillAction && (() => {
+              const cur = swapCurrentPayRate();
+              const unit = swapModalSlotId ? 'shift' : 'day';
+              const dueNow = swapModalStartDate <= todayISO();
+              return (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center">
+                      <p className="text-xs text-emerald-600 mb-2 font-medium uppercase tracking-wide">New Staff</p>
+                      <p className="text-sm font-semibold text-slate-900"><StaffLink id={swapModalSelectedStaff.staff_profile_id}>{swapModalSelectedStaff.full_name}</StaffLink></p>
+                      {swapModalSelectedStaff.mobile_number && <p className="text-xs text-slate-500 mt-0.5">{formatMobileNumber(swapModalSelectedStaff.mobile_number)}</p>}
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalSelectedStaff.full_name}'s schedule</p>
+                      <StaffScheduleTimeline schedule={staffSchedules[swapModalSelectedStaff.staff_profile_id] || []} loading={staffSchedulesLoading} referenceDate={swapModalStartDate} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalSelectedStaff.full_name}'s pay per {unit}</label>
+                      <input type="number" min="0" step="0.01" value={swapModalNewRate} onChange={e => setSwapModalNewRate(e.target.value)} onWheel={e => e.currentTarget.blur()} placeholder={cur !== null ? String(cur) : 'Enter amount'} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      <p className="text-xs text-slate-400 mt-1.5">{cur !== null ? "Pre-filled with the current staff member's rate. " : ''}Staff pay only; the client's billing rate is not affected.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New staff in time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
+                      <TimeInput value={swapModalNewInTime} onChange={e => setSwapModalNewInTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      <p className="text-xs text-slate-400 mt-1.5">On {formatDate(swapModalStartDate)}.</p>
+                    </div>
+                    <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+                      {dueNow
+                        ? 'The swap date is today, so this takes effect right away.'
+                        : `This becomes a normal scheduled swap and takes effect on ${formatDate(swapModalStartDate)}. The booking will not be paused.`}
+                    </div>
+                    {swapModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{swapModalError}</div>}
+                  </div>
+                  <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
+                    <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
+                    <button onClick={confirmFillReplacement} disabled={swapModalSubmitting} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                      {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
+                      {swapModalSubmitting ? 'Saving…' : 'Confirm Replacement'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {/* Step 6 — schedule a departure with no replacement chosen yet */}
+            {swapModalStep === 6 && (() => {
+              const isSlot = Boolean(swapModalSlotId);
+              const outName = isSlot ? (shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.staff_name) : normCurrentStaff?.name;
+              const dateOk = swapModalStartDate > todayISO();
+              const leaveOk = isSlot || !hasPermission('STAFF_LEAVE_CREATE') || swapModalOnLeave === false
+                || (swapModalOnLeave === true && swapModalLeaveEnd && swapModalLeaveEnd >= swapModalStartDate);
+              const reasonOk = isSlot || swapModalReason.trim();
+              return (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1">
+                      <p>{outName || 'The current staff member'} will leave {isSlot ? 'this shift' : 'this booking'} on the date below. You can pick who takes over at any time before then — it then becomes a normal swap.</p>
+                      <p className="font-semibold">{isSlot
+                        ? 'If nobody is picked by then, the shift is left empty from that day. The booking is not paused.'
+                        : 'If nobody is picked by then, the booking is paused from that day: no invoicing and no staff pay until you resume it with a new staff member.'}</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{outName || 'Staff member'} leaves on <span className="text-rose-500">*</span></label>
+                      <DateInput value={swapModalStartDate} min={(() => { const d = new Date(`${todayISO()}T00:00:00`); d.setDate(d.getDate() + 1); return toLocalDateStr(d); })()} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      {!dateOk && <p className="text-xs text-rose-600 mt-1.5">Pick a future date. For a swap today or earlier, choose the replacement first.</p>}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
+                      <TimeInput value={swapModalNoReplOutTime} onChange={e => setSwapModalNoReplOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      <p className="text-xs text-slate-400 mt-1.5">Leave blank if you don't know it yet — it defaults to the end of that day and can be corrected from Allocation History.</p>
+                    </div>
+                    {!isSlot && hasPermission('STAFF_LEAVE_CREATE') && (
+                      <div className="rounded-xl border border-slate-200 p-3.5 space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Is {outName || 'the current staff member'} going on leave? <span className="text-rose-500">*</span></p>
+                        <div className="flex flex-wrap gap-2">
+                          {[{ v: true, label: 'Yes — going on leave' }, { v: false, label: 'No — something else' }].map(o => (
+                            <button key={String(o.v)} type="button" onClick={() => setSwapModalOnLeave(o.v)}
+                              className={`px-3 py-1 rounded-full text-xs font-medium transition ${swapModalOnLeave === o.v ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                        {swapModalOnLeave === true && (
+                          <div>
+                            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Leave ends <span className="text-rose-500">*</span></label>
+                            <DateInput value={swapModalLeaveEnd} min={swapModalStartDate} onChange={e => setSwapModalLeaveEnd(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                            <p className="text-xs text-slate-500 mt-1.5">An approved leave is logged from {formatDate(swapModalStartDate)}. The reason below is used as the leave reason.</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Reason {!isSlot && <span className="text-rose-500">*</span>}</label>
+                      <textarea rows={3} value={swapModalReason} onChange={e => setSwapModalReason(e.target.value)} placeholder="e.g. Staff finishing contract, client requested a change…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                    </div>
+                    {swapModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{swapModalError}</div>}
+                  </div>
+                  <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
+                    <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
+                    <button onClick={confirmNoReplacement} disabled={swapModalSubmitting || !dateOk || !leaveOk || !reasonOk} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                      {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />}
+                      {swapModalSubmitting ? 'Saving…' : 'Schedule departure'}
                     </button>
                   </div>
                 </>

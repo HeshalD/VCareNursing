@@ -2290,6 +2290,15 @@ class ApiClient {
     });
   }
 
+  // Name the replacement for a swap that was scheduled without one (STAFF_SWAP /
+  // SHIFT_REASSIGNMENT with no new staff yet). { new_staff_id, new_staff_daily_rate?, new_staff_in_time? }
+  async assignScheduledSwapReplacement(actionId, payload) {
+    return this.request(`/scheduled-actions/${actionId}/assign-replacement`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async executeScheduledActionNow(actionId) {
     return this.request(`/scheduled-actions/${actionId}/execute-now`, {
       method: 'POST',

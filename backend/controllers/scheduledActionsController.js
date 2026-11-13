@@ -11,7 +11,16 @@
 //      confirmed. (LIVE_IN is auto-handled by the cron and never needs manual times.)
 
 const db = require('../config/db');
-const { dispatchScheduledAction } = require('../services/scheduledActions');
+const {
+    dispatchScheduledAction,
+    getBusinessDate,
+    toDateStr,
+    isFutureDate,
+    enqueueScheduledAction,
+    hasOpenAction,
+} = require('../services/scheduledActions');
+const { conflictThreshold } = require('../services/staffAvailability');
+const { userHasPermission } = require('../middleware/authMiddleware');
 const { logActivity } = require('../utils/activityLogger');
 const { bookingChargeSql } = require('../services/clientFinancials');
 
@@ -50,6 +59,8 @@ exports.getUpcomingEvents = async (req, res) => {
                     NULLIF(CONCAT_WS(' ', NULLIF(p.honorific, ''), p.full_name), '') AS patient_name,
                     os.full_name AS current_staff_name,
                     ns.full_name AS incoming_staff_name,
+                    ls.full_name AS leaving_staff_name,
+                    ls.staff_profile_id AS leaving_staff_id,
                     b.client_id, b.patient_id,
                     b.assigned_staff_id AS current_staff_id,
                     ns.staff_profile_id AS incoming_staff_id
@@ -58,6 +69,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
                 LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
                 LEFT JOIN staff_profiles os ON b.assigned_staff_id = os.staff_profile_id
+                LEFT JOIN staff_profiles ls ON ls.staff_profile_id = (sa.payload->>'old_staff_id')::uuid
                 LEFT JOIN staff_profiles ns ON ns.staff_profile_id = COALESCE(
                     (sa.payload->>'new_staff_id')::uuid,
                     (sa.payload->>'staff_profile_id')::uuid
@@ -175,6 +187,10 @@ exports.getUpcomingEvents = async (req, res) => {
                 current_staff_id: row.current_staff_id,
                 incoming_staff_name: row.incoming_staff_name,
                 incoming_staff_id: row.incoming_staff_id,
+                // A swap scheduled before anyone was chosen to take over.
+                no_replacement: ['STAFF_SWAP', 'SHIFT_REASSIGNMENT'].includes(row.action_type) && !row.payload?.new_staff_id,
+                leaving_staff_name: row.leaving_staff_name,
+                leaving_staff_id: row.leaving_staff_id,
                 effective_date: row.effective_date,
                 status: row.status,
                 reason: row.reason,
@@ -410,6 +426,204 @@ exports.cancelScheduledAction = async (req, res) => {
         await client.query('ROLLBACK');
         console.error('cancelScheduledAction error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to cancel scheduled action' });
+    } finally {
+        client.release();
+    }
+};
+
+// POST /api/scheduled-actions/:action_id/assign-replacement
+// body: { new_staff_id, new_staff_daily_rate?, new_staff_in_time? }
+// Names the replacement for a swap that was scheduled with none (STAFF_SWAP for
+// live-in, SHIFT_REASSIGNMENT for a shift slot — both carry new_staff_id: null).
+// From then on it is an ordinary scheduled swap. If the swap date has already
+// arrived (the nightly run just hasn't processed it yet) it is executed right away.
+exports.assignReplacement = async (req, res) => {
+    const { action_id } = req.params;
+    const { new_staff_id, new_staff_daily_rate, new_staff_in_time } = req.body || {};
+    if (!new_staff_id) {
+        return res.status(400).json({ status: 'error', message: 'new_staff_id is required' });
+    }
+
+    const fail = (statusCode, message) => Object.assign(new Error(message), { statusCode });
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const actionRes = await client.query(`SELECT * FROM scheduled_actions WHERE action_id = $1 FOR UPDATE`, [action_id]);
+        const action = actionRes.rows[0];
+        if (!action) throw fail(404, 'Scheduled action not found');
+        if (!['STAFF_SWAP', 'SHIFT_REASSIGNMENT'].includes(action.action_type)) throw fail(400, 'This action does not take a replacement.');
+        if (action.status !== 'SCHEDULED') throw fail(409, `This swap is already ${action.status.toLowerCase()}. If the booking is paused, use Resume with staff instead.`);
+        const payload = action.payload || {};
+        if (payload.new_staff_id) throw fail(400, 'This swap already has a replacement.');
+
+        const neededPermission = action.action_type === 'STAFF_SWAP' ? 'BOOKING_SWAP_STAFF' : 'ASSIGNMENT_UPDATE';
+        if (!(await userHasPermission(req.user, neededPermission))) {
+            throw fail(403, `You need the ${neededPermission} permission to assign a replacement.`);
+        }
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, status, daily_rate FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [action.booking_id]
+        );
+        const booking = bookingRes.rows[0];
+        if (!booking || !['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+            throw fail(400, `The booking is ${booking?.status || 'missing'}, so a replacement can't be assigned to this swap.`);
+        }
+
+        const effDateStr = toDateStr(action.effective_date);
+        const businessDate = await getBusinessDate(client);
+
+        const staffRes = await client.query(
+            `SELECT staff_profile_id, full_name, current_status, can_dual_book FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+            [new_staff_id]
+        );
+        const staff = staffRes.rows[0];
+        if (!staff) throw fail(404, 'Staff member not found');
+        if (staff.current_status !== 'AVAILABLE') {
+            // Same leniency as swapStaff: current_status lags, so only a genuinely
+            // date-overlapping assignment on ANOTHER booking blocks.
+            const conflictRes = await client.query(
+                `SELECT 1
+                 FROM booking_staff_assignments bsa
+                 LEFT JOIN LATERAL (
+                     SELECT effective_date FROM scheduled_actions
+                     WHERE booking_id = bsa.booking_id AND action_type IN ('TERMINATION', 'COMPLETION') AND status = 'SCHEDULED'
+                     ORDER BY effective_date ASC LIMIT 1
+                 ) sa ON bsa.service_end_date IS NULL
+                 WHERE bsa.staff_profile_id = $1 AND bsa.booking_id != $2
+                   AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   AND bsa.service_start_date <= $3::date
+                   AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                        OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+                 LIMIT 2`,
+                [new_staff_id, action.booking_id, effDateStr]
+            );
+            if (conflictRes.rows.length >= conflictThreshold(staff.can_dual_book)) {
+                throw fail(400, `${staff.full_name} is not available for assignment (status: ${staff.current_status})`);
+            }
+        }
+        const dupRes = await client.query(
+            `SELECT 1 FROM booking_staff_assignments
+             WHERE booking_id = $1 AND staff_profile_id = $2 AND status IN ('ACTIVE', 'SCHEDULED') LIMIT 1`,
+            [action.booking_id, new_staff_id]
+        );
+        if (dupRes.rows.length > 0) throw fail(400, `${staff.full_name} already has an active or scheduled assignment on this booking.`);
+
+        const hasRate = new_staff_daily_rate !== undefined && new_staff_daily_rate !== null && new_staff_daily_rate !== '' && Number(new_staff_daily_rate) >= 0;
+        let newAssignmentId;
+        let nextPayload;
+
+        if (action.action_type === 'STAFF_SWAP') {
+            const oldRes = await client.query(
+                `SELECT assignment_id FROM booking_staff_assignments
+                 WHERE assignment_id = $1 AND status = 'ACTIVE' AND service_end_date IS NULL FOR UPDATE`,
+                [payload.old_assignment_id]
+            );
+            if (oldRes.rows.length === 0) throw fail(409, 'The outgoing staff member has already been logged out of this booking. Use Resume with staff instead.');
+
+            const rate = hasRate ? Number(new_staff_daily_rate) : Number(booking.daily_rate || 0);
+            const ins = await client.query(
+                `INSERT INTO booking_staff_assignments
+                    (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
+                     service_start_date, service_end_date, amount_allocated, status)
+                 VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, 'SCHEDULED')
+                 RETURNING assignment_id`,
+                [action.booking_id, new_staff_id, req.user.user_id, rate, effDateStr]
+            );
+            newAssignmentId = ins.rows[0].assignment_id;
+            nextPayload = {
+                ...payload,
+                new_staff_id,
+                new_assignment_id: newAssignmentId,
+                new_daily_rate: null, new_ot_rate: null, new_scheduled_end_time: null,
+                new_staff_in_time: new_staff_in_time || null,
+            };
+            // A leave that was booked alongside the unfilled swap now needs its normal
+            // relief action, exactly as swapStaff queues for a filled scheduled swap.
+            if (payload.leave?.start_date && !(await hasOpenAction(client, action.booking_id, 'STAFF_RELIEVE'))) {
+                await enqueueScheduledAction(client, {
+                    booking_id: action.booking_id,
+                    action_type: 'STAFF_RELIEVE',
+                    effective_date: payload.leave.start_date,
+                    payload: {
+                        assignment_id: payload.old_assignment_id,
+                        staff_profile_id: payload.old_staff_id,
+                        out_time: payload.out_time,
+                        leave_id: payload.leave.leave_id,
+                        leave_start: payload.leave.start_date,
+                        leave_end: payload.leave.end_date,
+                    },
+                    reason: action.reason,
+                    created_by: req.user.user_id,
+                });
+            }
+        } else {
+            const curRes = await client.query(
+                `SELECT daily_rate FROM booking_staff_assignments WHERE shift_slot_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+                [payload.shift_slot_id]
+            );
+            const rate = hasRate ? Number(new_staff_daily_rate) : Number(curRes.rows[0]?.daily_rate || 0);
+            const ins = await client.query(
+                `INSERT INTO booking_staff_assignments
+                    (booking_id, staff_profile_id, shift_slot_id, assigned_on, assigned_by, daily_rate,
+                     service_start_date, amount_allocated, status, notes)
+                 VALUES ($1, $2, $3, NOW(), $4, $5, $6, $5, 'SCHEDULED', $7)
+                 RETURNING assignment_id`,
+                [action.booking_id, new_staff_id, payload.shift_slot_id, req.user.user_id, rate, effDateStr, action.reason || null]
+            );
+            newAssignmentId = ins.rows[0].assignment_id;
+            nextPayload = {
+                ...payload,
+                new_staff_id,
+                new_assignment_id: newAssignmentId,
+                new_staff_in_time: new_staff_in_time || null,
+            };
+        }
+
+        await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
+        await client.query(`UPDATE scheduled_actions SET payload = $2 WHERE action_id = $1`, [action_id, JSON.stringify(nextPayload)]);
+
+        // The swap date is already here (the nightly run hasn't processed it yet):
+        // run it now rather than leaving the replacement waiting another day.
+        const dueNow = !isFutureDate(effDateStr, businessDate);
+        let notify = null;
+        if (dueNow) {
+            const actor = {
+                user_id: req.user?.user_id || null,
+                name: await getActorName(req.user?.user_id),
+                role: extractActorRole(req.user?.role),
+            };
+            ({ notify } = await dispatchScheduledAction(client, { ...action, payload: nextPayload }, actor));
+            await client.query(`UPDATE scheduled_actions SET status = 'EXECUTED', executed_at = NOW() WHERE action_id = $1`, [action_id]);
+        }
+
+        await client.query('COMMIT');
+        if (notify) notify().catch((e) => console.error('[assignReplacement] notify error:', e.message));
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'STAFF_SWAP_REPLACEMENT_ASSIGNED',
+            entityType: 'BOOKING',
+            entityId: String(action.booking_id),
+            details: { action_id, scheduled_action_type: action.action_type, new_staff_id, effective_date: effDateStr, executed_now: dueNow },
+        }).catch((e) => console.error('Activity log failed:', e.message));
+
+        res.status(200).json({
+            status: 'success',
+            message: dueNow
+                ? `${staff.full_name} is now on this booking.`
+                : `${staff.full_name} will take over on ${effDateStr}.`,
+            data: { action_id, new_staff_id, effective_date: effDateStr, executed_now: dueNow },
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('assignReplacement error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to assign the replacement' });
     } finally {
         client.release();
     }

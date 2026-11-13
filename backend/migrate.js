@@ -898,7 +898,7 @@ async function runMigration() {
     CREATE TABLE IF NOT EXISTS scheduled_actions (
       action_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
-      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | STAFF_RELIEVE | ASSIGNMENT_START | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT
+      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | STAFF_RELIEVE | ASSIGNMENT_START | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT  (STAFF_SWAP / SHIFT_REASSIGNMENT with payload.new_staff_id null = scheduled with no replacement yet)
       effective_date DATE NOT NULL,
       status VARCHAR(20) DEFAULT 'SCHEDULED',   -- SCHEDULED | EXECUTED | CANCELLED | FAILED
       payload JSONB NOT NULL DEFAULT '{}',      -- action-specific args
