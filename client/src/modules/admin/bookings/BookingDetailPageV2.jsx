@@ -3399,7 +3399,7 @@ const BookingDetailPageV2 = () => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 18 }}>
                 <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
                   <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>Total paid</div>
-                  <div style={{ fontSize: bigStatSize(formatMoney(totalPaid), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827', wordBreak: 'break-word' }}>{formatMoney(totalPaid)}</div>
+                  <div style={{ fontSize: bigStatSize(formatMoney(ledgerPaid), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827', wordBreak: 'break-word' }}>{formatMoney(ledgerPaid)}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, marginTop: 3 }}>{isShiftBased ? shiftsPaidCount : paidDays} {unitWord}{(isShiftBased ? shiftsPaidCount : paidDays) !== 1 ? 's' : ''} covered</div>
                 </div>
                 <div style={{ background: simDate ? '#fffbeb' : '#fff', border: simDate ? '1px solid #fde68a' : '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
@@ -3722,7 +3722,7 @@ const BookingDetailPageV2 = () => {
                   <CardTitle>Financial snapshot</CardTitle>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {[
-                      { label: 'Total paid',       value: formatMoney(totalPaid),          green: true },
+                      { label: 'Total paid',       value: formatMoney(ledgerPaid),         green: true },
                       { label: 'Total invoiced',   value: formatMoney(totalInvoiced) },
                       { label: 'Overdue amount',   value: formatMoney(overdueAmount),      red: overdueAmount > 0 },
                       { label: 'Remaining balance',value: formatMoney(remainingBalance) },
@@ -3900,7 +3900,7 @@ const BookingDetailPageV2 = () => {
                      </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, marginTop: 2, borderTop: '1px solid #EFEAE0' }}>
                         <span style={{ fontSize: 13, color: '#6F6A60' }}>{normPayments.length} payment{normPayments.length !== 1 ? 's' : ''}</span>
-                        <span style={{ fontSize: 13, fontWeight: 800, color: '#2A2722' }}>{formatMoney(totalPaid)}</span>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: '#2A2722' }}>{formatMoney(ledgerPaid)}</span>
                       </div>
                     </>
                   )}
@@ -7852,7 +7852,7 @@ const BookingDetailPageV2 = () => {
                   <div className="grid grid-cols-3 gap-3">
                     <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500 mb-0.5">Total Paid</p>
-                      <p className="text-sm font-semibold text-slate-900">{formatMoney(totalPaid)}</p>
+                      <p className="text-sm font-semibold text-slate-900">{formatMoney(ledgerPaid)}</p>
                     </div>
                     <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500 mb-0.5">Total Invoiced</p>
