@@ -143,6 +143,7 @@ const Bookings = () => {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [hospitalizedOnly, setHospitalizedOnly] = useState(false);
+  const [invoicingFilter, setInvoicingFilter] = useState('ALL'); // 'ALL' | 'AUTO' | 'MANUAL' (Live-In only)
   const [salespersonFilter, setSalespersonFilter] = useState('ALL');
   const [showDirectBooking, setShowDirectBooking] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -192,6 +193,7 @@ const Bookings = () => {
           status: statusFilter !== 'ALL' ? statusFilter : '',
           service_model: typeFilter !== 'ALL' ? typeFilter : '',
           hospitalized: hospitalizedOnly,
+          invoicing_mode: typeFilter === 'LIVE_IN' && invoicingFilter !== 'ALL' ? invoicingFilter : '',
           salesperson: salespersonFilter !== 'ALL' ? salespersonFilter : '',
         });
       } finally {
@@ -229,7 +231,13 @@ const Bookings = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (adminToken) fetchBookings();
-  }, [adminToken, page, debouncedSearch, statusFilter, typeFilter, hospitalizedOnly, salespersonFilter]);
+  }, [adminToken, page, debouncedSearch, statusFilter, typeFilter, invoicingFilter, hospitalizedOnly, salespersonFilter]);
+
+  // The invoicing-mode filter only exists for Live-In; drop it when leaving that tab
+  // (also covers the type filter in the table header).
+  useEffect(() => {
+    if (typeFilter !== 'LIVE_IN') setInvoicingFilter('ALL');
+  }, [typeFilter]);
 
   // Changing any filter or the search text sends the user back to the first page.
   const withPageReset = (setter) => (value) => {
@@ -335,7 +343,10 @@ const Bookings = () => {
               {TYPE_TABS.map(({ key, label }) => (
                 <button
                   key={key}
-                  onClick={() => withPageReset(setTypeFilter)(key)}
+                  onClick={() => {
+                    if (key !== 'LIVE_IN') setInvoicingFilter('ALL');
+                    withPageReset(setTypeFilter)(key);
+                  }}
                   className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
                     typeFilter === key
                       ? 'bg-white text-slate-900 shadow-sm'
@@ -349,6 +360,29 @@ const Bookings = () => {
                 </button>
               ))}
             </div>
+
+            {typeFilter === 'LIVE_IN' && (
+              <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap" role="group" aria-label="Daily invoicing mode">
+                {[
+                  { key: 'ALL', label: 'All Invoicing', count: counts.LIVE_IN ?? 0 },
+                  { key: 'AUTO', label: 'Auto Invoicing', count: counts.INV_AUTO ?? 0 },
+                  { key: 'MANUAL', label: 'Manual Invoicing', count: counts.INV_MANUAL ?? 0 },
+                ].map(({ key, label, count }) => (
+                  <button
+                    key={key}
+                    onClick={() => withPageReset(setInvoicingFilter)(key)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
+                      invoicingFilter === key
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {label}
+                    <span className="ml-1.5 tabular-nums text-slate-400">{count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
               {[

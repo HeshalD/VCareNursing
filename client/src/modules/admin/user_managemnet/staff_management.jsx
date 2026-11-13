@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StaffLink } from '../components/EntityLinks';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff, ArrowDown, ArrowUpDown, Home, Hospital } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff, ArrowDown, ArrowUpDown, Home, Hospital, SlidersHorizontal } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
-import FilterableTh from '../components/FilterableTh';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
@@ -111,6 +110,8 @@ const StaffManagement = () => {
   const [selectAllLoading, setSelectAllLoading] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersRef = useRef(null);
   const [portalConfirm, setPortalConfirm] = useState(null); // 'disable' | 'enable' | null
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState(null);
@@ -130,6 +131,19 @@ const StaffManagement = () => {
       document.removeEventListener('keydown', onKey);
     };
   }, [actionsOpen]);
+
+  // Close the Filters popover on outside click / Escape.
+  useEffect(() => {
+    if (!filtersOpen) return undefined;
+    const onDown = (e) => { if (filtersRef.current && !filtersRef.current.contains(e.target)) setFiltersOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setFiltersOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [filtersOpen]);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
   useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc]);
@@ -318,6 +332,16 @@ const StaffManagement = () => {
   const runAction = (fn) => { setActionsOpen(false); fn(); };
 
   const pendingMigrationCount = counts.pending_migration || 0;
+  const FILTER_FIELDS = [
+    { label: 'Dashboard access', value: portalFilter, set: setPortalFilter, options: [
+      { key: 'all', label: 'Any' }, { key: 'enabled', label: 'Has access', count: counts.portal_enabled }, { key: 'disabled', label: 'No access', count: counts.portal_disabled } ] },
+    { label: 'Live-in', value: liveInFilter, set: setLiveInFilter, options: [
+      { key: 'all', label: 'Any' }, { key: 'yes', label: 'Willing', count: counts.live_in }, { key: 'no', label: 'Not willing', count: counts.not_live_in } ] },
+    { label: 'Hospital stay', value: hospitalFilter, set: setHospitalFilter, options: [
+      { key: 'all', label: 'Any' }, { key: 'yes', label: 'Willing', count: counts.hospital }, { key: 'no', label: 'Not willing', count: counts.not_hospital } ] },
+  ];
+  const activeFilterCount = [portalFilter, liveInFilter, hospitalFilter].filter(v => v !== 'all').length + (pendingMigrationOnly ? 1 : 0);
+  const clearFilters = () => { setPortalFilter('all'); setLiveInFilter('all'); setHospitalFilter('all'); setPendingMigrationOnly(false); };
   const totalCount = pagination?.total_count ?? workers.length;
   const totalPages = pagination?.total_pages ?? 1;
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -423,115 +447,99 @@ const StaffManagement = () => {
       }
     >
       {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-        <div className="flex items-center gap-5 border-b border-slate-200 flex-wrap self-stretch sm:self-auto">
-          {STATUS_TABS.map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`-mb-px pb-2 pt-1 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              {TAB_LABELS[tab]}
-              <span className={`ml-1.5 tabular-nums text-xs ${activeTab === tab ? 'text-blue-500' : 'text-slate-400'}`}>{counts[tab] ?? 0}</span>
-            </button>
-          ))}
-        </div>
-
-        {pendingMigrationCount > 0 && (
-          <button
-            onClick={() => setPendingMigrationOnly(v => !v)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
-              pendingMigrationOnly
-                ? 'bg-amber-100 border-amber-300 text-amber-800'
-                : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            Pending Migration <span className="ml-1 tabular-nums">{pendingMigrationCount}</span>
-          </button>
-        )}
-
-        {/* Dashboard (staff portal) access filter */}
-        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 self-start sm:self-auto" role="group" aria-label="Dashboard access filter">
-          {[
-            { key: 'all', label: 'All access', count: null },
-            { key: 'enabled', label: 'Has access', count: counts.portal_enabled },
-            { key: 'disabled', label: 'No access', count: counts.portal_disabled },
-          ].map(opt => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => setPortalFilter(opt.key)}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
-                portalFilter === opt.key
-                  ? (opt.key === 'disabled' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700')
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {opt.label}
-              {opt.count != null && <span className="ml-1 tabular-nums opacity-70">{opt.count}</span>}
-            </button>
-          ))}
-        </div>
-
-        {/* Live-in (at a client's home) willingness filter */}
-        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 self-start sm:self-auto" role="group" aria-label="Live-in filter">
-          {[
-            { key: 'all', label: 'Any live-in', count: null },
-            { key: 'yes', label: 'Live-in', count: counts.live_in },
-            { key: 'no', label: 'Not live-in', count: counts.not_live_in },
-          ].map(opt => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => setLiveInFilter(opt.key)}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
-                liveInFilter === opt.key
-                  ? (opt.key === 'no' ? 'bg-slate-200 text-slate-700' : 'bg-indigo-100 text-indigo-700')
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {opt.label}
-              {opt.count != null && <span className="ml-1 tabular-nums opacity-70">{opt.count}</span>}
-            </button>
-          ))}
-        </div>
-
-        {/* Hospital-stay willingness filter */}
-        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 self-start sm:self-auto" role="group" aria-label="Hospital stay filter">
-          {[
-            { key: 'all', label: 'Any hospital', count: null },
-            { key: 'yes', label: 'Hospital OK', count: counts.hospital },
-            { key: 'no', label: 'No hospital', count: counts.not_hospital },
-          ].map(opt => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => setHospitalFilter(opt.key)}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
-                hospitalFilter === opt.key
-                  ? (opt.key === 'no' ? 'bg-slate-200 text-slate-700' : 'bg-teal-100 text-teal-700')
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {opt.label}
-              {opt.count != null && <span className="ml-1 tabular-nums opacity-70">{opt.count}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="relative sm:ml-auto">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="relative flex-1 max-w-md">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search by name, phone, code…"
-            className="pl-8 pr-3 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none w-64"
+            className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
           />
+          {search && (
+            <button type="button" onClick={() => setSearch('')} aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
+
+        <div className="relative" ref={filtersRef}>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen(v => !v)}
+            aria-haspopup="dialog"
+            aria-expanded={filtersOpen}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${
+              activeFilterCount > 0
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="tabular-nums text-xs bg-blue-600 text-white rounded-full px-1.5 min-w-[18px] text-center">{activeFilterCount}</span>
+            )}
+          </button>
+          {filtersOpen && (
+            <div role="dialog" aria-label="Filters" className="absolute left-0 mt-1.5 w-72 bg-white border border-slate-200 rounded-lg shadow-lg p-3 z-40 space-y-3">
+              {FILTER_FIELDS.map(({ label, value, set, options }) => (
+                <label key={label} className="block">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">{label}</span>
+                  <select
+                    value={value}
+                    onChange={e => set(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                  >
+                    {options.map(o => (
+                      <option key={o.key} value={o.key}>{o.label}{o.count != null ? ` (${o.count})` : ''}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              {pendingMigrationCount > 0 && (
+                <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pendingMigrationOnly}
+                    onChange={e => setPendingMigrationOnly(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Pending migration only <span className="tabular-nums text-xs text-slate-400">({pendingMigrationCount})</span>
+                </label>
+              )}
+              <div className="flex justify-end border-t border-slate-100 pt-2">
+                <button type="button" onClick={clearFilters} disabled={activeFilterCount === 0}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:text-slate-300 disabled:cursor-not-allowed">
+                  Clear all filters
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {(activeFilterCount > 0 || search) && (
+          <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">{totalCount} result{totalCount !== 1 ? 's' : ''}</span>
+        )}
+      </div>
+
+      {/* Status tabs */}
+      <div className="flex items-center gap-5 border-b border-slate-200 flex-wrap mb-4">
+        {STATUS_TABS.map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`-mb-px pb-2 pt-1 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            {TAB_LABELS[tab]}
+            <span className={`ml-1.5 tabular-nums text-xs ${activeTab === tab ? 'text-blue-500' : 'text-slate-400'}`}>{counts[tab] ?? 0}</span>
+          </button>
+        ))}
       </div>
 
       {selectMode && selectedIds.size > 0 && (
@@ -576,13 +584,7 @@ const StaffManagement = () => {
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Contact</th>
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Role</th>
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Location</th>
-                <FilterableTh
-                  label="Status"
-                  className="text-left px-4 py-2.5 text-[11px]"
-                  value={activeTab}
-                  onChange={setActiveTab}
-                  options={STATUS_TABS.map(tab => ({ key: tab, label: TAB_LABELS[tab], count: counts[tab] ?? 0 }))}
-                />
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Status</th>
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Compliance Docs</th>
                 <th className="text-left px-4 py-2.5 text-[11px]" aria-sort={sortEarningsDesc ? 'descending' : 'none'}>
                   <button

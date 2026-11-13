@@ -3803,6 +3803,7 @@ const buildBookingsListSql = (salesFilter) => `
                 b.actual_end_time,
                 b.ot_rate,
                 b.daily_rate,
+                b.invoicing_mode,
                 b.is_hospitalized,
                 b.hospital_name,
                 c.client_profile_id,
@@ -3914,7 +3915,7 @@ exports.getAllBookings = async (req, res) => {
         }
 
         const filterParts = [];
-        const { status, service_model, hospitalized, salesperson } = req.query;
+        const { status, service_model, hospitalized, salesperson, invoicing_mode } = req.query;
         if (status === 'EXPIRING_SOON') {
             filterParts.push('base.is_expiring_soon');
         } else if (status === 'ACTIVE') {
@@ -3927,6 +3928,11 @@ exports.getAllBookings = async (req, res) => {
         if (service_model && service_model !== 'ALL') {
             params.push(service_model);
             filterParts.push(`base.service_model = $${params.length}`);
+        }
+        // Daily-invoicing mode only applies to LIVE_IN bookings (others are always manual).
+        if (invoicing_mode === 'AUTO' || invoicing_mode === 'MANUAL') {
+            params.push(invoicing_mode);
+            filterParts.push(`base.service_model = 'LIVE_IN' AND COALESCE(base.invoicing_mode, 'AUTO') = $${params.length}`);
         }
         if (hospitalized === 'true') filterParts.push('base.is_hospitalized');
         if (salesperson === 'ASSIGNED') filterParts.push('base.current_salesperson_id IS NOT NULL');
@@ -3988,6 +3994,8 @@ exports.getAllBookings = async (req, res) => {
                 COUNT(*) FILTER (WHERE base.service_model = 'SHIFT_BASED')::int AS "SHIFT_BASED",
                 COUNT(*) FILTER (WHERE base.service_model = 'VISITING')::int AS "VISITING",
                 COUNT(*) FILTER (WHERE base.service_model = 'LIVE_IN')::int AS "LIVE_IN",
+                COUNT(*) FILTER (WHERE base.service_model = 'LIVE_IN' AND COALESCE(base.invoicing_mode, 'AUTO') = 'AUTO')::int AS "INV_AUTO",
+                COUNT(*) FILTER (WHERE base.service_model = 'LIVE_IN' AND base.invoicing_mode = 'MANUAL')::int AS "INV_MANUAL",
                 COUNT(*) FILTER (WHERE base.is_hospitalized)::int AS hospitalized,
                 COUNT(*) FILTER (WHERE base.current_salesperson_id IS NOT NULL)::int AS "ASSIGNED",
                 COUNT(*) FILTER (WHERE base.current_salesperson_id IS NULL)::int AS "UNASSIGNED"
