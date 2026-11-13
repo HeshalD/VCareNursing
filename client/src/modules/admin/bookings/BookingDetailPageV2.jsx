@@ -944,12 +944,14 @@ const BookingDetailPageV2 = () => {
     if (isNaN(e.getTime())) return null;
     return Math.max(0, Math.floor((e - s) / 86400000) + 1);
   };
-  const projectedRemainingBalanceAt = (targetDateInput) => {
-    if (!targetDateInput || !dailyRate) return remainingBalance;
-    const targetServedDays = servedDaysAsOf(targetDateInput);
-    if (targetServedDays === null) return remainingBalance;
-    return totalPaid - (targetServedDays * dailyRate);
-  };
+  // The backend (services/bookingSettlement.js) now settles exactly what is still
+  // reserved for this booking — bookings.wallet_earmarked, which each invoiced day
+  // has already drawn down and each revoked day has restored. Projecting
+  // `totalPaid - servedDays * dailyRate` here instead double-counted days that were
+  // already invoiced (and ignored revoked ones), so it disagreed with the server:
+  // it hid/showed the wrong amount and mis-gated the "note required" check.
+  // targetDateInput is kept for call-site compatibility.
+  const projectedRemainingBalanceAt = (_targetDateInput) => walletEarmarked;
   const actionsTargetDate = actualEndTime ? actualEndTime.slice(0, 10) : toDateInput(new Date());
   const projectedRemainingBalance = projectedRemainingBalanceAt(actionsTargetDate);
 
