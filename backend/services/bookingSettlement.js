@@ -9,15 +9,25 @@ const getBookingFinancialTotals = async (client, booking_id) => {
     const result = await client.query(
         `SELECT
             COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) as total_paid,
-            COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) as total_invoiced
+            COALESCE(SUM(CASE WHEN ${bookingChargeSql()} THEN amount ELSE 0 END), 0) as total_invoiced,
+            COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND category::text = 'WALLET_REFUND'
+                               AND notes LIKE 'Reversal of %' THEN amount ELSE 0 END), 0) as reversed
          FROM transactions
          WHERE booking_id = $1`,
         [booking_id]
     );
 
+    // A revoked day (services/billingService.reverseServiceInvoice) leaves its original
+    // charge AND the payment that settled it on the ledger, then adds a WALLET_REFUND
+    // credit for the same amount. Taken raw, that reads as one more payment and still
+    // counts the cancelled charge. Net the whole thing out: the charge (-R), the
+    // payment that covered it (-R) and the refund credit itself (-R), so Total Invoiced
+    // and Total Paid describe only days that still stand. Overdue (paid - invoiced) is
+    // unchanged by this netting except for removing the spurious surplus.
+    const reversed = parseFloat(result.rows[0]?.reversed || 0);
     return {
-        total_paid: parseFloat(result.rows[0]?.total_paid || 0),
-        total_invoiced: parseFloat(result.rows[0]?.total_invoiced || 0)
+        total_paid: parseFloat(result.rows[0]?.total_paid || 0) - 2 * reversed,
+        total_invoiced: parseFloat(result.rows[0]?.total_invoiced || 0) - reversed
     };
 };
 

@@ -41,7 +41,7 @@ const bookingSettledSql = (alias = '') => {
 };
 
 async function getClientFinancialTotals(clientId) {
-  const [txResult, oiResult, overduePayments, legacyResult] = await Promise.all([
+  const [txResult, oiResult, overduePayments, legacyResult, reversalResult] = await Promise.all([
     db.query(
       `SELECT
          COALESCE(SUM(amount) FILTER (
@@ -73,13 +73,23 @@ async function getClientFinancialTotals(clientId) {
        WHERE b.client_id = $1
          AND c.target_type = 'INVOICE' AND c.applied_in_place = false AND c.delta_amount < 0`,
       [clientId]
+    ),
+    // Revoked days: the original charge stays on the ledger and is cancelled by a
+    // WALLET_REFUND "Reversal of …" credit (billingService.reverseServiceInvoice).
+    db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS reversed
+       FROM transactions
+       WHERE client_id = $1 AND category::text = 'WALLET_REFUND' AND transaction_type = 'CREDIT'
+         AND notes LIKE 'Reversal of %'`,
+      [clientId]
     )
   ]);
 
   const totalPaid = parseFloat(txResult.rows[0]?.total_paid || 0);
   const totalInvoiced = parseFloat(txResult.rows[0]?.total_invoiced || 0)
     + parseFloat(oiResult.rows[0]?.all_time_invoiced || 0)
-    - parseFloat(legacyResult.rows[0]?.reductions || 0);
+    - parseFloat(legacyResult.rows[0]?.reductions || 0)
+    - parseFloat(reversalResult.rows[0]?.reversed || 0);
   const balanceDue = overduePayments.reduce((sum, row) => sum + row.balance_due, 0)
     + parseFloat(oiResult.rows[0]?.open_overdue || 0);
   return {

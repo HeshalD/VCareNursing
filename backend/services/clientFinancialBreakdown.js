@@ -221,12 +221,12 @@ const buildTotalInvoiced = async (clientId, totals) => {
   const chargeTotal = sum(charges, (r) => r.amount);
   const regTotal = sum(regInvoices, (r) => r.amount);
   const legacyTotal = sum(legacy, (r) => r.amount); // negative
-  const derived = round2(chargeTotal + regTotal + legacyTotal);
+  const reversed = num(reversalRes.rows[0].reversed);
+  const derived = round2(chargeTotal + regTotal + legacyTotal - reversed);
 
   // What the care-day invoices (Invoices tab) say the client was billed must equal what the
   // ledger says once reversals are netted off.
   const serviceCharges = sum(charges.filter((r) => r.category === 'SERVICE_INVOICE'), (r) => r.amount);
-  const reversed = num(reversalRes.rows[0].reversed);
   const ledgerNet = round2(serviceCharges - reversed);
   const dayBilled = num(dayRes.rows[0].billed);
   const dayKept = num(dayRes.rows[0].kept);
@@ -243,13 +243,14 @@ const buildTotalInvoiced = async (clientId, totals) => {
       { label: 'Charges on the ledger', value: chargeTotal },
       { label: 'Registration-fee invoices', value: regTotal },
       { label: 'Older corrections not folded into the ledger', value: legacyTotal },
+      { label: 'Revoked days (charge cancelled)', value: -reversed },
     ],
     rules: [
       'Counts every ledger DEBIT that is a charge: daily/shift service invoices and registration-fee charges raised on a booking.',
       'Does not count WALLET_DEBIT, CLIENT_REFUND or DEPOSIT_REFUND debits — wallet bookkeeping and money paid back are not charges.',
       'Adds every registration-fee invoice ever raised (the overdue-invoices list), whether it was paid or not.',
       'Subtracts care-day invoice reductions made before corrections edited the ledger entry in place — those left the original charge on the ledger.',
-      'A revoked day keeps its original charge here; its reversal is a credit that settles the booking on the Overdue side.',
+      'A revoked day keeps its original row on the ledger, but its charge is taken off here — the reversal credit (WALLET_REFUND "Reversal of …") cancels it.',
     ],
     checks: [
       {
