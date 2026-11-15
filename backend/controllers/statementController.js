@@ -59,6 +59,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
             COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS opening_invoices
         FROM transactions
         WHERE client_id = $1 AND created_at < $2
+          AND category::text <> 'REGISTRATION_FEE'
     `, [client_id, start_date]);
 
     const openingPayments = parseFloat(openingSumsRes.rows[0].opening_payments || 0);
@@ -82,7 +83,12 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
         ORDER BY created_at ASC
     `, [client_id, start_date, end_date]);
 
-    const transactions = periodTransRes.rows || [];
+    // The registration fee is a one-off membership charge, its own account — it must not
+    // sit in the service running balance (a fee payment would otherwise show up as
+    // prepaid credit that service invoices silently eat into). It is listed separately.
+    const allRows = periodTransRes.rows || [];
+    const transactions = allRows.filter((t) => t.category !== 'REGISTRATION_FEE');
+    const registrationRows = allRows.filter((t) => t.category === 'REGISTRATION_FEE');
     let totalInvoiced = 0;
     let totalPaid = 0;
 
@@ -122,6 +128,17 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
         };
     });
 
+    const registrationFeeLines = registrationRows.map((t) => {
+        const amt = parseFloat(t.amount || 0);
+        const isDebit = t.transaction_type === 'DEBIT';
+        return {
+            date: t.date,
+            details: [t.notes, 'Valid for 1 year from date of commencement'].filter(Boolean).join('\n'),
+            invoiced: isDebit ? amt : 0,
+            paid: isDebit ? 0 : amt
+        };
+    });
+
     const clientRes = await db.query(
         `SELECT cp.honorific, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number
          FROM client_profiles cp
@@ -154,12 +171,19 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
             details: line.transactions === 'REGISTRATION_FEE'
                 ? [line.details, 'Valid for 1 year from date of commencement'].filter(Boolean).join('\n')
                 : (line.details || ''),
-            amount: line.amount_invoiced ? parseFloat(line.amount_invoiced).toFixed(2) : '',
+            // Invoices are charges owed, so they print negative (matching the balance).
+            amount: line.amount_invoiced ? `-${parseFloat(line.amount_invoiced).toFixed(2)}` : '',
             payments: line.amount_paid ? parseFloat(line.amount_paid).toFixed(2) : '',
             balance: parseFloat(line.balance).toFixed(2),
             booking_id: line.booking_id,
             transaction_id: line.transaction_id,
             row_type: line.row_type
+        })),
+        registrationFee: registrationFeeLines.map((r) => ({
+            date: fmtStatementDate(r.date),
+            details: r.details,
+            invoiced: r.invoiced ? `-${r.invoiced.toFixed(2)}` : '',
+            paid: r.paid ? r.paid.toFixed(2) : ''
         }))
     };
 
@@ -171,6 +195,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
         totalPaid,
         currentBalance,
         statementLines,
+        registrationFeeLines,
         pdfData
     };
 };
@@ -334,7 +359,7 @@ exports.getClientStatement = async (req, res) => {
     const { start_date, end_date } = normalizeDateRange(req);
 
     try {
-        const { openingBalance, totalInvoiced, totalPaid, currentBalance, statementLines } = await buildStatementPayload(client_id, start_date, end_date);
+        const { openingBalance, totalInvoiced, totalPaid, currentBalance, statementLines, registrationFeeLines } = await buildStatementPayload(client_id, start_date, end_date);
 
         // 4. Send formatted data to frontend or PDF generator
         res.status(200).json({
@@ -344,7 +369,8 @@ exports.getClientStatement = async (req, res) => {
                 amount_paid: totalPaid,
                 balance_due: currentBalance
             },
-            ledger: statementLines
+            ledger: statementLines,
+            registration_fee: registrationFeeLines
         });
 
     } catch (error) {

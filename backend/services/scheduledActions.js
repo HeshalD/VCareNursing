@@ -22,6 +22,7 @@ const {
     sendClientStaffSwapped,
 } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
+const { FORCE_MANUAL_FOR_SWAP_SQL, restoreAutoInvoicingIfSwapResolved } = require('./invoicingMode');
 const { applyPartialAttendanceTime } = require('../controllers/dailyAttendanceController')._internal;
 
 const SYSTEM_ACTOR = { user_id: null, name: 'SYSTEM (scheduled)', role: 'SYSTEM' };
@@ -479,7 +480,7 @@ const executeStaffSwap = async (client, payload) => {
 
     // Point the booking at the incoming staff, force manual invoicing (same
     // one-way switch as the immediate path — see swapStaff's header), + overrides.
-    const fields = [`assigned_staff_id = $1`, `invoicing_mode = 'MANUAL'`];
+    const fields = [`assigned_staff_id = $1`, FORCE_MANUAL_FOR_SWAP_SQL];
     const values = [new_staff_id];
     let p = 2;
     if (new_daily_rate !== undefined && new_daily_rate !== null) { fields.push(`daily_rate = $${p}`); values.push(new_daily_rate); p++; }
@@ -809,6 +810,9 @@ const executeStaffRelieve = async (client, payload) => {
     }
 
     const closedOn = await endAssignmentAt(client, { booking_id, assignment, out_time });
+    // Relieving the outgoing staff completes the swap — restore automatic invoicing if the
+    // swap had forced it to manual (services/invoicingMode.js).
+    const invoicingRestored = await restoreAutoInvoicingIfSwapResolved(client, booking_id);
     await client.query(
         `UPDATE staff_profiles SET current_status = 'ON_LEAVE'
          WHERE staff_profile_id = $1 AND current_status = 'AVAILABLE'
@@ -825,8 +829,19 @@ const executeStaffRelieve = async (client, payload) => {
                 actionType: 'STAFF_RELIEVED_FOR_LEAVE',
                 entityType: 'BOOKING',
                 entityId: String(booking_id),
-                details: { booking_id, staff_profile_id, assignment_id, closed_on: closedOn, leave_id, leave_start, leave_end },
+                details: { booking_id, staff_profile_id, assignment_id, closed_on: closedOn, leave_id, leave_start, leave_end, invoicing_mode_restored: invoicingRestored },
             });
+            if (invoicingRestored) {
+                await logActivity({
+                    actorUserId: actor.user_id,
+                    actorName: actor.name,
+                    actorRole: actor.role,
+                    actionType: 'INVOICING_MODE_UPDATED',
+                    entityType: 'BOOKING',
+                    entityId: String(booking_id),
+                    details: { invoicing_mode: 'AUTO', automatic: true, reason: 'Staff swap completed — restored automatic invoicing' },
+                });
+            }
         } catch (e) {
             console.error('[executeStaffRelieve] notify error:', e.message);
         }

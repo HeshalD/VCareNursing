@@ -58,7 +58,13 @@ async function getClientFinancialTotals(clientId) {
       [clientId, NON_PAYMENT_CREDIT_CATEGORIES, NON_CHARGE_DEBIT_CATEGORIES]
     ),
     db.query(
-      `SELECT COALESCE(SUM(amount), 0) as all_time_invoiced,
+      // A registration-fee overdue invoice is not counted once the fee has its own ledger
+      // debit (booking conversion / admin payment entry book one) — it would count twice.
+      `SELECT COALESCE(SUM(amount) FILTER (WHERE NOT (
+                source_type = 'REGISTRATION_FEE' AND EXISTS (
+                  SELECT 1 FROM transactions t
+                  WHERE t.client_id = overdue_invoices.client_id
+                    AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT'))), 0) as all_time_invoiced,
               COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE'), 0) as open_overdue,
               COUNT(*) FILTER (WHERE status = 'OVERDUE')::int as overdue_count
        FROM overdue_invoices

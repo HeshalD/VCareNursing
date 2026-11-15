@@ -162,7 +162,11 @@ const buildTotalInvoiced = async (clientId, totals) => {
     fetchLedger(clientId),
     db.query(
       `SELECT overdue_invoice_id AS id, invoice_code AS code, source_type, status, amount, invoiced_at AS date
-       FROM overdue_invoices WHERE client_id = $1 ORDER BY invoiced_at ASC`,
+       FROM overdue_invoices o WHERE client_id = $1
+         AND NOT (source_type = 'REGISTRATION_FEE' AND EXISTS (
+               SELECT 1 FROM transactions t WHERE t.client_id = o.client_id
+                 AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT'))
+       ORDER BY invoiced_at ASC`,
       [clientId]
     ),
     db.query(

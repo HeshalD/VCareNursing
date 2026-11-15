@@ -10,6 +10,7 @@ const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew, sendClientInv
 const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
+const { recordRegFeeInvoiceDebit } = require('../services/registrationFeeService');
 const { createOverdueInvoice, resolveOverdueInvoices } = require('../services/overdueInvoices');
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
@@ -2295,6 +2296,10 @@ exports.updateRegFeeStatus = async (req, res) => {
     // WAIVED involves no cash, so no transaction is created for it.
     if (status === 'PAID' && !wasAlreadyPaid) {
       try {
+        await recordRegFeeInvoiceDebit(db, {
+          client_id, amount: current.rows[0].reg_fee_amount, at: ledgerTimestamp,
+          notes: 'Registration fee invoiced (marked paid by admin)',
+        });
         await db.query(
           `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
            VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)', COALESCE($3::timestamptz, NOW()))`,
@@ -2396,6 +2401,10 @@ exports.verifyRegFeePayment = async (req, res) => {
     // Real cash was just confirmed received — record it as a client payment
     // transaction so it appears on the Transactions ledger and counts as Money In.
     try {
+      await recordRegFeeInvoiceDebit(db, {
+        client_id, amount: client.reg_fee_amount, at: ledgerTimestamp,
+        notes: 'Registration fee invoiced (receipt verified)',
+      });
       await db.query(
         `INSERT INTO transactions (client_id, category, amount, transaction_type, status, receipt_url, notes, created_at)
          VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', $3, 'Registration fee payment (receipt verified)', COALESCE($4::timestamptz, NOW()))`,
@@ -2506,9 +2515,14 @@ exports.backdateRegFeePayment = async (req, res) => {
       [feeAmount, paidAt, expiresAt, client_id]
     );
 
-    // Dated to the actual payment date (not "now") so the statement/transactions
-    // ledger reflects when the money actually came in, not when this was entered.
+    // Book the fee the same way a normal registration does: an invoice (DEBIT) and the
+    // payment that settled it (CREDIT), both dated to the actual payment date (not "now")
+    // so the ledger reflects when it really happened. A payment with no invoice made the
+    // fee look like prepaid credit and left it out of Total Invoiced.
     try {
+      await recordRegFeeInvoiceDebit(db, {
+        client_id, amount: feeAmount, at: paidAt, notes: 'Registration fee invoiced (backdated entry by admin)',
+      });
       await db.query(
         `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
          VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (backdated entry by admin)', $3)`,
@@ -2516,6 +2530,37 @@ exports.backdateRegFeePayment = async (req, res) => {
       );
     } catch (txErr) {
       console.error('Failed to record backdated registration fee transaction:', txErr.message);
+    }
+
+    // Give the fee its own invoice document (client's Registration Fee Invoices list),
+    // unless one already exists — the UPDATE below flips an existing SENT one to PAID.
+    try {
+      const existingInv = await db.query(
+        `SELECT 1 FROM client_reg_fee_invoices WHERE client_id = $1 LIMIT 1`, [client_id]
+      );
+      if (existingInv.rows.length === 0) {
+        const nameRow = await db.query(
+          `SELECT client_code, honorific, full_name, company_name, display_name_source
+           FROM client_profiles WHERE client_profile_id = $1`, [client_id]
+        );
+        const row = nameRow.rows[0];
+        const invoiceCode = `INV-${row.client_code || String(client_id).slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+        const pdfUrl = await generateAndUploadRegFeeInvoice({
+          invoice_code: invoiceCode,
+          invoice_date: paidAt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          client_name: billingName(row) || row.full_name,
+          amount: feeAmount,
+          bank_name: '', account_holder_name: '', account_number: '', branch_name: '—',
+          upload_url: '',
+        });
+        await db.query(
+          `INSERT INTO client_reg_fee_invoices (client_id, invoice_code, amount, pdf_url, status, sent_by, period_start, period_end, created_at)
+           VALUES ($1, $2, $3, $4, 'PAID', $5, $6, $7, $8)`,
+          [client_id, invoiceCode, feeAmount, pdfUrl, req.user.user_id, paidAt, expiresAt, paidAt]
+        );
+      }
+    } catch (docErr) {
+      console.error('Failed to create backdated registration fee invoice document:', docErr.message);
     }
 
     try {

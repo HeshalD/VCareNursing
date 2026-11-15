@@ -43,6 +43,7 @@ const { createApprovedLeave, notifyLeaveApproved, markOnLeaveIfActiveToday, find
 const { drawWalletForBooking, getEarmarkedTotal } = require('../services/walletService');
 const { chargeRegistrationFeeForBooking } = require('../services/registrationFeeService');
 const { isServiceDay } = require('../services/repeatDays');
+const { FORCE_MANUAL_FOR_SWAP_SQL, restoreAutoInvoicingIfSwapResolved } = require('../services/invoicingMode');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -2860,7 +2861,9 @@ exports.updateInvoicingMode = async (req, res) => {
         }
 
         const result = await db.query(
-            `UPDATE bookings SET invoicing_mode = $1 WHERE booking_id = $2 RETURNING booking_id, invoicing_mode`,
+            // An admin's explicit choice wins: clear the remembered pre-swap mode so a later
+            // swap completion can't override it (services/invoicingMode.js).
+            `UPDATE bookings SET invoicing_mode = $1, invoicing_mode_before_swap = NULL WHERE booking_id = $2 RETURNING booking_id, invoicing_mode`,
             [invoicing_mode, booking_id]
         );
 
@@ -4937,7 +4940,9 @@ exports.swapStaff = async (req, res) => {
         );
         const forceManual = stillConcurrentRes.rows[0].n > 1;
         const updateFields = [`assigned_staff_id = $1`];
-        if (forceManual) updateFields.push(`invoicing_mode = 'MANUAL'`);
+        // Remembers the mode being replaced so closing the outgoing staff's assignment can
+        // restore it (services/invoicingMode.js).
+        if (forceManual) updateFields.push(FORCE_MANUAL_FOR_SWAP_SQL);
         const updateValues = [new_staff_id];
         let paramCount = 2;
 
@@ -4970,7 +4975,24 @@ exports.swapStaff = async (req, res) => {
             [new_staff_id]
         );
 
+        // A backdated swap that already closed the outgoing side leaves one clean staff
+        // member: if an earlier swap had forced this booking to manual, put it back now.
+        const invoicingRestored = !forceManual
+            ? await restoreAutoInvoicingIfSwapResolved(client, booking_id)
+            : false;
+
         await client.query('COMMIT');
+
+        if (invoicingRestored) {
+            logActivity({
+                actorUserId: req.user.user_id,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'INVOICING_MODE_UPDATED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { invoicing_mode: 'AUTO', automatic: true, reason: 'Staff swap completed — restored automatic invoicing' },
+            }).catch(err => console.error('Activity log failed:', err));
+        }
 
         // 6. Activity log (non-fatal — must not roll back the committed swap)
         try {
@@ -5409,6 +5431,11 @@ exports.closeStaffAssignment = async (req, res) => {
             );
         }
 
+        // Closing the outgoing staff's assignment is what completes a swap. If the swap had
+        // forced this booking to manual invoicing, put it back to automatic now that one
+        // staff member is left (see services/invoicingMode.js for the exact conditions).
+        const invoicingRestored = await restoreAutoInvoicingIfSwapResolved(client, booking_id);
+
         // Same transaction as the close itself — see the header. An empty list is
         // what the UI sends when both ends were already decided (e.g. by a
         // backdated swap), so there's nothing to settle.
@@ -5437,15 +5464,27 @@ exports.closeStaffAssignment = async (req, res) => {
                     booking_id, assignment_id, staff_profile_id: assignment.staff_profile_id,
                     out_time: closeDateStr, settled_days: settled,
                     reversed_after_end: afterEnd, paused_from: pausedFrom,
+                    invoicing_mode_restored: invoicingRestored,
                 },
             });
+            if (invoicingRestored) {
+                await logActivity({
+                    actorUserId: req.user.user_id,
+                    actorName,
+                    actorRole: extractActorRole(req.user.role),
+                    actionType: 'INVOICING_MODE_UPDATED',
+                    entityType: 'BOOKING',
+                    entityId: booking_id,
+                    details: { invoicing_mode: 'AUTO', automatic: true, reason: 'Staff swap completed — restored automatic invoicing' },
+                });
+            }
         } catch (logErr) {
             console.error('Activity log error (non-fatal):', logErr);
         }
 
         res.status(200).json({
             status: 'success',
-            data: { booking_id, assignment_id, service_end_date: closeDateStr, settled, reversed_after_end: afterEnd, paused_from: pausedFrom },
+            data: { booking_id, assignment_id, service_end_date: closeDateStr, settled, reversed_after_end: afterEnd, paused_from: pausedFrom, invoicing_mode_restored: invoicingRestored },
         });
     } catch (error) {
         await client.query('ROLLBACK');

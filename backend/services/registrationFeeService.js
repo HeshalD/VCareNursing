@@ -117,4 +117,29 @@ async function chargeRegistrationFeeForBooking(client, {
   return result;
 }
 
-module.exports = { chargeRegistrationFeeForBooking };
+// Books the registration-fee INVOICE (a DEBIT) for fee payments settled outside a
+// quotation (admin mark-paid, receipt verified, backdated entry). Those paths used to
+// write only the payment CREDIT, so the fee looked like prepaid credit and was missing
+// from Total Invoiced. Idempotent and double-count safe: skipped when the client already
+// has a registration DEBIT, or an invoice that was sent (SENT) — that one already counts
+// in Total Invoiced through overdue_invoices.
+// Returns true if a debit was written. Call it BEFORE inserting the payment CREDIT.
+async function recordRegFeeInvoiceDebit(client, { client_id, amount, at = null, notes }) {
+  const res = await client.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM overdue_invoices WHERE client_id = $1 AND source_type = 'REGISTRATION_FEE') AS in_overdue,
+       EXISTS (SELECT 1 FROM transactions WHERE client_id = $1 AND category::text = 'REGISTRATION_FEE'
+               AND transaction_type = 'DEBIT') AS has_debit`,
+    [client_id]
+  );
+  const { in_overdue, has_debit } = res.rows[0];
+  if (in_overdue || has_debit) return false;
+  await client.query(
+    `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
+     VALUES ($1, 'REGISTRATION_FEE', $2, 'DEBIT', 'COMPLETED', $3, COALESCE($4::timestamptz, NOW()))`,
+    [client_id, amount, notes, at]
+  );
+  return true;
+}
+
+module.exports = { chargeRegistrationFeeForBooking, recordRegFeeInvoiceDebit };

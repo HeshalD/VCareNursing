@@ -286,6 +286,30 @@
         </tfoot>
     </table>
 
+    <!-- ══ REGISTRATION FEE (separate account, not part of the balance above) ══ -->
+    {{#if registrationFee.length}}
+    <table class="ledger-table" style="margin-top:24px;">
+        <thead>
+            <tr>
+                <th style="width:90px;">Date</th>
+                <th>Registration Fee (separate from the service balance)</th>
+                <th class="right" style="width:110px;">Invoiced</th>
+                <th class="right" style="width:110px;">Paid</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each registrationFee}}
+            <tr>
+                <td>{{this.date}}</td>
+                <td style="white-space: pre-line;">{{this.details}}</td>
+                <td class="right">{{this.invoiced}}</td>
+                <td class="right">{{this.paid}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+    {{/if}}
+
     <!-- ══ FOOTER / BANK DETAILS ══ -->
     <div class="footer-note">
         <strong>Note:</strong><br>

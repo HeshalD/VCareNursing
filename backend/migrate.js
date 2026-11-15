@@ -2411,6 +2411,13 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS invoicing_mode VARCHAR(10) NOT NULL DEFAULT 'AUTO'
   `);
 
+  // The invoicing mode a booking had before a staff swap forced it to MANUAL — set only
+  // when it was AUTO, so the swap can put it back once resolved (services/invoicingMode.js).
+  await db.query(`
+    ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS invoicing_mode_before_swap VARCHAR(10)
+  `);
+
   // Non-LIVE_IN bookings are always treated as manual by the app regardless of
   // this value, but backfill it explicitly so the column reflects real behavior.
   await db.query(`
