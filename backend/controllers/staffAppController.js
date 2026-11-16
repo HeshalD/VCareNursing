@@ -368,10 +368,19 @@ exports.acceptApplication = async (req, res) => {
     // 2. Check if User Already Exists (by Email OR Mobile)
     // This lets an existing client (matched by email or mobile) be linked
     // to a staff profile instead of creating a duplicate user.
-    const existingUserResult = await client.query(
-      'SELECT * FROM users WHERE email = $1 OR mobile_number = $2',
-      [app.email, app.mobile_number]
-    );
+    // A blank email ('' or whitespace) is "no email", never a match key: otherwise it
+    // collides with any user stored with an empty email and the applicant gets
+    // merged into that unrelated account instead of getting their own.
+    const appEmail = (app.email && app.email.trim()) ? app.email.trim() : null;
+    const existingUserResult = appEmail
+      ? await client.query(
+          'SELECT * FROM users WHERE email = $1 OR mobile_number = $2',
+          [appEmail, app.mobile_number]
+        )
+      : await client.query(
+          'SELECT * FROM users WHERE mobile_number = $1',
+          [app.mobile_number]
+        );
 
     let userId;
     let tempPassword = null; // Only generated for NEW users
@@ -385,9 +394,9 @@ exports.acceptApplication = async (req, res) => {
 
         // If the existing user record lacks an email but the application provides one,
         // update the user's email so future logins use the provided email.
-        if ((!existingUser.email || existingUser.email.trim() === '') && app.email) {
+        if ((!existingUser.email || existingUser.email.trim() === '') && appEmail) {
           try {
-            await client.query('UPDATE users SET email = $1 WHERE user_id = $2', [app.email, userId]);
+            await client.query('UPDATE users SET email = $1 WHERE user_id = $2', [appEmail, userId]);
           } catch (err) {
             // Ignore update errors here — if the email conflicts with another record
             // the unique constraint will be handled by the outer transaction catch.
@@ -474,7 +483,7 @@ exports.acceptApplication = async (req, res) => {
       }
 
       const userResult = await client.query(userInsertQuery, [
-        app.email,
+        appEmail,
         hashedPassword,
         app.mobile_number,
         cleanedRoles
