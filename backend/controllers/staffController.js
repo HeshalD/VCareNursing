@@ -1413,6 +1413,19 @@ exports.reactivateStaffAccount = async (req, res) => {
     }
 };
 
+// Upper bound on a single bulk staff action. Must comfortably exceed the total staff
+// count so "select all" across the whole filtered list works (it was 1000, which broke
+// once there were ~2,600 staff).
+const MAX_BULK_STAFF = 10000;
+
+// Write activity-log rows in small sequential chunks so a bulk action over thousands of
+// staff doesn't fire thousands of concurrent inserts at the DB pool.
+async function logActivityChunked(rows, build, chunkSize = 50) {
+    for (let i = 0; i < rows.length; i += chunkSize) {
+        await Promise.all(rows.slice(i, i + chunkSize).map(row => logActivity(build(row))));
+    }
+}
+
 // Admin: enable/disable staff-dashboard access for one or many staff members.
 // Body: { staff_profile_ids: [...], disabled: boolean }. Unlike deactivate, this
 // leaves users.is_active and availability untouched — only the staff dashboard is locked.
@@ -1421,7 +1434,7 @@ exports.setStaffPortalAccess = async (req, res) => {
     const ids = Array.from(new Set((single ? [single] : req.body.staff_profile_ids) || []));
     const { disabled } = req.body;
 
-    if (typeof disabled !== 'boolean' || ids.length === 0 || ids.length > 1000) {
+    if (typeof disabled !== 'boolean' || ids.length === 0 || ids.length > MAX_BULK_STAFF) {
         return res.status(400).json({ status: 'error', message: 'Provide staff_profile_ids and a boolean "disabled".' });
     }
 
@@ -1439,7 +1452,7 @@ exports.setStaffPortalAccess = async (req, res) => {
             const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
             const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
             const cleanRole = typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole);
-            await Promise.all(updateRes.rows.map(row => logActivity({
+            await logActivityChunked(updateRes.rows, row => ({
                 actorUserId: req.user.user_id,
                 actorName,
                 actorRole: cleanRole,
@@ -1447,7 +1460,7 @@ exports.setStaffPortalAccess = async (req, res) => {
                 entityType: 'STAFF',
                 entityId: String(row.staff_profile_id),
                 details: { staff_name: row.full_name, bulk: ids.length > 1 },
-            })));
+            }));
         } catch (logErr) {
             console.error('Activity log failed (setStaffPortalAccess):', logErr.message);
         }
@@ -1470,7 +1483,7 @@ exports.setStaffPublicVisibility = async (req, res) => {
     const ids = Array.from(new Set((single ? [single] : req.body.staff_profile_ids) || []));
     const { visible } = req.body;
 
-    if (typeof visible !== 'boolean' || ids.length === 0 || ids.length > 1000) {
+    if (typeof visible !== 'boolean' || ids.length === 0 || ids.length > MAX_BULK_STAFF) {
         return res.status(400).json({ status: 'error', message: 'Provide staff_profile_ids and a boolean "visible".' });
     }
 
@@ -1487,7 +1500,7 @@ exports.setStaffPublicVisibility = async (req, res) => {
             const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
             const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
             const cleanRole = typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole);
-            await Promise.all(updateRes.rows.map(row => logActivity({
+            await logActivityChunked(updateRes.rows, row => ({
                 actorUserId: req.user.user_id,
                 actorName,
                 actorRole: cleanRole,
@@ -1495,7 +1508,7 @@ exports.setStaffPublicVisibility = async (req, res) => {
                 entityType: 'STAFF',
                 entityId: String(row.staff_profile_id),
                 details: { staff_name: row.full_name, bulk: ids.length > 1 },
-            })));
+            }));
         } catch (logErr) {
             console.error('Activity log failed (setStaffPublicVisibility):', logErr.message);
         }
@@ -1515,7 +1528,7 @@ exports.setStaffPublicVisibility = async (req, res) => {
 exports.getAllStaff = async (req, res) => {
     try {
         // Optional query parameters for filtering
-        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', live_in = '', hospital = '', sort_earnings = '', page = 1, limit = 10 } = req.query;
+        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', live_in = '', hospital = '', public_site = '', sort_earnings = '', page = 1, limit = 10 } = req.query;
 
         // Opt-in sort by current earnings (highest first); default is newest first.
         const orderBy = sort_earnings === 'desc'
@@ -1555,6 +1568,13 @@ exports.getAllStaff = async (req, res) => {
             whereClause += ` AND sp.portal_access_disabled = false`;
         } else if (portal_access === 'disabled') {
             whereClause += ` AND sp.portal_access_disabled = true`;
+        }
+
+        // Public-site visibility: 'shown' = displayed on the public site, 'hidden' = not.
+        if (public_site === 'shown') {
+            whereClause += ` AND sp.show_on_public_site = true`;
+        } else if (public_site === 'hidden') {
+            whereClause += ` AND sp.show_on_public_site = false`;
         }
 
         // Care-setting preferences: 'yes' = willing, 'no' = not willing.
@@ -1613,6 +1633,8 @@ exports.getAllStaff = async (req, res) => {
               COUNT(*) FILTER (WHERE sp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count,
               COUNT(*) FILTER (WHERE sp.portal_access_disabled = false) AS portal_enabled_count,
               COUNT(*) FILTER (WHERE sp.portal_access_disabled = true) AS portal_disabled_count,
+              COUNT(*) FILTER (WHERE sp.show_on_public_site = true) AS public_shown_count,
+              COUNT(*) FILTER (WHERE sp.show_on_public_site = false) AS public_hidden_count,
               COUNT(*) FILTER (WHERE sp.willing_to_live_in = true) AS live_in_count,
               COUNT(*) FILTER (WHERE COALESCE(sp.willing_to_live_in, false) = false) AS not_live_in_count,
               COUNT(*) FILTER (WHERE sp.willing_to_stay_at_hospital = true) AS hospital_count,
@@ -1727,6 +1749,8 @@ exports.getAllStaff = async (req, res) => {
                 pending_migration: parseInt(c.pending_migration_count, 10),
                 portal_enabled: parseInt(c.portal_enabled_count, 10),
                 portal_disabled: parseInt(c.portal_disabled_count, 10),
+                public_shown: parseInt(c.public_shown_count, 10),
+                public_hidden: parseInt(c.public_hidden_count, 10),
                 live_in: parseInt(c.live_in_count, 10),
                 not_live_in: parseInt(c.not_live_in_count, 10),
                 hospital: parseInt(c.hospital_count, 10),

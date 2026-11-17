@@ -92,6 +92,7 @@ const StaffManagement = () => {
   const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
   const [portalFilter, setPortalFilter] = useState('all'); // 'all' | 'enabled' | 'disabled'
+  const [publicFilter, setPublicFilter] = useState('all'); // 'all' | 'shown' | 'hidden' (public site visibility)
   const [liveInFilter, setLiveInFilter] = useState('all'); // 'all' | 'yes' | 'no'
   const [hospitalFilter, setHospitalFilter] = useState('all'); // 'all' | 'yes' | 'no'
   const [sortEarningsDesc, setSortEarningsDesc] = useState(false);
@@ -146,12 +147,12 @@ const StaffManagement = () => {
   }, [filtersOpen]);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
-  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc]);
+  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, publicFilter, liveInFilter, hospitalFilter, sortEarningsDesc]);
 
-  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc, page]);
+  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, publicFilter, liveInFilter, hospitalFilter, sortEarningsDesc, page]);
 
   // Clear selection whenever the underlying list changes to avoid acting on stale rows.
-  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, liveInFilter, hospitalFilter, sortEarningsDesc, page]);
+  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, publicFilter, liveInFilter, hospitalFilter, sortEarningsDesc, page]);
 
   const buildFilters = () => ({
     page,
@@ -160,6 +161,7 @@ const StaffManagement = () => {
     ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
     ...(portalFilter !== 'all' ? { portal_access: portalFilter } : {}),
+    ...(publicFilter !== 'all' ? { public_site: publicFilter } : {}),
     ...(liveInFilter !== 'all' ? { live_in: liveInFilter } : {}),
     ...(hospitalFilter !== 'all' ? { hospital: hospitalFilter } : {}),
     ...(sortEarningsDesc ? { sort_earnings: 'desc' } : {}),
@@ -335,13 +337,15 @@ const StaffManagement = () => {
   const FILTER_FIELDS = [
     { label: 'Dashboard access', value: portalFilter, set: setPortalFilter, options: [
       { key: 'all', label: 'Any' }, { key: 'enabled', label: 'Has access', count: counts.portal_enabled }, { key: 'disabled', label: 'No access', count: counts.portal_disabled } ] },
+    { label: 'Public site', value: publicFilter, set: setPublicFilter, options: [
+      { key: 'all', label: 'Any' }, { key: 'shown', label: 'Displayed to public', count: counts.public_shown }, { key: 'hidden', label: 'Not displayed', count: counts.public_hidden } ] },
     { label: 'Live-in', value: liveInFilter, set: setLiveInFilter, options: [
       { key: 'all', label: 'Any' }, { key: 'yes', label: 'Willing', count: counts.live_in }, { key: 'no', label: 'Not willing', count: counts.not_live_in } ] },
     { label: 'Hospital stay', value: hospitalFilter, set: setHospitalFilter, options: [
       { key: 'all', label: 'Any' }, { key: 'yes', label: 'Willing', count: counts.hospital }, { key: 'no', label: 'Not willing', count: counts.not_hospital } ] },
   ];
-  const activeFilterCount = [portalFilter, liveInFilter, hospitalFilter].filter(v => v !== 'all').length + (pendingMigrationOnly ? 1 : 0);
-  const clearFilters = () => { setPortalFilter('all'); setLiveInFilter('all'); setHospitalFilter('all'); setPendingMigrationOnly(false); };
+  const activeFilterCount = [portalFilter, publicFilter, liveInFilter, hospitalFilter].filter(v => v !== 'all').length + (pendingMigrationOnly ? 1 : 0);
+  const clearFilters = () => { setPortalFilter('all'); setPublicFilter('all'); setLiveInFilter('all'); setHospitalFilter('all'); setPendingMigrationOnly(false); };
   const totalCount = pagination?.total_count ?? workers.length;
   const totalPages = pagination?.total_pages ?? 1;
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;

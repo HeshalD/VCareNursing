@@ -123,7 +123,10 @@ app.use(cors(corsOptions));
 app.use(compression()); // gzip large JSON list responses
 // Body parser. The WhatsApp webhook's HMAC signature is computed over the exact bytes Meta
 // sent, so keep the raw buffer for that path only.
+// 2mb (default is 100kb): bulk staff actions send every selected staff_profile_id, which
+// passes 100kb at ~2,600 staff.
 app.use(express.json({
+  limit: '2mb',
   verify: (req, res, buf) => {
     if (req.originalUrl.startsWith('/api/whatsapp/webhook')) req.rawBody = buf;
   },
