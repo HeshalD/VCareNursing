@@ -72,7 +72,7 @@ exports.getFindings = async (req, res) => {
     const [rows, total] = await Promise.all([
       db.query(
         `SELECT f.finding_id, f.check_key, f.severity, f.entity_type, f.entity_id, f.entity_label, f.client_id, f.booking_id, f.amount,
-                f.title, f.detail, f.first_seen_at, f.last_seen_at, f.resolved_at, f.acknowledged_at, f.acknowledged_by_name, f.acknowledge_note,
+                f.title, f.detail, f.link_path, f.first_seen_at, f.last_seen_at, f.resolved_at, f.acknowledged_at, f.acknowledged_by_name, f.acknowledge_note,
                 cp.full_name AS client_name, cp.client_code, b.booking_code
          ${base}
          ORDER BY (f.severity = 'ERROR') DESC, f.first_seen_at DESC, f.finding_id

@@ -4306,6 +4306,7 @@ async function runMigration() {
       acknowledge_note TEXT
     )
   `);
+  await db.query(`ALTER TABLE ledger_health_findings ADD COLUMN IF NOT EXISTS link_path TEXT`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_ledger_health_findings_open ON ledger_health_findings(severity, last_seen_at DESC) WHERE resolved_at IS NULL`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_ledger_health_findings_check ON ledger_health_findings(check_key)`);
 

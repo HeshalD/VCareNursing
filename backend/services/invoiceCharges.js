@@ -250,10 +250,35 @@ async function linkProductQuoteToBooking(client, { productQuoteId, bookingId }) 
   const res = await client.query(
     `UPDATE invoices SET booking_id = $2
      WHERE quote_id = $1 AND category = 'PRODUCT' AND booking_id IS NULL
-     RETURNING invoice_id`,
+     RETURNING invoice_id, client_id`,
     [productQuoteId, bookingId]
   );
-  for (const { invoice_id } of res.rows) await ensureInvoiceCharge(client, invoice_id);
+  for (const { invoice_id, client_id } of res.rows) {
+    await ensureInvoiceCharge(client, invoice_id);
+    // Money already paid on the invoice moves with it, so the booking is credited for what its
+    // charge now debits. Otherwise a paid invoice would make the booking look unpaid.
+    const paid = await client.query(
+      `SELECT ip.transaction_id, ip.amount, ip.payment_method, ip.notes
+       FROM invoice_payments ip JOIN transactions t ON t.transaction_id = ip.transaction_id
+       WHERE ip.invoice_id = $1 AND t.booking_id IS NULL`,
+      [invoice_id]
+    );
+    for (const pmt of paid.rows) {
+      await client.query(`UPDATE transactions SET booking_id = $2 WHERE transaction_id = $1`, [pmt.transaction_id, bookingId]);
+      await client.query(
+        `INSERT INTO booking_payment_tracking (booking_id, client_id, amount_received, payment_method, notes, status, verified_at)
+         VALUES ($1, $2, $3, $4, $5, 'VERIFIED', NOW())`,
+        [bookingId, client_id, pmt.amount, pmt.payment_method, pmt.notes]
+      );
+    }
+    if (paid.rows.length > 0) {
+      await client.query(
+        `UPDATE bookings SET amount_paid = (SELECT COALESCE(SUM(amount_received), 0) FROM booking_payment_tracking
+                                            WHERE booking_id = $1 AND status = 'VERIFIED') WHERE booking_id = $1`,
+        [bookingId]
+      );
+    }
+  }
   return res.rows.map((r) => r.invoice_id);
 }
 

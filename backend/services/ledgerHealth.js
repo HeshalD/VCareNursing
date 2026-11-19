@@ -34,6 +34,12 @@ const bookingOwedSql = (b = 'b') => `(
 
 const q = async (sql, params = []) => (await db.query(sql, params)).rows;
 
+// Where an admin goes to look at a finding. These are the app's real routes.
+const clientPath = (id) => (id ? `/admin/users/${id}/detail` : null);
+const bookingPath = (id) => (id ? `/admin/bookings/${id}/detail` : null);
+const quotePath = (id) => (id ? `/admin/quotations/${id}` : null);
+const BREAKDOWN_PATH = { 'payments-made': 'payments-made', 'total-invoiced': 'total-invoiced', overdue: 'overdue-amount', wallet: 'wallet-balance' };
+
 // ─── Checks ──────────────────────────────────────────────────────────────────
 
 const CHECKS = [
@@ -46,7 +52,7 @@ const CHECKS = [
       SELECT i.invoice_id AS id, i.invoice_code AS label, i.client_id, i.booking_id, i.amount, i.category
       FROM invoices i
       WHERE i.category IN ${CHARGEABLE} AND i.client_id IS NOT NULL AND i.charge_transaction_id IS NULL`))
-      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: clientPath(r.client_id),
         detail: `${r.category} invoice ${r.label} for ${rs(r.amount)} has no charge on the client's ledger.` })),
   },
   {
@@ -58,7 +64,7 @@ const CHECKS = [
              t.booking_id AS charge_booking, t.client_id AS charge_client
       FROM invoices i JOIN transactions t ON t.transaction_id = i.charge_transaction_id
       WHERE abs(i.amount - t.amount) > 0.005 OR t.booking_id IS DISTINCT FROM i.booking_id OR t.client_id IS DISTINCT FROM i.client_id`))
-      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: clientPath(r.client_id),
         detail: Math.abs(r.amount - r.charge) > 0.005
           ? `Invoice ${r.label} is ${rs(r.amount)} but its ledger charge is ${rs(r.charge)}.`
           : `Invoice ${r.label} and its ledger charge point to a different ${r.charge_client !== r.client_id ? 'client' : 'booking'}.` })),
@@ -72,7 +78,7 @@ const CHECKS = [
       FROM transactions t
       WHERE t.category::text = 'PRODUCT_INVOICE'
         AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.charge_transaction_id = t.transaction_id)`))
-      .map((r) => ({ entity_type: 'TRANSACTION', entity_id: r.id, entity_label: (r.notes || '').slice(0, 60) || 'Charge', client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+      .map((r) => ({ entity_type: 'TRANSACTION', entity_id: r.id, entity_label: (r.notes || '').slice(0, 60) || 'Charge', client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: clientPath(r.client_id),
         detail: `A ${rs(r.amount)} product-invoice charge has no invoice.` })),
   },
   {
@@ -87,7 +93,7 @@ const CHECKS = [
         AND NOT EXISTS (SELECT 1 FROM quote_line_item_payments a JOIN quote_line_items li ON li.line_item_id = a.line_item_id
                         WHERE li.quote_id = i.quote_id)
         AND NOT (i.booking_id IS NOT NULL AND (SELECT ${bookingOwedSql('bk')} FROM bookings bk WHERE bk.booking_id = i.booking_id) <= 0.005)`))
-      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: clientPath(r.client_id),
         detail: `Invoice ${r.label} (${rs(r.amount)}) is marked Paid but no payment is recorded against it.` })),
   },
   {
@@ -100,7 +106,7 @@ const CHECKS = [
       FROM invoices i
       WHERE i.category = 'PRODUCT' AND i.status <> 'PAID' AND ${invoiceUnpaidSql('i')} > 0.005
         AND i.created_at < NOW() - INTERVAL '${OLD_UNPAID_DAYS} days'`))
-      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.owing,
+      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.owing, link_path: clientPath(r.client_id),
         detail: `${rs(r.owing)} on invoice ${r.label} has been unpaid for ${r.age} days.` })),
   },
 
@@ -110,7 +116,7 @@ const CHECKS = [
     title: 'Products on a quotation were never invoiced',
     help: 'The client has a booking or has paid on the quotation, but its products (for example transport) were never accepted and invoiced.',
     run: async () => (await q(`
-      SELECT pq.quote_id AS id, pq.estimate_number AS label, sq.estimate_number AS service_est, pq.total_amount AS amount,
+      SELECT pq.quote_id AS id, pq.estimate_number AS label, sq.quote_id AS service_quote_id, sq.estimate_number AS service_est, pq.total_amount AS amount,
              COALESCE(pq.client_id, sr.client_id) AS client_id,
              (SELECT b.booking_id FROM bookings b WHERE b.booking_id = sq.booking_id OR b.request_id = sq.request_id ORDER BY b.created_at DESC LIMIT 1) AS booking_id
       FROM quotations pq
@@ -122,7 +128,7 @@ const CHECKS = [
              OR EXISTS (SELECT 1 FROM payment_tracking p WHERE p.quote_id = sq.quote_id AND p.status = 'VERIFIED'))
         AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.quote_id = pq.quote_id AND i.category <> 'LINE_ITEM')
         AND NOT EXISTS (SELECT 1 FROM rental_agreements ra WHERE ra.quote_id = pq.quote_id)`))
-      .map((r) => ({ entity_type: 'QUOTATION', entity_id: r.id, entity_label: `${r.label} (for ${r.service_est})`, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+      .map((r) => ({ entity_type: 'QUOTATION', entity_id: r.id, entity_label: `${r.label} (for ${r.service_est})`, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: quotePath(r.service_quote_id),
         detail: `Products worth ${rs(r.amount)} on ${r.label}, quoted with ${r.service_est}, have no invoice although the client is booked or has paid.` })),
   },
   {
@@ -130,21 +136,24 @@ const CHECKS = [
     title: 'Free-form custom charge on a quotation',
     help: 'Custom charges are no longer allowed. An old one is not invoiced anywhere unless it is transport on a quotation that becomes a booking. A new one means something bypassed the screens.',
     run: async () => (await q(`
-      SELECT li.line_item_id AS id, qt.estimate_number AS est, li.description, li.amount, li.created_at,
+      SELECT li.line_item_id AS id, qt.quote_id AS quote_id, qt.estimate_number AS est, li.description, li.amount, li.created_at,
              COALESCE(sr.client_id, qt.client_id) AS client_id,
              (SELECT b.booking_id FROM bookings b WHERE b.booking_id = qt.booking_id OR b.request_id = qt.request_id ORDER BY b.created_at DESC LIMIT 1) AS booking_id,
              (li.description ILIKE '%trans%' OR li.description ILIKE '%trasport%') AS is_transport
       FROM quote_line_items li
       JOIN quotations qt ON qt.quote_id = li.quote_id AND qt.quote_type = 'SERVICE'
       LEFT JOIN service_requests sr ON sr.request_id = qt.request_id
-      WHERE li.item_type = 'CHARGE' AND li.is_registration_fee = false AND li.item_subtype IS NULL`))
+      WHERE li.item_type = 'CHARGE' AND li.is_registration_fee = false AND li.item_subtype IS NULL
+        -- A rejected quotation, or one replaced by a newer quotation and never booked, can never be paid.
+        AND COALESCE(qt.status, '') <> 'REJECTED'
+        AND (qt.booking_id IS NOT NULL OR sr.active_quote_id = qt.quote_id)`))
       .map((r) => {
         const isNew = new Date(r.created_at) >= new Date(CUSTOM_CHARGES_REMOVED_ON);
         const note = r.is_transport
           ? (r.booking_id ? 'Its quotation already has a booking, so this transport was not converted into an invoice.' : 'It will be invoiced as a transport product when its quotation becomes a booking.')
           : 'It is not transport, so nothing will ever invoice it. Move it to a product or remove it.';
         return {
-          entity_type: 'QUOTE_LINE', entity_id: r.id, entity_label: `${r.est} · ${r.description}`, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+          entity_type: 'QUOTE_LINE', entity_id: r.id, entity_label: `${r.est} · ${r.description}`, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: quotePath(r.quote_id),
           severity: isNew ? 'ERROR' : 'WARNING',
           detail: `"${r.description}" (${rs(r.amount)}) on ${r.est}${isNew ? ' was added after custom charges were removed.' : ' is an old custom charge.'} ${note}`,
         };
@@ -164,7 +173,7 @@ const CHECKS = [
         AND NOT EXISTS (SELECT 1 FROM client_reg_fee_invoices c WHERE c.client_id = sr.client_id)
         AND NOT EXISTS (SELECT 1 FROM overdue_invoices o WHERE o.client_id = sr.client_id AND o.source_type = 'REGISTRATION_FEE')
         AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.client_id = sr.client_id AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT')`))
-      .map((r) => ({ entity_type: 'QUOTATION', entity_id: r.id, entity_label: r.label, client_id: r.client_id, amount: r.amount,
+      .map((r) => ({ entity_type: 'QUOTATION', entity_id: r.id, entity_label: r.label, client_id: r.client_id, amount: r.amount, link_path: quotePath(r.id),
         detail: `Quotation ${r.label} has a ${rs(r.amount)} registration fee and a recorded payment, but the client has no registration-fee invoice.` })),
   },
 
@@ -183,7 +192,7 @@ const CHECKS = [
           OR (b.service_model = 'SHIFT_BASED' AND COALESCE(b.shift_rate, 0) = 0 AND COALESCE(b.daily_rate, 0) = 0))
         AND (b.status IN ('ACTIVE', 'OVERDUE', 'PAUSED')
              OR EXISTS (SELECT 1 FROM booking_daily_invoices d WHERE d.booking_id = b.booking_id AND d.status = 'INVOICED'))`))
-      .map((r) => ({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id,
+      .map((r) => ({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id, link_path: bookingPath(r.id),
         detail: `${r.label} (${r.status}) has no ${r.service_model === 'SHIFT_BASED' ? 'shift' : 'daily'} rate. ${r.billed_days} billed day${r.billed_days === 1 ? '' : 's'}, ${r.zero_days} of them at Rs. 0.` })),
   },
   {
@@ -202,7 +211,7 @@ const CHECKS = [
       .map((r) => {
         const kind = r.item_subtype === 'RATE_SHIFT' ? 'shift' : 'daily';
         const booked = r.item_subtype === 'RATE_SHIFT' ? r.shift_rate : r.daily_rate;
-        return { entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id,
+        return { entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id, link_path: bookingPath(r.id),
           detail: `${r.label} bills a ${kind} rate of ${rs(booked)} but quotation ${r.est} says ${rs(r.unit_price)}.` };
       }),
   },
@@ -215,7 +224,7 @@ const CHECKS = [
       FROM bookings b
       WHERE (b.status = 'ACTIVE' AND ${bookingOwedSql('b')} > 0.005)
          OR (b.status = 'OVERDUE' AND ${bookingOwedSql('b')} <= 0.005)`))
-      .map((r) => ({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id, amount: Math.max(Number(r.owed), 0),
+      .map((r) => ({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id, amount: Math.max(Number(r.owed), 0), link_path: bookingPath(r.id),
         detail: r.status === 'ACTIVE'
           ? `${r.label} is Active but owes ${rs(r.owed)}; it should be flagged overdue.`
           : `${r.label} is flagged Overdue but owes nothing (${rs(r.owed)}).` })),
@@ -253,12 +262,12 @@ const clientBreakdownCheck = {
                 : `${BREAKDOWN_LABEL[metric]} check failed: ${failed.map((x) => x.label).join('; ')}.`;
               // A headline that does not add up is an error. A failed cross-check (for example the
               // wallet audit trail after a manual database edit) is a warning to look at and acknowledge.
-              rows.push({ entity_type: 'CLIENT', entity_id: `${c.id}:${metric}`, entity_label: `${c.code} ${c.full_name || ''}`.trim(), client_id: c.id,
+              rows.push({ entity_type: 'CLIENT', entity_id: `${c.id}:${metric}`, entity_label: `${c.code} ${c.full_name || ''}`.trim(), client_id: c.id, link_path: clientPath(c.id) && `/admin/users/${c.id}/${BREAKDOWN_PATH[metric]}`,
                 severity: b.summary?.matches === false ? 'ERROR' : 'WARNING',
                 amount: b.summary?.matches === false ? Math.abs(Number(b.summary.headline) - Number(b.summary.derived)) : null, detail: why });
             }
           } catch (err) {
-            rows.push({ entity_type: 'CLIENT', entity_id: `${c.id}:${metric}`, entity_label: `${c.code} ${c.full_name || ''}`.trim(), client_id: c.id,
+            rows.push({ entity_type: 'CLIENT', entity_id: `${c.id}:${metric}`, entity_label: `${c.code} ${c.full_name || ''}`.trim(), client_id: c.id, link_path: `/admin/users/${c.id}/${BREAKDOWN_PATH[metric]}`,
               detail: `${BREAKDOWN_LABEL[metric]} could not be worked out: ${err.message}` });
           }
         }
@@ -309,11 +318,11 @@ async function runLedgerHealth({ trigger = 'CRON', triggeredBy = null } = {}) {
         seen.push(fp);
         await db.query(
           `INSERT INTO ledger_health_findings
-             (fingerprint, check_key, severity, entity_type, entity_id, entity_label, client_id, booking_id, amount, title, detail, first_seen_run, last_seen_run)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+             (fingerprint, check_key, severity, entity_type, entity_id, entity_label, client_id, booking_id, amount, title, detail, link_path, first_seen_run, last_seen_run)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13,$12,$12)
            ON CONFLICT (fingerprint) DO UPDATE SET
              severity = EXCLUDED.severity, entity_label = EXCLUDED.entity_label, client_id = EXCLUDED.client_id, booking_id = EXCLUDED.booking_id,
-             amount = EXCLUDED.amount, title = EXCLUDED.title, detail = EXCLUDED.detail,
+             amount = EXCLUDED.amount, title = EXCLUDED.title, detail = EXCLUDED.detail, link_path = EXCLUDED.link_path,
              last_seen_run = EXCLUDED.last_seen_run, last_seen_at = NOW(),
              -- A problem that comes back after being resolved is new again, and no longer acknowledged.
              first_seen_run = CASE WHEN ledger_health_findings.resolved_at IS NOT NULL THEN EXCLUDED.first_seen_run ELSE ledger_health_findings.first_seen_run END,
@@ -324,7 +333,7 @@ async function runLedgerHealth({ trigger = 'CRON', triggeredBy = null } = {}) {
              acknowledge_note = CASE WHEN ledger_health_findings.resolved_at IS NOT NULL THEN NULL ELSE ledger_health_findings.acknowledge_note END,
              resolved_at = NULL`,
           [fp, check.key, r.severity || check.severity, r.entity_type, String(r.entity_id), r.entity_label || null, r.client_id || null, r.booking_id || null,
-            r.amount ?? null, check.title, r.detail || null, runId]
+            r.amount ?? null, check.title, r.detail || null, runId, r.link_path || null]
         );
       }
       // Anything this check reported before but no longer sees has been fixed.

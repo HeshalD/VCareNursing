@@ -36,10 +36,12 @@ const Stat = ({ label, value, tone }) => (
   </div>
 );
 
-// Where to go to look at what a finding is about.
+// Where to go to look at what a finding is about. The server sends the exact page for each kind
+// of finding (a quotation, a booking, the client's breakdown page); the fallbacks use the real routes.
 const linkFor = (f) => {
+  if (f.link_path) return f.link_path;
   if (f.booking_id) return `/admin/bookings/${f.booking_id}/detail`;
-  if (f.client_id) return `/admin/users/${f.client_id}`;
+  if (f.client_id) return `/admin/users/${f.client_id}/detail`;
   return null;
 };
 
@@ -219,7 +221,7 @@ export default function LedgerHealthPage() {
                     <td className="px-4 py-3 text-xs text-slate-500">{day(f.first_seen_at)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        {to && <Link to={to} className={ghostBtnCls} title="Open the client or booking"><ExternalLink className="h-3.5 w-3.5" />Open</Link>}
+                        {to && <Link to={to} target="_blank" rel="noopener noreferrer" className={ghostBtnCls} title="Open in a new tab"><ExternalLink className="h-3.5 w-3.5" />Open</Link>}
                         {canManage && !f.resolved_at && (f.acknowledged_at
                           ? <button onClick={() => reopen(f)} className={ghostBtnCls} title="Move back to open"><Undo2 className="h-3.5 w-3.5" />Reopen</button>
                           : <button onClick={() => { setAckFor(f); setAckNote(''); }} className={ghostBtnCls}>Acknowledge</button>)}

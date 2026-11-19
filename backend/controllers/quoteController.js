@@ -2047,7 +2047,7 @@ async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {},
 const LEGACY_TRANSPORT_SQL = `item_type = 'CHARGE' AND is_registration_fee = false AND item_subtype IS NULL
     AND (description ILIKE '%trans%' OR description ILIKE '%trasport%')`;
 
-async function convertLegacyTransportLines(pgClient, { serviceQuoteId, bookingId }) {
+async function convertLegacyTransportLines(pgClient, { serviceQuoteId, bookingId = null }) {
     const linesRes = await pgClient.query(
         `SELECT line_item_id, amount FROM quote_line_items WHERE quote_id = $1 AND ${LEGACY_TRANSPORT_SQL} ORDER BY sort_order`,
         [serviceQuoteId]
@@ -2056,7 +2056,10 @@ async function convertLegacyTransportLines(pgClient, { serviceQuoteId, bookingId
 
     const prod = (await pgClient.query(`SELECT product_id, name, cost_price FROM products WHERE name = 'Transport Charges' LIMIT 1`)).rows[0];
     if (!prod) return { converted: 0, quoteIds: [], warning: 'The "Transport Charges" product is missing, so the transport line was left as it is.' };
-    const clientId = (await pgClient.query(`SELECT client_id FROM bookings WHERE booking_id = $1`, [bookingId])).rows[0]?.client_id || null;
+    // The billing client: the booking's, or (before any booking) the lead's, which may not exist yet.
+    const clientId = bookingId
+        ? (await pgClient.query(`SELECT client_id FROM bookings WHERE booking_id = $1`, [bookingId])).rows[0]?.client_id || null
+        : (await pgClient.query(`SELECT sr.client_id FROM quotations q JOIN service_requests sr ON sr.request_id = q.request_id WHERE q.quote_id = $1`, [serviceQuoteId])).rows[0]?.client_id || null;
 
     // Reuse the quotation's own unaccepted product quote. If its products were already accepted,
     // the transport goes on a separate product quote so it still gets its own invoice.
@@ -2164,6 +2167,9 @@ async function attachLinkedProductsToBooking(pgClient, { serviceQuoteId, booking
     return result;
 }
 exports.attachLinkedProductsToBooking = attachLinkedProductsToBooking;
+exports.convertLegacyTransportLines = convertLegacyTransportLines;
+exports.acceptProductQuoteCore = acceptProductQuoteCore;
+exports.isProductQuoteAccepted = isProductQuoteAccepted;
 
 exports.acceptProductQuote = async (req, res) => {
     const pgClient = await db.pool.connect();
