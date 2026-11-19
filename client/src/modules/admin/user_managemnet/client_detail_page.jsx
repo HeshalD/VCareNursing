@@ -336,6 +336,10 @@ const ClientDetailPage = () => {
   const [showPastRegFeeModal, setShowPastRegFeeModal] = useState(false);
   // Date the registration fee money was received — used by "Mark as Paid" / "Confirm Payment".
   const [regFeePaymentDate, setRegFeePaymentDate] = useState(todayISO());
+  const [regFeeMethod, setRegFeeMethod] = useState('BANK_TRANSFER');
+  const [regFeeReference, setRegFeeReference] = useState('');
+  const [regFeePreSystem, setRegFeePreSystem] = useState(false);
+  const [regFeeReason, setRegFeeReason] = useState('');
 
   // Registration Fee card UI — progressive disclosure so only the one action
   // relevant to the client's current step is on screen by default.
@@ -1048,12 +1052,35 @@ const ClientDetailPage = () => {
         setRegFeeLoading(false);
         return;
       }
+      if (status === 'PAID') {
+        if (regFeePreSystem && regFeeReason.trim().length < 5) {
+          setRegFeeError('Add a short note saying how it is known the fee was paid before the system.');
+          setRegFeeLoading(false);
+          return;
+        }
+        if (!regFeePreSystem && !regFeeReference.trim()) {
+          setRegFeeError('Enter the payment reference (slip / transaction number).');
+          setRegFeeLoading(false);
+          return;
+        }
+      } else if (regFeeReason.trim().length < 5) {
+        setRegFeeError(`Enter a reason (at least 5 characters) to ${status === 'WAIVED' ? 'waive' : 'reset'} the fee.`);
+        setRegFeeLoading(false);
+        return;
+      }
       await apiClient.updateRegFeeStatus(
         clientId,
         status,
         status === 'PAID' ? (salespersonForCredit || null) : null,
         status === 'PAID' ? regFeePaymentDate : null,
+        {
+          payment_method: regFeeMethod,
+          reference: regFeeReference,
+          pre_system: status === 'PAID' && regFeePreSystem,
+          reason: regFeeReason,
+        },
       );
+      setRegFeeReason(''); setRegFeeReference(''); setRegFeePreSystem(false);
       await refreshAfterPaymentChange();
       if (status === 'PAID' && salespersonForCredit) await reloadClientSalesperson();
       setRegFeeMoreOpen(false);
@@ -3200,6 +3227,31 @@ const ClientDetailPage = () => {
 
                     {feeStatus === 'INVOICED' && (
                       <div>
+                        <div className="mb-3 max-w-md space-y-2 rounded-md border border-gray-100 bg-gray-50 p-3">
+                          <label className="flex items-center gap-2 text-xs text-gray-600">
+                            <input type="checkbox" checked={regFeePreSystem} onChange={(e) => setRegFeePreSystem(e.target.checked)} />
+                            Paid before the system went live (no payment slip in the system)
+                          </label>
+                          {!regFeePreSystem && (
+                            <div className="flex flex-wrap gap-2">
+                              <select value={regFeeMethod} onChange={(e) => setRegFeeMethod(e.target.value)}
+                                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-md bg-white">
+                                <option value="BANK_TRANSFER">Bank transfer</option>
+                                <option value="CASH_DEPOSIT">Cash deposit</option>
+                                <option value="CASH">Cash</option>
+                                <option value="CHEQUE">Cheque</option>
+                              </select>
+                              <input value={regFeeReference} onChange={(e) => setRegFeeReference(e.target.value)}
+                                placeholder="Payment reference (required)"
+                                className="flex-1 min-w-[10rem] px-2.5 py-1.5 text-xs border border-gray-200 rounded-md bg-white" />
+                            </div>
+                          )}
+                          {regFeePreSystem && (
+                            <input value={regFeeReason} onChange={(e) => setRegFeeReason(e.target.value)}
+                              placeholder="How do you know it was paid? (required)"
+                              className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-md bg-white" />
+                          )}
+                        </div>
                         <button
                           type="button"
                           onClick={() => handleRegFeeStatusUpdate('PAID')}
@@ -3308,6 +3360,12 @@ const ClientDetailPage = () => {
                           </div>
                         )}
 
+                        <div>
+                          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Reason (required to waive or reset)</label>
+                          <input value={regFeeReason} onChange={(e) => setRegFeeReason(e.target.value)}
+                            placeholder="e.g. Goodwill waiver approved by manager"
+                            className="w-full max-w-md px-2.5 py-1.5 text-xs border border-gray-200 rounded-md bg-white" />
+                        </div>
                         <div className="flex flex-wrap gap-2">
                           {!isSettled && (
                             <button
@@ -3728,6 +3786,19 @@ const ClientDetailPage = () => {
         )}
 
       <div className="@container min-w-0 flex-1 space-y-4">
+        {/* Registration fee banner: shown on every tab while the fee is not balanced */}
+        {registrationAudit?.check && !registrationAudit.check.balanced && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">Registration fee needs attention</p>
+              <ul className="list-disc pl-4 text-xs">
+                {registrationAudit.check.problems.map((p) => <li key={p.code}>{p.text}</li>)}
+              </ul>
+              <p className="mt-1 text-xs text-amber-700">Details are in the Registration fee record on the overview tab.</p>
+            </div>
+          </div>
+        )}
         {/* Top action bar */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">

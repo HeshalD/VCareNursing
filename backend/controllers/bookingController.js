@@ -42,7 +42,8 @@ const { closeActivePatternForPause } = require('../services/shiftPatternService'
 const { createApprovedLeave, notifyLeaveApproved, markOnLeaveIfActiveToday, findLeaveConflicts } = require('../services/staffLeaveService');
 const { drawWalletForBooking, getEarmarkedTotal } = require('../services/walletService');
 const { chargeRegistrationFeeForBooking } = require('../services/registrationFeeService');
-const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
+const { warnIfRegistrationIncomplete, blockIfRegistrationMissing } = require('../services/registrationFeeGuard');
+const { applyRegistrationChoice } = require('../services/regFeeAdminAction');
 const { isServiceDay } = require('../services/repeatDays');
 const { FORCE_MANUAL_FOR_SWAP_SQL, restoreAutoInvoicingIfSwapResolved } = require('../services/invoicingMode');
 
@@ -5832,6 +5833,10 @@ exports.adminDirectBooking = async (req, res) => {
         // requests (see serviceRequestController.createServiceRequest), only
         // meaningful when this client already has a different coordinator.
         coordinator_action,
+        // Registration fee choice: 'INVOICE' | 'WAIVE' | 'PAID_BEFORE' | 'SKIP' (see services/regFeeAdminAction.js)
+        registration_action,
+        registration_fee_amount,
+        registration_reason,
     } = req.body;
 
     if (!client_profile_id || !service_type || !service_model || !start_date) {
@@ -5839,6 +5844,11 @@ exports.adminDirectBooking = async (req, res) => {
     }
     if (!patient_id && !new_patient_full_name) {
         return res.status(400).json({ message: 'Either patient_id or new patient details (new_patient_full_name) are required.' });
+    }
+
+    // Enforcing mode: a fee choice (invoice / waive / paid before) counts as resolving it.
+    if (!registration_action || registration_action === 'SKIP') {
+        if (await blockIfRegistrationMissing(req, res, { clientId: client_profile_id, action: 'ADMIN_DIRECT_BOOKING' })) return;
     }
 
     const dbClient = await db.pool.connect();
@@ -5952,6 +5962,20 @@ exports.adminDirectBooking = async (req, res) => {
         );
         const { booking_id, booking_code } = bookingRes.rows[0];
 
+        // Settle the registration fee question now, in the same transaction, if staff chose to.
+        if (registration_action && registration_action !== 'SKIP') {
+            const canWaive = registration_action === 'WAIVE' ? await userHasPermission(req.user, 'CLIENT_WAIVE_REG_FEE') : false;
+            const regResult = await applyRegistrationChoice(dbClient, {
+                clientId: client_profile_id, action: registration_action,
+                amount: registration_fee_amount, reason: registration_reason,
+                userId: req.user.user_id, canWaive,
+            });
+            if (regResult.error) {
+                await dbClient.query('ROLLBACK');
+                return res.status(400).json({ message: regResult.error });
+            }
+        }
+
         await dbClient.query('COMMIT');
 
         try {
@@ -5965,7 +5989,7 @@ exports.adminDirectBooking = async (req, res) => {
                 actionType: 'BOOKING_CREATED',
                 entityType: 'BOOKING',
                 entityId: String(booking_id),
-                details: { booking_id, booking_code, client_profile_id, patient_id: finalPatientId, admin_notes, source: 'ADMIN_DIRECT' },
+                details: { booking_id, booking_code, client_profile_id, patient_id: finalPatientId, admin_notes, source: 'ADMIN_DIRECT', registration_action: registration_action || null },
             });
         } catch (logErr) {
             console.error('Activity log failed (adminDirectBooking):', logErr.message);

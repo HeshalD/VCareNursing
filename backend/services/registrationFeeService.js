@@ -68,9 +68,9 @@ async function chargeRegistrationFeeForBooking(client, {
   const existingRes = await client.query(
     `SELECT transaction_id, amount FROM transactions
      WHERE client_id = $1 AND category::text = $2 AND transaction_type = 'DEBIT'
-       AND booking_id IS NULL AND quote_id IS NULL
+       AND booking_id IS NULL AND (quote_id IS NULL OR quote_id = $3)
      ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
-    [client_id, category]
+    [client_id, category, quote_id]
   );
   if (existingRes.rows.length > 0) {
     const existing = existingRes.rows[0];
@@ -148,7 +148,7 @@ async function chargeRegistrationFeeForBooking(client, {
 // has a registration DEBIT, or an invoice that was sent (SENT) — that one already counts
 // in Total Invoiced through overdue_invoices.
 // Returns true if a debit was written. Call it BEFORE inserting the payment CREDIT.
-async function recordRegFeeInvoiceDebit(client, { client_id, amount, at = null, notes }) {
+async function recordRegFeeInvoiceDebit(client, { client_id, amount, at = null, notes, quote_id = null }) {
   const res = await client.query(
     `SELECT
        EXISTS (SELECT 1 FROM overdue_invoices WHERE client_id = $1 AND source_type = 'REGISTRATION_FEE') AS in_overdue,
@@ -159,9 +159,9 @@ async function recordRegFeeInvoiceDebit(client, { client_id, amount, at = null, 
   const { in_overdue, has_debit } = res.rows[0];
   if (in_overdue || has_debit) return false;
   await client.query(
-    `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
-     VALUES ($1, 'REGISTRATION_FEE', $2, 'DEBIT', 'COMPLETED', $3, COALESCE($4::timestamptz, NOW()))`,
-    [client_id, amount, notes, at]
+    `INSERT INTO transactions (client_id, quote_id, category, amount, transaction_type, status, notes, created_at)
+     VALUES ($1, $5, 'REGISTRATION_FEE', $2, 'DEBIT', 'COMPLETED', $3, COALESCE($4::timestamptz, NOW()))`,
+    [client_id, amount, notes, at, quote_id]
   );
   return true;
 }

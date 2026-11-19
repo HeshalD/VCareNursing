@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { logRegFee } = require('../services/regFeeLog');
 
 // Public (token-gated, no auth): validate token and return minimal client info for the upload portal.
 exports.getReceiptUploadPortal = async (req, res) => {
@@ -80,6 +81,8 @@ exports.uploadPaymentReceipt = async (req, res) => {
        WHERE client_profile_id = $2`,
       [receiptUrl, client_profile_id]
     );
+
+    logRegFee({ action: 'REG_FEE_RECEIPT_UPLOADED_BY_CLIENT', clientId: client_profile_id, details: { receipt_url: receiptUrl } });
 
     res.status(200).json({
       status: 'success',

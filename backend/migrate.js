@@ -4262,6 +4262,53 @@ async function runMigration() {
     FOR EACH ROW EXECUTE PROCEDURE invoice_charge_cleanup()
   `);
 
+  // Ledger health check (services/ledgerHealth.js): a read-only nightly audit of the books.
+  // One row per run, and one row per distinct problem (identified by `fingerprint`) so a problem
+  // that persists is tracked across runs, can be acknowledged with a note, and is marked
+  // resolved when a later run no longer sees it.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS ledger_health_runs (
+      run_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      finished_at TIMESTAMP WITH TIME ZONE,
+      status VARCHAR(12) NOT NULL DEFAULT 'RUNNING',
+      trigger_source VARCHAR(10) NOT NULL DEFAULT 'CRON',
+      triggered_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+      error_count INTEGER DEFAULT 0,
+      warning_count INTEGER DEFAULT 0,
+      new_error_count INTEGER DEFAULT 0,
+      duration_ms INTEGER,
+      notes TEXT
+    )
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS ledger_health_findings (
+      finding_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      fingerprint TEXT NOT NULL UNIQUE,
+      check_key VARCHAR(60) NOT NULL,
+      severity VARCHAR(8) NOT NULL,
+      entity_type VARCHAR(30),
+      entity_id TEXT,
+      entity_label TEXT,
+      client_id UUID,
+      booking_id UUID,
+      amount NUMERIC(12,2),
+      title TEXT NOT NULL,
+      detail TEXT,
+      first_seen_run UUID REFERENCES ledger_health_runs(run_id) ON DELETE SET NULL,
+      first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      last_seen_run UUID REFERENCES ledger_health_runs(run_id) ON DELETE SET NULL,
+      last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TIMESTAMP WITH TIME ZONE,
+      acknowledged_at TIMESTAMP WITH TIME ZONE,
+      acknowledged_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+      acknowledged_by_name TEXT,
+      acknowledge_note TEXT
+    )
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_ledger_health_findings_open ON ledger_health_findings(severity, last_seen_at DESC) WHERE resolved_at IS NULL`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_ledger_health_findings_check ON ledger_health_findings(check_key)`);
+
   console.log('Migration completed successfully!');
 }
 

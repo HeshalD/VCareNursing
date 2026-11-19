@@ -41,6 +41,7 @@ import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard'
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
 import StaffManagement from './modules/admin/user_managemnet/staff_management';
 import ClientDetailPage from './modules/admin/user_managemnet/client_detail_page';
+import RegistrationIntegrityPage from './modules/admin/user_managemnet/RegistrationIntegrityPage';
 import ClientFinancialBreakdownPage from './modules/admin/user_managemnet/ClientFinancialBreakdownPage';
 import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
@@ -105,6 +106,7 @@ import StaffPortalGuard from './modules/public/service_team/StaffPortalGuard';
 import StaffAccessRevokedPage from './modules/public/service_team/StaffAccessRevokedPage';
 import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
 import ActivityLogPage from './modules/admin/activity_log/ActivityLogPage';
+import LedgerHealthPage from './modules/admin/ledger_health/LedgerHealthPage';
 import AdminReviewsPage from './modules/admin/reviews/AdminReviewsPage';
 import QuotationsPage from './modules/admin/service_quotes/quotations';
 import QuotationDetailsPage from './modules/admin/service_quotes/quotation_details';
@@ -462,6 +464,11 @@ function App() {
                 <ActivityLogPage />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/ledger-health" element={
+              <AdminAuthProvider>
+                <LedgerHealthPage />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/reviews" element={
               <AdminAuthProvider>
                 <AdminReviewsPage />
@@ -555,6 +562,11 @@ function App() {
             <Route path="/admin/bulk-import" element={
               <AdminAuthProvider>
                 <BulkImportPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/registration-integrity" element={
+              <AdminAuthProvider>
+                <RegistrationIntegrityPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/staff-missing-bank-details" element={

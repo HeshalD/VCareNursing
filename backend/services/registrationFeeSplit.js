@@ -1,3 +1,4 @@
+const { logRegFee } = require('./regFeeLog');
 // services/registrationFeeSplit.js
 //
 // A client's registration fee is billed as an ordinary quote_line_items row
@@ -70,6 +71,11 @@ async function settleRegistrationFee(client, { client_id, regFeeItem, verified_b
   );
 
   if (settleResult.rows.length === 0) return false;
+
+  logRegFee({
+    userId: verified_by || null, action: 'REG_FEE_SETTLED_BY_PAYMENT', clientId: client_id,
+    details: { amount: regFeeItem.amount, via: 'quotation/booking payment' },
+  });
 
   // Clears any outstanding overdue-invoice entry from a prior standalone
   // WhatsApp reg-fee invoice, since this quotation payment just settled the

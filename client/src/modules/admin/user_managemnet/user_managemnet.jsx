@@ -473,6 +473,13 @@ const ClientManagement = () => {
           </button>
         )}
 
+        <button
+          onClick={() => navigate('/admin/registration-integrity')}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white border-slate-200 text-slate-500 hover:text-slate-700 transition-colors whitespace-nowrap"
+        >
+          Registration Fee Audit
+        </button>
+
         {contactPendingCount > 0 && (
           <button
             onClick={() => setContactPendingOnly(v => !v)}

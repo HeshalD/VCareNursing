@@ -24,6 +24,7 @@ const staffAssignmentRoutes = require('./routes/staffAssignmentRoutes');
 const staffChangeRequestRoutes = require('./routes/staffChangeRequestRoutes');
 const locationRoutes = require('./routes/locationRoutes');
 const activityLogRoutes = require('./routes/activityLogRoutes');
+const ledgerHealthRoutes = require('./routes/ledgerHealthRoutes');
 const clientPaymentRoutes = require('./routes/clientPaymentRoutes');
 const receiptRoutes = require('./routes/receiptRoutes');
 const clientPortalRoutes = require('./routes/clientPortalRoutes');
@@ -56,6 +57,7 @@ const startDailyInvoicing = require('./cron/dailyInvoicing');
 const startRentalInvoicing = require('./cron/rentalInvoicing');
 const startRegFeeExpiry = require('./cron/regFeeExpiry');
 const startStaffLeaveStatus = require('./cron/staffLeaveStatus');
+const startLedgerHealth = require('./cron/ledgerHealth');
 
 require('dotenv').config();
 
@@ -87,6 +89,9 @@ startRegFeeExpiry();
 // Start the staff leave status cron job (flips current_status ON_LEAVE/AVAILABLE
 // as leaves start/expire on their own, without needing an admin action that day)
 startStaffLeaveStatus();
+
+// Start the nightly ledger health check (read-only audit of invoices, ledger and client totals)
+startLedgerHealth();
 
 // Middleware
 // CORS setup – only permit origins configured via env or development host.
@@ -162,6 +167,7 @@ app.use('/api/assignments', staffAssignmentRoutes);
 app.use('/api/staff-change-requests', staffChangeRequestRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/activity-log', activityLogRoutes);
+app.use('/api/ledger-health', ledgerHealthRoutes);
 app.use('/api/client-payments', clientPaymentRoutes);
 app.use('/api/payment-receipts', receiptRoutes);
 app.use('/api/client-portal', clientPortalRoutes);

@@ -9,6 +9,7 @@ const { bookingChargeSql } = require('../services/clientFinancials');
 const { applyInvoicePayment, lineItemDuplicateSql } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
+const { recordRegFeeInvoiceDebit } = require('../services/registrationFeeService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { parsePaymentDate } = require('../utils/paymentDate');
 const { creditClientWallet, settleQuoteBookingFromWallet } = require('../services/walletService');
@@ -356,6 +357,16 @@ const recordPayment = async (req, res) => {
     });
 
     if (regFeeSplit.regFeePortion > 0) {
+      // Book the fee as invoiced now, not at booking conversion, so Total Invoiced and the
+      // payment balance out the moment the client pays (adopted by the booking later).
+      try {
+        await recordRegFeeInvoiceDebit(client, {
+          client_id, amount: regFeeSplit.regFeeItem?.amount || regFeeSplit.regFeePortion, quote_id,
+          notes: 'Registration fee invoiced (paid on quotation)',
+        });
+      } catch (debitErr) {
+        console.error('Failed to record registration fee debit (recordPayment):', debitErr.message);
+      }
       await client.query(`
         INSERT INTO transactions (
           payment_tracking_id, booking_id, quote_id, client_id, category, amount,
@@ -929,6 +940,14 @@ const recordAllocatedPayment = async (req, res) => {
       }
 
       if (regFeeAlloc > 0) {
+        try {
+          await recordRegFeeInvoiceDebit(client, {
+            client_id, amount: regFeeItem?.amount || regFeeAlloc, quote_id,
+            notes: 'Registration fee invoiced (paid on quotation)',
+          });
+        } catch (debitErr) {
+          console.error('Failed to record registration fee debit (edit payment):', debitErr.message);
+        }
         await client.query(`
           INSERT INTO transactions (
             payment_tracking_id, booking_id, quote_id, client_id, category, amount,
@@ -996,6 +1015,11 @@ const recordAllocatedPayment = async (req, res) => {
       let remainingToApply = productsAlloc;
       for (const inv of productInvoices) {
         if (remainingToApply <= 0.005) break;
+        // Re-read what's paid: the service-charge step above credits the wallet and then
+        // auto-pays the booking's already-invoiced product invoices from it, so the figure
+        // read before that step can be stale (applyInvoicePayment would then reject it).
+        const freshPaid = await client.query(`SELECT COALESCE(SUM(amount), 0) as paid FROM invoice_payments WHERE invoice_id = $1`, [inv.invoice_id]);
+        inv.__paidSoFar = parseFloat(freshPaid.rows[0].paid || 0);
         const invRemaining = parseFloat(inv.amount) - inv.__paidSoFar;
         const applyAmt = Math.min(invRemaining, remainingToApply);
         if (applyAmt <= 0.005) continue;
@@ -1016,6 +1040,26 @@ const recordAllocatedPayment = async (req, res) => {
         productPaymentResults.push({ invoice_id: inv.invoice_id, invoice_code: inv.invoice_code, amount: applyAmt, newlyFullyPaid: result.newlyFullyPaid });
         receiptLineItems.push({ label: 'Products & Rentals', description: inv.invoice_code, amount: applyAmt });
         remainingToApply -= applyAmt;
+      }
+      // The wallet already cleared (part of) the product invoice from this same payment's
+      // service money, so this slice of cash has no invoice left to pay — park it in the
+      // wallet rather than dropping it off the ledger.
+      if (remainingToApply > 0.01) {
+        await creditClientWallet(client, {
+          client_id,
+          quote_id,
+          amount: remainingToApply,
+          payment_method,
+          bank_account_id: resolvedBankAccountId,
+          cheque_number: cheque_number || null,
+          cheque_date: cheque_date || null,
+          reference_number: reference_number || null,
+          receipt_url: paymentSlipUrl,
+          notes: notes || 'Products allocation already covered from wallet — credited to wallet',
+          verified_by,
+          created_at: ledgerTimestamp,
+        });
+        receiptLineItems.push({ label: 'Wallet Top-up', description: 'Products & rentals were already settled — credited to client wallet', amount: remainingToApply });
       }
     }
 

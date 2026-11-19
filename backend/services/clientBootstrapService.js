@@ -5,6 +5,7 @@ const { createOverdueInvoice } = require('./overdueInvoices');
 const { creditSalespersonForRegistration } = require('./clientSalespersonService');
 const { sendSms } = require('../utils/sms');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
+const { logRegFee } = require('./regFeeLog');
 
 // Product quotations built alongside a lead's service quotation (e.g. its transport)
 // are created before the lead has a client account. Once the account exists, they
@@ -186,6 +187,11 @@ const markRegFeeInvoicedFromQuote = async ({ quoteId, clientId, pdfUrl, sentBy }
      WHERE client_profile_id = $4`,
     [amount, receiptToken, tokenExpiry, clientId]
   );
+
+  logRegFee({
+    userId: sentBy || null, action: 'REG_FEE_INVOICED_FROM_QUOTE', clientId,
+    details: { amount, invoice_code: invoiceCode, quote_id: quoteId },
+  });
 
   const existing = await db.query(
     `SELECT invoice_id FROM client_reg_fee_invoices WHERE client_id = $1 AND invoice_code = $2`,

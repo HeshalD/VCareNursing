@@ -25,6 +25,7 @@ const PERMISSIONS = {
   VIEW_BANK_ACCOUNTS:          { label: 'View Bank Accounts',               module: 'Bank Accounts',        category: 'page' },
   VIEW_VENDORS:                { label: 'View Vendors',                     module: 'Vendors',              category: 'page' },
   VIEW_ACTIVITY_LOG:           { label: 'View Activity Log',                module: 'Activity Log',         category: 'page' },
+  VIEW_LEDGER_HEALTH:          { label: 'View Ledger Health Check',         module: 'Ledger Health',        category: 'page' },
   VIEW_STAFF_REVIEWS:          { label: 'View Staff Reviews',               module: 'Staff Reviews',        category: 'page' },
   VIEW_SETTINGS:               { label: 'View Settings',                    module: 'Settings',             category: 'page' },
   VIEW_NOTIFICATIONS:          { label: 'View Notifications & Messages',    module: 'Notifications',        category: 'page' },
@@ -110,6 +111,7 @@ const PERMISSIONS = {
   CLIENT_DELETE_NOTE:          { label: 'Delete Client Note',               module: 'User Management', entity: 'Client Note',    verb: 'Delete',              category: 'action' },
   CLIENT_SEND_REG_FEE_INVOICE: { label: 'Send Registration Fee Invoice',    module: 'User Management', entity: 'Client Billing', verb: 'Send Reg. Fee Invoice', category: 'action' },
   CLIENT_WAIVE_REG_FEE:        { label: 'Waive Registration Fee',           module: 'User Management', entity: 'Client Billing', verb: 'Waive Reg. Fee',      category: 'action' },
+  REG_FEE_OVERRIDE:            { label: 'Override Registration Fee Check',  module: 'User Management', entity: 'Client Billing', verb: 'Override Reg. Fee Check', category: 'action' },
   CLIENT_RECORD_PAST_REG_FEE:  { label: 'Record Past Registration Fee',       module: 'User Management', entity: 'Client Billing', verb: 'Record Past Reg. Fee', category: 'action' },
   CLIENT_PROXY_CREATE:         { label: 'Proxy-Create Client Account',     module: 'User Management', entity: 'Client Account', verb: 'Create (Proxy)',      category: 'action' },
   WALKIN_CUSTOMER_CREATE:      { label: 'Create Walk-In Customer',          module: 'User Management', entity: 'Client Account', verb: 'Create (Walk-in)',    category: 'action' },
@@ -299,6 +301,7 @@ const PERMISSIONS = {
   // than ATTENDANCE_REVOKE, which cancels the day and returns the money.
   BOOKING_CORRECT_AMOUNT:      { label: 'Correct Invoiced/Paid Amount',     module: 'Bookings', entity: 'Attendance', verb: 'Correct Amount',      category: 'action' },
   ATTENDANCE_CONFIRM_DAY:      { label: 'Confirm Day (Attendance + Salary + Invoice)', module: 'Bookings', entity: 'Attendance', verb: 'Confirm Day', category: 'action' },
+  LEDGER_HEALTH_MANAGE:        { label: 'Run Ledger Health Check & Acknowledge Findings', module: 'Ledger Health', entity: 'Ledger Health', verb: 'Run / Acknowledge', category: 'action' },
 };
 
 // Role templates — pre-built permission sets shown in the Super Admin UI.

@@ -2236,11 +2236,34 @@ exports.updateRegFeeAmount = async (req, res) => {
 // Admin: manually update reg_fee_status to PAID or WAIVED.
 exports.updateRegFeeStatus = async (req, res) => {
   const { client_id } = req.params;
-  const { status, salesperson_id, payment_date } = req.body;
+  const { status, salesperson_id, payment_date, payment_method, reference, pre_system, reason } = req.body;
 
   const allowed = ['PENDING', 'PAID', 'WAIVED'];
   if (!allowed.includes(status)) {
     return res.status(400).json({ message: `Status must be one of: ${allowed.join(', ')}.` });
+  }
+
+  // Registration fee must never be settled without saying how/why (audit requirement).
+  const cleanReason = String(reason || '').trim();
+  const cleanRef = String(reference || '').trim();
+  const REG_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
+  const isPreSystem = pre_system === true || pre_system === 'true';
+  if (status === 'PAID') {
+    if (isPreSystem) {
+      if (cleanReason.length < 5) {
+        return res.status(400).json({ message: 'Paid before the system: please add a short note (at least 5 characters) saying how it is known to be paid.' });
+      }
+    } else {
+      if (!REG_METHODS.includes(payment_method)) {
+        return res.status(400).json({ message: `Payment method is required (${REG_METHODS.join(', ')}).` });
+      }
+      if (!cleanRef) {
+        return res.status(400).json({ message: 'A payment reference (slip / transaction number) is required.' });
+      }
+    }
+  }
+  if ((status === 'WAIVED' || status === 'PENDING') && cleanReason.length < 5) {
+    return res.status(400).json({ message: `A reason (at least 5 characters) is required to ${status === 'WAIVED' ? 'waive' : 'reset'} the registration fee.` });
   }
 
   // Only a PAID status represents money received on a particular day.
@@ -2264,6 +2287,19 @@ exports.updateRegFeeStatus = async (req, res) => {
       return res.status(404).json({ message: 'Client not found.' });
     }
     const wasAlreadyPaid = current.rows[0].reg_fee_status === 'PAID';
+
+    // A recorded payment must not be orphaned: resetting to PENDING while a registration
+    // payment exists would leave money in the ledger with no matching status.
+    if (status === 'PENDING') {
+      const credit = await db.query(
+        `SELECT 1 FROM transactions WHERE client_id = $1 AND category::text = 'REGISTRATION_FEE'
+           AND transaction_type = 'CREDIT' LIMIT 1`, [client_id]);
+      if (credit.rows.length > 0) {
+        return res.status(409).json({
+          message: 'A registration fee payment is recorded for this client, so it cannot be reset to Pending. Reverse the payment first (Client Payments → edit/void).',
+        });
+      }
+    }
 
     // PAID and WAIVED both start the 365-day membership countdown; PENDING clears it.
     const startsCountdown = status === 'PAID' || status === 'WAIVED';
@@ -2296,16 +2332,17 @@ exports.updateRegFeeStatus = async (req, res) => {
     // Manually marking PAID (no receipt-upload flow) still means real cash was
     // confirmed received — record it the same way verifyRegFeePayment does.
     // WAIVED involves no cash, so no transaction is created for it.
-    if (status === 'PAID' && !wasAlreadyPaid) {
+    if (status === 'PAID' && !wasAlreadyPaid && !isPreSystem) {
       try {
         await recordRegFeeInvoiceDebit(db, {
           client_id, amount: current.rows[0].reg_fee_amount, at: ledgerTimestamp,
           notes: 'Registration fee invoiced (marked paid by admin)',
         });
+        const payNote = `Registration fee payment (marked paid by admin) — ${payment_method}, ref ${cleanRef}`;
         await db.query(
           `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
-           VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)', COALESCE($3::timestamptz, NOW()))`,
-          [client_id, current.rows[0].reg_fee_amount, ledgerTimestamp]
+           VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', $4, COALESCE($3::timestamptz, NOW()))`,
+          [client_id, current.rows[0].reg_fee_amount, ledgerTimestamp, payNote]
         );
       } catch (txErr) {
         console.error('Failed to record registration fee transaction:', txErr.message);
@@ -2344,7 +2381,12 @@ exports.updateRegFeeStatus = async (req, res) => {
         actionType: 'REG_FEE_STATUS_UPDATED',
         entityType: 'CLIENT',
         entityId: String(client_id),
-        details: { new_status: status, is_registration_fee_paid: feePaid },
+        details: {
+          new_status: status, is_registration_fee_paid: feePaid,
+          previous_status: current.rows[0].reg_fee_status,
+          payment_method: payment_method || null, reference: cleanRef || null,
+          pre_system: isPreSystem || undefined, reason: cleanReason || null,
+        },
       });
     } catch (logErr) {
       console.error('Activity log failed (reg fee status update):', logErr.message);

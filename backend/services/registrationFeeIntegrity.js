@@ -87,7 +87,7 @@ async function runChecks({ limitPerCheck = 500 } = {}) {
   const results = [];
   for (const c of CHECKS) {
     const res = await db.query(
-      `SELECT cp.client_code, cp.full_name, cp.reg_fee_status AS status, cp.reg_fee_amount AS fee,
+      `SELECT cp.client_profile_id, cp.client_code, cp.full_name, cp.reg_fee_status AS status, cp.reg_fee_amount AS fee,
               (cp.import_batch_id IS NOT NULL) AS imported
        FROM client_profiles cp
        WHERE cp.client_code NOT IN ${TEST} AND ${c.where}

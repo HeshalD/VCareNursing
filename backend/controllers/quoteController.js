@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
 const { withTermsUrl } = require('../services/managedDocuments');
@@ -368,10 +369,27 @@ exports.generateAndSendPDF = async (req, res) => {
             },
         });
 
+        // Warn (never block) when the quotation carries no registration-fee line and the
+        // client's registration fee isn't in order — the usual way fees go uninvoiced.
+        let registration_warning = null;
+        try {
+            const feeLine = await db.query(
+                `SELECT 1 FROM quote_line_items WHERE quote_id = $1 AND is_registration_fee = true LIMIT 1`, [quote_id]);
+            if (feeLine.rows.length === 0) {
+                const who = await db.query(`SELECT client_id FROM service_requests WHERE request_id = $1`, [data.request_id]);
+                registration_warning = await warnIfRegistrationIncomplete(req, {
+                    clientId: who.rows[0]?.client_id, action: 'QUOTE_SENT_WITHOUT_REG_FEE',
+                });
+            }
+        } catch (warnErr) {
+            console.error('Quote registration warning failed:', warnErr.message);
+        }
+
         res.status(200).json({
             status: 'success',
             message: 'PDF Estimate generated, uploaded, and sent via WhatsApp',
-            pdf_link: pdfUrl
+            pdf_link: pdfUrl,
+            registration_warning
         });
 
     } catch (error) {
@@ -2020,37 +2038,116 @@ async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {},
         return { quote, createdAgreements, genericInvoice, createdVendorBills, bootstrap };
 }
 
-// Booking conversion: the products on the booking's quotation (e.g. transport — the
-// companion PRODUCT quotation) become invoices on the new booking, accepted here if
-// the first payment didn't already do it, then paid from whatever wallet money is
-// available to the booking. Runs inside the conversion's transaction; a failure to
-// accept (e.g. a quoted rental unit is gone) never blocks the booking — it comes
-// back as `warning` and the products can still be accepted from the Products page.
-async function attachLinkedProductsToBooking(pgClient, { serviceQuoteId, bookingId, actorUserId = null }) {
-    const pqRes = await pgClient.query(
-        `SELECT quote_id FROM quotations
-         WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT' AND COALESCE(status, '') <> 'REJECTED'
-         ORDER BY created_at LIMIT 1`,
+// Transport lines typed in as free-form "custom charges" (the practice that was removed) are
+// invoiced nowhere. When their quotation becomes a booking they are moved onto a product
+// quotation as the Transport Charges product, so they are invoiced like any product sale.
+// Only transport is converted; any other custom line is left alone. The line keeps its row
+// (and the payments allocated to it); a document-only "extra charge" invoice for it is deleted,
+// because the product invoice replaces it. Returns the product quotes that need accepting.
+const LEGACY_TRANSPORT_SQL = `item_type = 'CHARGE' AND is_registration_fee = false AND item_subtype IS NULL
+    AND (description ILIKE '%trans%' OR description ILIKE '%trasport%')`;
+
+async function convertLegacyTransportLines(pgClient, { serviceQuoteId, bookingId }) {
+    const linesRes = await pgClient.query(
+        `SELECT line_item_id, amount FROM quote_line_items WHERE quote_id = $1 AND ${LEGACY_TRANSPORT_SQL} ORDER BY sort_order`,
         [serviceQuoteId]
     );
-    const productQuoteId = pqRes.rows[0]?.quote_id;
-    const result = { product_quote_id: productQuoteId || null, accepted: false, drawn_from_wallet: 0, warning: null };
-    if (!productQuoteId) return result;
+    if (linesRes.rows.length === 0) return { converted: 0, quoteIds: [] };
 
-    // The booking's client is the billing client (a lead's account may have just been
-    // created by this conversion).
+    const prod = (await pgClient.query(`SELECT product_id, name, cost_price FROM products WHERE name = 'Transport Charges' LIMIT 1`)).rows[0];
+    if (!prod) return { converted: 0, quoteIds: [], warning: 'The "Transport Charges" product is missing, so the transport line was left as it is.' };
+    const clientId = (await pgClient.query(`SELECT client_id FROM bookings WHERE booking_id = $1`, [bookingId])).rows[0]?.client_id || null;
+
+    // Reuse the quotation's own unaccepted product quote. If its products were already accepted,
+    // the transport goes on a separate product quote so it still gets its own invoice.
+    const linked = (await pgClient.query(
+        `SELECT quote_id FROM quotations WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT' AND COALESCE(status, '') <> 'REJECTED'
+         ORDER BY created_at LIMIT 1`, [serviceQuoteId]
+    )).rows[0];
+    let targetId = linked?.quote_id || null;
+    if (targetId && await isProductQuoteAccepted(pgClient, targetId)) targetId = null;
+    if (!targetId) {
+        const created = await pgClient.query(
+            `INSERT INTO quotations (estimate_number, daily_rate, qty_days, transport_fee, sub_total, total_amount, quote_type,
+                                     client_id, booking_id, linked_quote_id, terms_conditions)
+             VALUES ($1, 0, 1, 0, 0, 0, 'PRODUCT', $2, $3, $4, $5) RETURNING quote_id`,
+            [await generateUniqueEstimateNumber(), clientId, bookingId, linked ? null : serviceQuoteId,
+                'Transport moved from a custom charge on the service quotation when the booking was created.']
+        );
+        targetId = created.rows[0].quote_id;
+    }
+
+    for (const line of linesRes.rows) {
+        // The document-only extra-charge invoice is replaced by the product invoice.
+        await pgClient.query(`DELETE FROM invoices WHERE line_item_id = $1 AND category = 'LINE_ITEM'`, [line.line_item_id]);
+        await pgClient.query(
+            `UPDATE quote_line_items
+             SET quote_id = $2, item_type = 'PRODUCT', product_id = $3, description = $4, cost_price_snapshot = $5,
+                 sort_order = (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM quote_line_items WHERE quote_id = $2)
+             WHERE line_item_id = $1`,
+            [line.line_item_id, targetId, prod.product_id, prod.name, prod.cost_price]
+        );
+    }
+    await pgClient.query(
+        `UPDATE quotations q SET sub_total = t.total, total_amount = t.total, updated_at = CURRENT_TIMESTAMP
+         FROM (SELECT COALESCE(SUM(amount), 0) AS total FROM quote_line_items WHERE quote_id = $1) t WHERE q.quote_id = $1`,
+        [targetId]
+    );
+    // Re-derive the service quotation's totals without the moved lines, as removing a custom charge does.
     await pgClient.query(
         `UPDATE quotations q
-         SET booking_id = COALESCE(q.booking_id, $1),
-             client_id = CASE WHEN q.client_id IS NULL AND q.walk_in_customer_id IS NULL THEN b.client_id ELSE q.client_id END
-         FROM bookings b
-         WHERE b.booking_id = $1 AND q.quote_id = $2`,
-        [bookingId, productQuoteId]
+         SET sub_total = t.total, total_amount = t.total, transport_fee = t.transport, updated_at = CURRENT_TIMESTAMP
+         FROM (
+           SELECT COALESCE(SUM(amount), 0) AS total,
+                  COALESCE((SELECT amount FROM quote_line_items WHERE quote_id = $1 AND LOWER(description) LIKE '%transport%'
+                            ORDER BY sort_order LIMIT 1), 0) AS transport
+           FROM quote_line_items WHERE quote_id = $1
+         ) t WHERE q.quote_id = $1`,
+        [serviceQuoteId]
     );
+    return { converted: linesRes.rows.length, quoteIds: [targetId] };
+}
 
-    if (await isProductQuoteAccepted(pgClient, productQuoteId)) {
-        await linkProductQuoteToBooking(pgClient, { productQuoteId, bookingId });
-    } else {
+// Booking conversion: the products on the booking's quotation (e.g. transport, the
+// companion PRODUCT quotation) become invoices on the new booking, accepted here if
+// the first payment didn't already do it, then paid from whatever wallet money is
+// available to the booking. Runs inside the conversion's transaction. A failure to
+// accept (for example a quoted rental unit is gone) never blocks the booking: it comes
+// back as `warning` and the products can still be accepted from the Products page.
+async function attachLinkedProductsToBooking(pgClient, { serviceQuoteId, bookingId, actorUserId = null }) {
+    const result = { product_quote_id: null, accepted: false, converted_transport_lines: 0, drawn_from_wallet: 0, warning: null };
+
+    // Old free-form transport lines first, so they join the products below.
+    const legacy = await convertLegacyTransportLines(pgClient, { serviceQuoteId, bookingId });
+    result.converted_transport_lines = legacy.converted;
+    if (legacy.warning) result.warning = legacy.warning;
+
+    const pqRes = await pgClient.query(
+        `SELECT quote_id FROM quotations
+         WHERE (linked_quote_id = $1 OR quote_id = ANY($2::uuid[])) AND quote_type = 'PRODUCT' AND COALESCE(status, '') <> 'REJECTED'
+         ORDER BY created_at`,
+        [serviceQuoteId, legacy.quoteIds]
+    );
+    const quoteIds = pqRes.rows.map((r) => r.quote_id);
+    result.product_quote_id = quoteIds[0] || null;
+    if (quoteIds.length === 0) return result;
+
+    for (const productQuoteId of quoteIds) {
+        // The booking's client is the billing client (a lead's account may have just been
+        // created by this conversion).
+        await pgClient.query(
+            `UPDATE quotations q
+             SET booking_id = COALESCE(q.booking_id, $1),
+                 client_id = CASE WHEN q.client_id IS NULL AND q.walk_in_customer_id IS NULL THEN b.client_id ELSE q.client_id END
+             FROM bookings b
+             WHERE b.booking_id = $1 AND q.quote_id = $2`,
+            [bookingId, productQuoteId]
+        );
+
+        if (await isProductQuoteAccepted(pgClient, productQuoteId)) {
+            await linkProductQuoteToBooking(pgClient, { productQuoteId, bookingId });
+            continue;
+        }
         await pgClient.query('SAVEPOINT accept_linked_products');
         try {
             // Reads the booking_id set above, so its invoice is tied to the booking.
@@ -2060,7 +2157,6 @@ async function attachLinkedProductsToBooking(pgClient, { serviceQuoteId, booking
         } catch (err) {
             await pgClient.query('ROLLBACK TO SAVEPOINT accept_linked_products');
             result.warning = `The quotation's products could not be invoiced automatically (${err.message}). Accept them from the Products page.`;
-            return result;
         }
     }
 

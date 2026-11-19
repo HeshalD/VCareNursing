@@ -358,10 +358,11 @@ class ApiClient {
     });
   }
 
-  async updateRegFeeStatus(clientId, status, salespersonId = null, paymentDate = null) {
+  // extra: { payment_method, reference, pre_system, reason } — required by the server for PAID / WAIVED / PENDING.
+  async updateRegFeeStatus(clientId, status, salespersonId = null, paymentDate = null, extra = {}) {
     return this.request(`/client/${clientId}/reg-fee-status`, {
       method: 'PATCH',
-      body: JSON.stringify({ status, salesperson_id: salespersonId, payment_date: paymentDate }),
+      body: JSON.stringify({ status, salesperson_id: salespersonId, payment_date: paymentDate, ...extra }),
     });
   }
   // invoice_id (optional) names the invoice being edited; the server only allows the current one.
@@ -962,12 +963,22 @@ class ApiClient {
 
   async sendQuotePDF(quoteId, productQuoteId = null) {
 
-    return this.request(`/quotes/send-pdf/${quoteId}`, {
+    const res = await this.request(`/quotes/send-pdf/${quoteId}`, {
 
       method: 'POST',
       body: JSON.stringify(productQuoteId ? { product_quote_id: productQuoteId } : {}),
 
     });
+
+    // The quotation went out, but it has no registration fee line and the client's fee isn't
+    // in order — tell staff once, in one place, for every screen that sends quotations.
+    if (res?.registration_warning?.message) {
+      try { window.alert(`Quotation sent.
+
+Registration fee: ${res.registration_warning.message}
+Add the registration fee to the quotation, or settle it from the client page.`); } catch { /* non-browser */ }
+    }
+    return res;
 
   }
 
@@ -1484,6 +1495,28 @@ class ApiClient {
     return this.request('/whatsapp/unread-count');
   }
 
+  // Ledger health check — read-only audit of invoices, the ledger and client totals.
+  async getLedgerHealthSummary() {
+    return this.request('/ledger-health/summary');
+  }
+
+  async getLedgerHealthFindings(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return this.request(query ? `/ledger-health/findings?${query}` : '/ledger-health/findings');
+  }
+
+  async runLedgerHealth() {
+    return this.request('/ledger-health/run', { method: 'POST' });
+  }
+
+  async acknowledgeLedgerHealthFinding(id, note) {
+    return this.request(`/ledger-health/findings/${id}/acknowledge`, { method: 'POST', body: JSON.stringify({ note }) });
+  }
+
+  async unacknowledgeLedgerHealthFinding(id) {
+    return this.request(`/ledger-health/findings/${id}/unacknowledge`, { method: 'POST' });
+  }
+
   async getWaConversation(id) {
     return this.request(`/whatsapp/conversations/${id}`);
   }
@@ -1984,6 +2017,10 @@ class ApiClient {
       console.error('Invoice PDF Download Error:', error);
       throw error;
     }
+  }
+
+  async getRegFeeIntegrity() {
+    return this.request('/client/reg-fee-integrity');
   }
 
   async getClientRegistrationAudit(clientId) {

@@ -1,12 +1,13 @@
 // controllers/statementController.js (or paymentController.js)
 const db = require('../config/db');
 const { resolveBankAccountId } = require('../utils/pettyCash');
-const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
+const { warnIfRegistrationIncomplete, blockIfRegistrationMissing } = require('../services/registrationFeeGuard');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
 exports.recordManualPayment = async (req, res) => {
     const { client_id } = req.params;
+    if (await blockIfRegistrationMissing(req, res, { clientId: client_id, action: 'MANUAL_PAYMENT' })) return;
     const {
         amount,
         payment_method, // 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'

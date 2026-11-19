@@ -2,7 +2,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
-const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
+const { warnIfRegistrationIncomplete, blockIfRegistrationMissing } = require('../services/registrationFeeGuard');
 const { creditClientWallet, settleBookingOutstandingFromWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,6 +18,7 @@ function extractActorRole(role) {
 // POST /api/client-payments/:client_id/record
 // =========================================================
 const recordClientPayment = async (req, res) => {
+  if (await blockIfRegistrationMissing(req, res, { clientId: req.params.client_id, action: 'CLIENT_PAYMENT' })) return;
   const pgClient = await db.pool.connect();
 
   try {

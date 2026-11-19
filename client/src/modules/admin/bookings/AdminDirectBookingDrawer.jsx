@@ -194,6 +194,11 @@ const AdminDirectBookingDrawer = ({
 
   // Admin notes
   const [adminNotes, setAdminNotes] = useState('');
+  // Registration fee: only offered when the client's fee has not been invoiced/paid/waived yet.
+  const [regAudit, setRegAudit] = useState(null);
+  const [regAction, setRegAction] = useState('INVOICE'); // INVOICE | WAIVE | PAID_BEFORE | SKIP
+  const [regAmount, setRegAmount] = useState('');
+  const [regReason, setRegReason] = useState('');
 
   // Submission state
   const [submitting, setSubmitting] = useState(false);
@@ -244,6 +249,25 @@ const AdminDirectBookingDrawer = ({
       setErrors({});
     }
   }, [open, preselectedClientId, preselectedPatientId]);
+
+  // ── Registration fee status of the chosen client ────────────────────────
+  useEffect(() => {
+    setRegAudit(null); setRegAction('INVOICE'); setRegReason('');
+    if (!selectedClientId) return;
+    let cancelled = false;
+    apiClient.getClientRegistrationAudit(selectedClientId)
+      .then((res) => {
+        if (cancelled) return;
+        const a = res?.data || res;
+        setRegAudit(a);
+        setRegAmount(String(a?.status?.amount || 10000));
+      })
+      .catch(() => { if (!cancelled) setRegAudit(null); });
+    return () => { cancelled = true; };
+  }, [selectedClientId]);
+
+  const regNeedsChoice = !!regAudit && !['PAID', 'WAIVED'].includes(regAudit.status?.state)
+    && !(regAudit.totals?.invoiced > 0);
 
   // ── Reset "same as client's address" if the client selection changes ─────
   useEffect(() => {
@@ -335,6 +359,8 @@ const AdminDirectBookingDrawer = ({
     if (serviceModel === 'SHIFT_BASED' && (!shiftRate || isNaN(parseFloat(shiftRate)) || parseFloat(shiftRate) < 0))
       errs.shiftRate = 'Enter a valid per-shift rate.';
     if (coordinatorMismatch && !coordinatorAction) errs.client = 'This client already has a coordinator — choose how to proceed.';
+    if (regNeedsChoice && regAction === 'INVOICE' && !(parseFloat(regAmount) > 0)) errs.submit = 'Enter the registration fee amount to invoice.';
+    if (regNeedsChoice && ['WAIVE', 'PAID_BEFORE'].includes(regAction) && regReason.trim().length < 5) errs.submit = 'Add a short reason (at least 5 characters) for the registration fee choice.';
     return errs;
   };
 
@@ -357,6 +383,11 @@ const AdminDirectBookingDrawer = ({
       ...(serviceModel !== 'SHIFT_BASED' && scheduledEndDate ? { scheduled_end_date: scheduledEndDate } : {}),
       ...(adminNotes ? { admin_notes: adminNotes } : {}),
       ...(coordinatorAction ? { coordinator_action: coordinatorAction } : {}),
+      ...(regNeedsChoice ? {
+        registration_action: regAction,
+        ...(regAction === 'INVOICE' ? { registration_fee_amount: parseFloat(regAmount) } : {}),
+        ...(['WAIVE', 'PAID_BEFORE'].includes(regAction) ? { registration_reason: regReason.trim() } : {}),
+      } : {}),
     };
 
     if (patientMode === 'existing') {
@@ -815,6 +846,39 @@ const AdminDirectBookingDrawer = ({
                 </Field>
               )}
             </div>
+
+            {/* ── Registration fee (only when it is not invoiced/paid/waived yet) ── */}
+            {regNeedsChoice && (
+              <>
+                <SectionHeader title="Registration Fee" />
+                <div className="px-5 py-4 space-y-3">
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                    This client has no registration fee on record. A direct booking has no quotation, so choose what to do with it now.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[['INVOICE', 'Invoice it'], ['WAIVE', 'Waive it'], ['PAID_BEFORE', 'Paid before the system'], ['SKIP', 'Decide later']].map(([v, label]) => (
+                      <button key={v} type="button" onClick={() => setRegAction(v)}
+                        className={`rounded-lg border px-3 py-2 text-xs font-medium ${regAction === v ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {regAction === 'INVOICE' && (
+                    <Field label="Registration fee (Rs)">
+                      <input type="number" min="0" value={regAmount} onChange={(e) => setRegAmount(e.target.value)} className={inputCls(false)} />
+                    </Field>
+                  )}
+                  {['WAIVE', 'PAID_BEFORE'].includes(regAction) && (
+                    <Field label={regAction === 'WAIVE' ? 'Reason for waiving' : 'How do you know it was paid?'}>
+                      <input value={regReason} onChange={(e) => setRegReason(e.target.value)} className={inputCls(false)} placeholder="Short reason (required)" />
+                    </Field>
+                  )}
+                  {regAction === 'SKIP' && (
+                    <p className="text-xs text-slate-500">The fee stays un-invoiced and will be flagged in the registration integrity report.</p>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* ── Section 5: Admin Notes ────────────────────────────────── */}
             <SectionHeader title="Admin Notes" />

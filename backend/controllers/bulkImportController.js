@@ -6,6 +6,7 @@ const { creditStaffSalary } = require('../services/billingService');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { logActivity } = require('../utils/activityLogger');
+const { logRegFee } = require('../services/regFeeLog');
 const { toE164, isValidPhone } = require('../utils/phone');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
@@ -855,6 +856,15 @@ async function commitClientRow(data, assignedBy) {
          WHERE client_profile_id = $5`,
         [alreadyExpired ? 'EXPIRED' : 'PAID', data.reg_fee_amount, data.reg_fee_paid_date, !alreadyExpired, clientId]
       );
+
+      logRegFee({
+        userId: assignedBy?.user_id || null, action: 'REG_FEE_IMPORTED_PAID', clientId,
+        details: {
+          amount: data.reg_fee_amount, paid_on: data.reg_fee_paid_date,
+          resulting_status: alreadyExpired ? 'EXPIRED' : 'PAID',
+          note: 'Imported from spreadsheet; no ledger payment or invoice is created for imported fees.',
+        },
+      });
 
       if (salespersonId) {
         await creditSalespersonForRegistration(client, {

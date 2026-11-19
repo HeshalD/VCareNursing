@@ -98,7 +98,25 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
     });
 
   const handleStatusUpdate = (status) =>
-    run(() => apiClient.updateRegFeeStatus(clientId, status));
+    run(async () => {
+      let extra = {};
+      if (status === 'PAID') {
+        const reference = (window.prompt('Payment reference (slip / transaction number).\nLeave empty and press OK only if it was paid before the system — you will be asked for a note.') || '').trim();
+        if (reference) {
+          const method = (window.prompt('Payment method: BANK_TRANSFER, CASH_DEPOSIT, CASH or CHEQUE', 'BANK_TRANSFER') || '').trim().toUpperCase();
+          extra = { payment_method: method, reference };
+        } else {
+          const reason = (window.prompt('Paid before the system: how do you know it was paid? (min 5 characters)') || '').trim();
+          if (!reason) throw new Error('Cancelled.');
+          extra = { pre_system: true, reason };
+        }
+      } else {
+        const reason = (window.prompt(`Reason to ${status === 'WAIVED' ? 'waive' : 'reset'} the registration fee (min 5 characters)`) || '').trim();
+        if (!reason) throw new Error('Cancelled.');
+        extra = { reason };
+      }
+      await apiClient.updateRegFeeStatus(clientId, status, null, null, extra);
+    });
 
   return (
     <div className="fixed inset-0 z-50 flex">

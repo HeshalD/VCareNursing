@@ -41,7 +41,7 @@ const NAV_SECTIONS = [
     section: 'People',
     icon: Users,
     items: [
-      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/'), permKey: 'VIEW_USER_MANAGEMENT' },
+      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') || p === '/admin/registration-integrity', permKey: 'VIEW_USER_MANAGEMENT' },
       {
         icon: UserCog, label: 'Staff Management', path: '/admin/staff-management',
         match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' || p === '/admin/staff-missing-bank-details'
@@ -128,6 +128,7 @@ const NAV_SECTIONS = [
       { icon: KeySquare, label: 'Roles', path: '/admin/roles', permKey: 'PERMISSIONS_MANAGE' },
       { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions', permKey: 'VIEW_ACTIVE_SESSIONS' },
       { icon: History, label: 'Activity Log', path: '/admin/activity-log', permKey: 'VIEW_ACTIVITY_LOG' },
+      { icon: HeartPulse, label: 'Ledger Health', path: '/admin/ledger-health', permKey: 'VIEW_LEDGER_HEALTH', badgeKey: 'ledger' },
       { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports'), permKey: 'VIEW_FINANCIAL' },
     ],
   },
@@ -225,6 +226,17 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   // Unread WhatsApp count for the sidebar badge: fetched once, then refreshed whenever the live
   // connection reports a new message or a chat being read.
   const [waUnread, setWaUnread] = useState(0);
+  // Open ledger-health errors, for the sidebar badge. Refreshed every few minutes.
+  const [ledgerErrors, setLedgerErrors] = useState(0);
+  const canSeeLedgerHealth = permissionsLoaded && hasPermission('VIEW_LEDGER_HEALTH');
+  useEffect(() => {
+    if (!adminToken || !canSeeLedgerHealth) return undefined;
+    let alive = true;
+    const refresh = () => apiClient.getLedgerHealthSummary().then((r) => { if (alive) setLedgerErrors(r.data?.counts?.errors || 0); }).catch(() => {});
+    refresh();
+    const id = setInterval(refresh, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, [adminToken, canSeeLedgerHealth]);
   const canSeeWhatsApp = permissionsLoaded && hasPermission('VIEW_WHATSAPP');
   useEffect(() => {
     if (!adminToken || !canSeeWhatsApp) return undefined;
@@ -237,12 +249,16 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
 
   // Hide sidebar items/sections the current user has no permission for; SUPER_ADMIN sees everything.
   const visibleNavSections = useMemo(() => {
-    const withBadge = (item) => (item.badgeKey === 'whatsapp' && waUnread > 0 ? { ...item, badge: waUnread > 99 ? '99+' : waUnread } : item);
+    const withBadge = (item) => {
+      if (item.badgeKey === 'whatsapp' && waUnread > 0) return { ...item, badge: waUnread > 99 ? '99+' : waUnread };
+      if (item.badgeKey === 'ledger' && ledgerErrors > 0) return { ...item, badge: ledgerErrors > 99 ? '99+' : ledgerErrors };
+      return item;
+    };
     return NAV_SECTIONS
       .map((group) => ({ ...group, items: group.items.filter(canAccess).map(withBadge) }))
       .filter((group) => group.items.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperAdmin, hasPermission, waUnread]);
+  }, [isSuperAdmin, hasPermission, waUnread, ledgerErrors]);
 
   // Sidebar destinations the admin may open, offered by global search as "Go to page" shortcuts.
   const searchPages = useMemo(
