@@ -11,6 +11,8 @@ const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { recordRegFeeInvoiceDebit } = require('../services/registrationFeeService');
+const { getClientRegistrationAudit: getClientRegistrationAuditData } = require('../services/clientRegistrationAudit');
+const { runChecks: runRegFeeIntegrityChecks } = require('../services/registrationFeeIntegrity');
 const { createOverdueInvoice, resolveOverdueInvoices } = require('../services/overdueInvoices');
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
@@ -2975,6 +2977,40 @@ exports.getClientRegFeeInvoices = async (req, res) => {
   } catch (err) {
     console.error('Get client reg fee invoices error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch registration fee invoices.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/reg-fee-integrity
+ * @desc    Clients whose registration fee is not in order (paying but never invoiced, marked
+ *          paid with no payment, duplicate charges, mismatches …). Read-only.
+ * @access  Private (VIEW_USER_MANAGEMENT)
+ */
+exports.getRegFeeIntegrity = async (req, res) => {
+  try {
+    const results = await runRegFeeIntegrityChecks({ limitPerCheck: 500 });
+    res.status(200).json({ status: 'success', data: results });
+  } catch (err) {
+    console.error('Registration fee integrity error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to run the registration fee checks.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/:client_id/registration-audit
+ * @desc    One authoritative record of the client's registration fee: status, every
+ *          ledger entry with its source, totals, how it feeds Total Invoiced / Payments
+ *          Made / Overdue, a reconciliation check and the status history.
+ * @access  Private (VIEW_USER_MANAGEMENT)
+ */
+exports.getClientRegistrationAudit = async (req, res) => {
+  try {
+    const audit = await getClientRegistrationAuditData(req.params.client_id);
+    if (!audit) return res.status(404).json({ status: 'error', message: 'Client not found.' });
+    res.status(200).json({ status: 'success', data: audit });
+  } catch (err) {
+    console.error('Get client registration audit error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to load the registration fee record.' });
   }
 };
 

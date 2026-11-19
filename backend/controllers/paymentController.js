@@ -1,6 +1,7 @@
 // controllers/statementController.js (or paymentController.js)
 const db = require('../config/db');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
@@ -62,10 +63,12 @@ exports.recordManualPayment = async (req, res) => {
         );
 
         const newPayment = newPaymentRes.rows[0];
+        const registrationWarning = await warnIfRegistrationIncomplete(req, { clientId: client_id, action: 'MANUAL_PAYMENT' });
 
         res.status(201).json({
             message: "Payment successfully recorded. The client's balance has been updated.",
-            payment: newPayment
+            payment: newPayment,
+            registration_warning: registrationWarning
         });
 
     } catch (error) {

@@ -42,8 +42,10 @@ router.post('/:client_id/admin-upload-reg-fee-receipt', protect, requirePermissi
 router.get('/:client_id/invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientInvoices);
 router.get('/:client_id/financial-breakdown/:metric', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientFinancialBreakdown);
 // Registration fee invoices — must stay above the generic '/:client_id' catch-all route below.
+router.get('/reg-fee-integrity', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getRegFeeIntegrity);
 router.get('/all-reg-fee-invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getAllRegFeeInvoices);
 router.get('/registration-fees-overview', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getRegistrationFeesOverview);
+router.get('/:client_id/registration-audit', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientRegistrationAudit);
 router.get('/:client_id/reg-fee-invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientRegFeeInvoices);
 router.post('/reg-fee-invoices/:invoice_id/resend', protect, requirePermission('INVOICE_RESEND'), clientController.resendRegFeeInvoice);
 // Overdue invoices ledger — must stay above the generic '/:client_id' catch-all route below.

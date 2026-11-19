@@ -1986,6 +1986,10 @@ class ApiClient {
     }
   }
 
+  async getClientRegistrationAudit(clientId) {
+    return this.request(`/client/${clientId}/registration-audit`);
+  }
+
   async getClientRegFeeInvoices(clientId) {
     return this.request(`/client/${clientId}/reg-fee-invoices`);
   }

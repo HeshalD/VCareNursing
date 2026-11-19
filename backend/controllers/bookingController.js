@@ -42,6 +42,7 @@ const { closeActivePatternForPause } = require('../services/shiftPatternService'
 const { createApprovedLeave, notifyLeaveApproved, markOnLeaveIfActiveToday, findLeaveConflicts } = require('../services/staffLeaveService');
 const { drawWalletForBooking, getEarmarkedTotal } = require('../services/walletService');
 const { chargeRegistrationFeeForBooking } = require('../services/registrationFeeService');
+const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
 const { isServiceDay } = require('../services/repeatDays');
 const { FORCE_MANUAL_FOR_SWAP_SQL, restoreAutoInvoicingIfSwapResolved } = require('../services/invoicingMode');
 
@@ -5970,10 +5971,15 @@ exports.adminDirectBooking = async (req, res) => {
             console.error('Activity log failed (adminDirectBooking):', logErr.message);
         }
 
+        // Warn-only for now (services/registrationFeeGuard.js): a booking created straight by an
+        // admin has no quotation, so nothing else asks about the registration fee.
+        const registrationWarning = await warnIfRegistrationIncomplete(req, { clientId: client_profile_id, action: 'ADMIN_DIRECT_BOOKING' });
+
         res.status(201).json({
             status: 'success',
             message: 'Booking created successfully.',
             data: { booking_id, booking_code },
+            registration_warning: registrationWarning,
         });
     } catch (error) {
         await dbClient.query('ROLLBACK');

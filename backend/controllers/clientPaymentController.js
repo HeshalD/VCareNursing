@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { warnIfRegistrationIncomplete } = require('../services/registrationFeeGuard');
 const { creditClientWallet, settleBookingOutstandingFromWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -481,9 +482,12 @@ const recordClientPayment = async (req, res) => {
       }
     })();
 
+    const registrationWarning = await warnIfRegistrationIncomplete(req, { clientId: client_id, action: 'CLIENT_PAYMENT' });
+
     return res.status(201).json({
       status: 'success',
       record: { ...record, allocations: resultAllocations },
+      registration_warning: registrationWarning,
     });
 
   } catch (err) {

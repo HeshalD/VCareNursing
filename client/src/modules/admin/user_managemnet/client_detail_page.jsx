@@ -75,6 +75,7 @@ import EditedAmountBadge from '../components/EditedAmountBadge';
 import { PreviewButton } from '../invoices/InvoicePreviewModal';
 import { invoicePreview } from '../invoices/invoicePreviewSources';
 import ClientInvoicesPanel from './ClientInvoicesPanel';
+import RegistrationAuditPanel from './RegistrationAuditPanel';
 import useInvoiceAmountEditor from './useInvoiceAmountEditor';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 
@@ -261,6 +262,7 @@ const ClientDetailPage = () => {
   const [invoiceActionError, setInvoiceActionError] = useState('');
 
   const [regFeeInvoices, setRegFeeInvoices] = useState([]);
+  const [registrationAudit, setRegistrationAudit] = useState(null);
   const [regFeeInvoicesLoading, setRegFeeInvoicesLoading] = useState(false);
 
   const [overdueInvoices, setOverdueInvoices] = useState([]);
@@ -496,6 +498,8 @@ const ClientDetailPage = () => {
       setRegFeeInvoicesLoading(true);
       const res = await apiClient.getClientRegFeeInvoices(clientId);
       setRegFeeInvoices(Array.isArray(res?.data) ? res.data : []);
+      // Registration entries that have no PDF still need a row on the Invoices tab.
+      apiClient.getClientRegistrationAudit(clientId).then((r) => setRegistrationAudit(r?.data || null)).catch(() => {});
     } catch {
       // non-fatal
     } finally {
@@ -1672,6 +1676,7 @@ const ClientDetailPage = () => {
             canEdit={invoiceEditPermissions}
             onEdit={openInvoiceEdit}
             regFeeInvoices={regFeeInvoices}
+            registrationAudit={registrationAudit}
             dailyInvoices={clientInvoices}
             productInvoices={productInvoices}
             lineItemInvoices={lineItemInvoices}
@@ -2912,6 +2917,7 @@ const ClientDetailPage = () => {
               );
 
               return (
+                <>
                 <DataCard
                   title="Registration Fee"
                   headerRight={
@@ -3329,6 +3335,11 @@ const ClientDetailPage = () => {
                     )}
                   </div>
                 </DataCard>
+                <RegistrationAuditPanel
+                  clientId={clientId}
+                  refreshKey={`${clientProfile.reg_fee_status}|${clientProfile.reg_fee_paid_at || ''}|${clientProfile.reg_fee_amount}|${regFeeInvoices.length}`}
+                />
+                </>
               );
             })()}
 

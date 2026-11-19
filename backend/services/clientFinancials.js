@@ -69,8 +69,34 @@ async function queryUnbookedInvoiceRows(clientId) {
   return result.rows.map((r) => ({ ...r, amount: parseFloat(r.amount), owing: parseFloat(r.owing) }));
 }
 
+// The registration fee is one obligation per client, shown on its own audit block. A fee charge
+// that belongs to a booking is already part of that booking's balance above. One that belongs to
+// no booking (a standalone invoice, an admin payment entry, a backfill) has no booking ledger to be
+// "overdue" on, so it counts here: unlinked fee debits minus unlinked fee credits. Every kind of
+// payment settles it — cash, transfer, wallet draw — because this is about what is still owed, not
+// about Payments Made. A WAIVED fee owes nothing. Never negative.
+async function queryRegistrationOutstanding(clientId) {
+  const result = await db.query(
+    `SELECT cp.reg_fee_status,
+            COALESCE(SUM(t.amount) FILTER (WHERE t.transaction_type = 'DEBIT'  AND t.booking_id IS NULL), 0) AS unlinked_debit,
+            COALESCE(SUM(t.amount) FILTER (WHERE t.transaction_type = 'CREDIT' AND t.booking_id IS NULL), 0) AS unlinked_credit
+     FROM client_profiles cp
+     LEFT JOIN transactions t ON t.client_id = cp.client_profile_id AND t.category::text = 'REGISTRATION_FEE'
+     WHERE cp.client_profile_id = $1
+     GROUP BY cp.reg_fee_status`,
+    [clientId]
+  );
+  const row = result.rows[0];
+  if (!row) return { outstanding: 0, unlinkedDebit: 0, unlinkedCredit: 0, waived: false };
+  const unlinkedDebit = parseFloat(row.unlinked_debit);
+  const unlinkedCredit = parseFloat(row.unlinked_credit);
+  const waived = row.reg_fee_status === 'WAIVED';
+  const outstanding = waived ? 0 : Math.max(Math.round((unlinkedDebit - unlinkedCredit) * 100) / 100, 0);
+  return { outstanding, unlinkedDebit, unlinkedCredit, waived };
+}
+
 async function getClientFinancialTotals(clientId) {
-  const [txResult, oiResult, overduePayments, legacyResult, reversalResult, unbookedInvoices] = await Promise.all([
+  const [txResult, oiResult, overduePayments, legacyResult, reversalResult, unbookedInvoices, registration] = await Promise.all([
     db.query(
       `SELECT
          COALESCE(SUM(amount) FILTER (
@@ -94,8 +120,16 @@ async function getClientFinancialTotals(clientId) {
                   SELECT 1 FROM transactions t
                   WHERE t.client_id = overdue_invoices.client_id
                     AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT'))), 0) as all_time_invoiced,
-              COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE'), 0) as open_overdue,
-              COUNT(*) FILTER (WHERE status = 'OVERDUE')::int as overdue_count
+              COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE' AND NOT (
+                source_type = 'REGISTRATION_FEE' AND EXISTS (
+                  SELECT 1 FROM transactions t
+                  WHERE t.client_id = overdue_invoices.client_id
+                    AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT'))), 0) as open_overdue,
+              COUNT(*) FILTER (WHERE status = 'OVERDUE' AND NOT (
+                source_type = 'REGISTRATION_FEE' AND EXISTS (
+                  SELECT 1 FROM transactions t
+                  WHERE t.client_id = overdue_invoices.client_id
+                    AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT')))::int as overdue_count
        FROM overdue_invoices
        WHERE client_id = $1`,
       [clientId]
@@ -118,7 +152,8 @@ async function getClientFinancialTotals(clientId) {
          AND notes LIKE 'Reversal of %'`,
       [clientId]
     ),
-    queryUnbookedInvoiceRows(clientId)
+    queryUnbookedInvoiceRows(clientId),
+    queryRegistrationOutstanding(clientId)
   ]);
 
   const totalPaid = parseFloat(txResult.rows[0]?.total_paid || 0);
@@ -128,22 +163,25 @@ async function getClientFinancialTotals(clientId) {
     - parseFloat(reversalResult.rows[0]?.reversed || 0);
   const balanceDue = overduePayments.reduce((sum, row) => sum + row.balance_due, 0)
     + parseFloat(oiResult.rows[0]?.open_overdue || 0)
-    + unbookedInvoices.reduce((sum, row) => sum + row.owing, 0);
+    + unbookedInvoices.reduce((sum, row) => sum + row.owing, 0)
+    + registration.outstanding;
   return {
     totalPaid,
     totalInvoiced,
     balanceDue: Math.max(balanceDue, 0),
     overduePayments,
     unbookedInvoices,
+    registration,
     overdueInvoiceCount: oiResult.rows[0]?.overdue_count || 0
   };
 }
 
 async function getClientOverdueBreakdown(clientId) {
-  const { balanceDue, overduePayments, overdueInvoiceCount, unbookedInvoices } = await getClientFinancialTotals(clientId);
+  const { balanceDue, overduePayments, overdueInvoiceCount, unbookedInvoices, registration } = await getClientFinancialTotals(clientId);
 
   const totalOverdue = balanceDue;
-  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount + unbookedInvoices.length;
+  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount + unbookedInvoices.length
+    + (registration.outstanding > 0 ? 1 : 0);
 
   return {
     overduePayments,
@@ -213,6 +251,7 @@ module.exports = {
   unbookedDueInvoiceSql,
   invoiceUnpaidSql,
   queryUnbookedInvoiceRows,
+  queryRegistrationOutstanding,
   getClientFinancialTotals,
   getClientOverdueBreakdown,
   queryBookingOverdueRows,

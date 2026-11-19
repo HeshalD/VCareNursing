@@ -112,6 +112,27 @@ const buildPaymentsMade = async (clientId, totals) => {
   }
   const derived = sum(counted, (r) => r.amount);
 
+  // A registration fee marked paid with no payment on the ledger — paid before the system for
+  // an imported client, otherwise a gap staff must close. Shown, never counted.
+  const legacyRes = await db.query(
+    `SELECT cp.reg_fee_status, cp.reg_fee_amount, cp.reg_fee_paid_at,
+            (cp.import_batch_id IS NOT NULL AND cp.reg_fee_paid_at < cp.created_at) AS before_system
+     FROM client_profiles cp
+     WHERE cp.client_profile_id = $1 AND cp.reg_fee_status IN ('PAID', 'EXPIRED')
+       AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.client_id = cp.client_profile_id
+                       AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'CREDIT')`,
+    [clientId]
+  );
+  const legacyRows = legacyRes.rows.map((r) => ({
+    id: 'legacy-registration-fee', date: r.reg_fee_paid_at, label: 'Registration fee',
+    kind: r.before_system ? 'Paid before the system' : 'Marked paid, no payment recorded',
+    amount: num(r.reg_fee_amount), counted: false,
+    why: r.before_system
+      ? 'Paid before the system went live (imported client). No payment was recorded here, so it is not part of Payments Made.'
+      : 'The profile says PAID but no payment was ever recorded. Record the payment or correct the status.',
+    flag: r.before_system ? null : 'No payment recorded',
+  }));
+
   return {
     summary: summarise({
       headline: totals.totalPaid, derived,
@@ -142,6 +163,14 @@ const buildPaymentsMade = async (clientId, totals) => {
         rows: excluded,
         total: { label: 'Total not counted', value: sum(excluded, (r) => r.amount), muted: true },
         empty: 'Nothing is excluded — every credit counts as a payment.',
+      },
+      {
+        key: 'legacy-registration', tone: 'excluded', title: 'Registration fee paid without a recorded payment',
+        description: 'Shown for the audit trail only. These are not payments recorded in the system, so they are never added to Payments Made.',
+        columns: [COL.date, col('label', 'Item', 'text'), col('kind', 'Status', 'text'), col('amount', 'Fee', 'money'), COL.why],
+        rows: legacyRows,
+        total: { label: 'Total not counted', value: sum(legacyRows, (r) => r.amount), muted: true },
+        empty: 'No registration fee is marked paid without a recorded payment.',
       },
     ],
   };
@@ -342,7 +371,11 @@ const buildOverdue = async (clientId, totals) => {
     ),
     db.query(
       `SELECT overdue_invoice_id AS id, invoice_code AS code, source_type, amount, invoiced_at AS date
-       FROM overdue_invoices WHERE client_id = $1 AND status = 'OVERDUE' ORDER BY invoiced_at ASC`,
+       FROM overdue_invoices o WHERE client_id = $1 AND status = 'OVERDUE'
+         AND NOT (source_type = 'REGISTRATION_FEE' AND EXISTS (
+               SELECT 1 FROM transactions t WHERE t.client_id = o.client_id
+                 AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT'))
+       ORDER BY invoiced_at ASC`,
       [clientId]
     ),
     // A booking's registration-fee charge should equal the fee the client actually paid.
@@ -387,7 +420,12 @@ const buildOverdue = async (clientId, totals) => {
   const bookingTotal = sum(owingBookings, (r) => r.amount);
   const invoiceTotal = sum(openInvoices, (r) => r.amount);
   const productInvoiceTotal = sum(productInvoices, (r) => r.amount);
-  const derived = Math.max(round2(bookingTotal + invoiceTotal + productInvoiceTotal), 0);
+  const reg = totals.registration || { outstanding: 0, unlinkedDebit: 0, unlinkedCredit: 0, waived: false };
+  const registrationRows = reg.outstanding > 0
+    ? [{ id: 'registration-fee', label: 'Registration fee', invoiced: reg.unlinkedDebit, settled: reg.unlinkedCredit, amount: reg.outstanding }]
+    : [];
+  const registrationTotal = round2(reg.outstanding);
+  const derived = Math.max(round2(bookingTotal + invoiceTotal + productInvoiceTotal + registrationTotal), 0);
 
   const entries = entryRes.rows.map((r) => {
     const isDebit = r.type === 'DEBIT';
@@ -413,11 +451,13 @@ const buildOverdue = async (clientId, totals) => {
       { label: 'Bookings with an unpaid balance', value: bookingTotal },
       { label: 'Open registration-fee invoices', value: invoiceTotal },
       { label: 'Unpaid product invoices not on a booking', value: productInvoiceTotal },
+      { label: 'Unpaid registration fee (not on a booking)', value: registrationTotal },
     ],
     rules: [
       'Worked out booking by booking: everything invoiced to the booking (ledger debits) minus everything settled against it (ledger credits, excluding staff salary).',
       'Only a booking that has been invoiced more than it has been settled counts. A booking paid ahead does not cancel another booking’s debt.',
-      'Adds registration-fee invoices that are still marked overdue.',
+      'Adds registration-fee invoices that are still marked overdue, unless the fee already has its own ledger charge (then the charge is counted instead, so it is never counted twice).',
+      'Adds the unpaid part of the registration fee when its charge belongs to no booking: the fee charged minus every registration payment recorded (cash, transfer or wallet). A waived fee owes nothing. When the fee was charged on a booking it is already inside that booking’s balance above.',
       'Adds product invoices that belong to no booking (a standalone sale, or products quoted before a booking exists) as soon as they are unpaid, less anything already paid on them. An invoice with a due date that has not passed yet is not counted. Product invoices that belong to a booking are already inside that booking’s balance above.',
       'Settled amounts here include wallet draws, refunds and forfeitures — anything credited to the booking — so they can differ from Payments Made.',
       'Not counted as invoices: wallet-payoff mirrors, refunds paid out, wallet adjustments and staff-salary clawbacks. They appear dimmed in the entries table with the reason, so a wallet payoff visibly settles a booking instead of being added to what it owes.',
@@ -448,6 +488,14 @@ const buildOverdue = async (clientId, totals) => {
         rows: openInvoices,
         total: { label: 'Total open invoices', value: invoiceTotal },
         empty: 'No overdue registration-fee invoices.',
+      },
+      {
+        key: 'registration-fee', tone: 'counted', title: 'Unpaid registration fee (not on a booking)',
+        description: 'The registration fee was charged to the client but is not part of any booking, and is not fully paid.',
+        columns: [col('label', 'Item', 'text'), col('invoiced', 'Charged', 'money'), col('settled', 'Paid', 'money'), col('amount', 'Owing', 'money')],
+        rows: registrationRows,
+        total: { label: 'Total unpaid registration fee', value: registrationTotal },
+        empty: 'No unpaid registration fee outside a booking.',
       },
       {
         key: 'product-invoices', tone: 'counted', title: 'Unpaid product invoices (no booking)',

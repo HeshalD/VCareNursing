@@ -119,15 +119,20 @@ function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit 
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
         </button>
       )}
-      <button type="button" disabled={busy} onClick={onResend} title="Resend to client on WhatsApp" className={resendBtn}>
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
-      </button>
+      {onResend && (
+        <button type="button" disabled={busy} onClick={onResend} title="Resend to client on WhatsApp" className={resendBtn}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+        </button>
+      )}
     </div>
   );
 }
 
 export default function ClientInvoicesPanel({
   regFeeInvoices = [],
+  // GET /client/:id/registration-audit — used to show registration fee entries that have no
+  // PDF (a ledger-only charge, or a fee paid before the system) so none is invisible here.
+  registrationAudit = null,
   dailyInvoices = [],
   productInvoices = [],
   lineItemInvoices = [],
@@ -198,6 +203,35 @@ export default function ClientInvoicesPanel({
       });
     });
 
+    // Registration fee entries with no PDF document. Only when the client has no registration PDF
+    // at all, so a fee is never listed twice.
+    if (registrationAudit && regFeeInvoices.length === 0) {
+      const { ledger = [], legacy, totals } = registrationAudit;
+      const owed = Number(totals?.owed || 0);
+      ledger.filter((l) => l.kind === 'INVOICE').forEach((l) => {
+        const state = totals?.waived ? { label: 'Waived', tone: 'gray', settled: true }
+          : owed > 0.005 ? { label: Number(totals?.paid || 0) > 0 ? 'Partly paid' : 'Unpaid', tone: 'amber', settled: false }
+            : { label: 'Paid', tone: 'green', settled: true };
+        out.push({
+          id: `regledger-${l.id}`, type: 'REG_FEE', date: l.date, code: l.code,
+          title: 'Registration fee',
+          sub: `Ledger entry · ${l.source_label} · no PDF document`,
+          amount: l.amount, state, busyKey: l.id,
+          preview: () => {}, previewDisabled: true, download: { href: '' }, resend: null, editRecord: null, edit: null,
+        });
+      });
+      if (legacy) {
+        out.push({
+          id: 'regledger-legacy', type: 'REG_FEE', date: legacy.date || registrationAudit.status?.paid_at, code: '—',
+          title: legacy.kind === 'PAID_BEFORE_SYSTEM' ? 'Registration fee — paid before the system' : 'Registration fee — marked paid, no payment recorded',
+          sub: legacy.label, amount: legacy.amount,
+          state: legacy.kind === 'PAID_BEFORE_SYSTEM' ? { label: 'Paid before system', tone: 'blue', settled: true } : { label: 'No payment recorded', tone: 'amber', settled: false },
+          busyKey: 'regledger-legacy',
+          preview: () => {}, previewDisabled: true, download: { href: '' }, resend: null, editRecord: null, edit: null,
+        });
+      }
+    }
+
     [...productInvoices.map((i) => ['PRODUCT', i]), ...lineItemInvoices.map((i) => ['EXTRA', i])].forEach(([type, inv]) => {
       const state = paymentState(inv.amount, inv.amount_paid, inv.status === 'PAID');
       out.push({
@@ -262,7 +296,7 @@ export default function ClientInvoicesPanel({
 
     return out.sort((a, b) => dayKey(b.date).localeCompare(dayKey(a.date)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regFeeInvoices, productInvoices, lineItemInvoices, combinedInvoices, dailyInvoices, overdueByCode, dateFrom, dateTo, canEdit, onEdit]);
+  }, [regFeeInvoices, registrationAudit, productInvoices, lineItemInvoices, combinedInvoices, dailyInvoices, overdueByCode, dateFrom, dateTo, canEdit, onEdit]);
 
   const q = search.trim().toLowerCase();
   const matchesSearch = (r) => !q || [r.code, r.title, r.sub, TYPES[r.type].label, r.state.label, r.booking?.service_type]
