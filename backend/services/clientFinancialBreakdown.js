@@ -116,7 +116,7 @@ const buildPaymentsMade = async (clientId, totals) => {
   // an imported client, otherwise a gap staff must close. Shown, never counted.
   const legacyRes = await db.query(
     `SELECT cp.reg_fee_status, cp.reg_fee_amount, cp.reg_fee_paid_at,
-            (cp.import_batch_id IS NOT NULL AND cp.reg_fee_paid_at < cp.created_at) AS before_system
+            (cp.reg_fee_pre_system OR (cp.import_batch_id IS NOT NULL AND cp.reg_fee_paid_at < cp.created_at)) AS before_system
      FROM client_profiles cp
      WHERE cp.client_profile_id = $1 AND cp.reg_fee_status IN ('PAID', 'EXPIRED')
        AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.client_id = cp.client_profile_id
@@ -128,7 +128,7 @@ const buildPaymentsMade = async (clientId, totals) => {
     kind: r.before_system ? 'Paid before the system' : 'Marked paid, no payment recorded',
     amount: num(r.reg_fee_amount), counted: false,
     why: r.before_system
-      ? 'Paid before the system went live (imported client). No payment was recorded here, so it is not part of Payments Made.'
+      ? 'Paid before the system went live. No payment was recorded here, so it is not part of Payments Made.'
       : 'The profile says PAID but no payment was ever recorded. Record the payment or correct the status.',
     flag: r.before_system ? null : 'No payment recorded',
   }));

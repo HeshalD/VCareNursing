@@ -54,7 +54,7 @@ async function getClientRegistrationAudit(clientId) {
   const [profileRes, txRes, invoiceRes, overdueRes, historyRes, outstanding] = await Promise.all([
     db.query(
       `SELECT client_profile_id, client_code, reg_fee_status, reg_fee_amount, reg_fee_invoiced_at,
-              reg_fee_paid_at, reg_fee_expires_at, is_registration_fee_paid, import_batch_id, created_at
+              reg_fee_paid_at, reg_fee_expires_at, is_registration_fee_paid, import_batch_id, created_at, reg_fee_pre_system
        FROM client_profiles WHERE client_profile_id = $1`,
       [clientId]
     ),
@@ -150,8 +150,8 @@ async function getClientRegistrationAudit(clientId) {
   const isImported = !!profile.import_batch_id;
   // Paid before the system = an imported client whose paid date is from before the import created
   // them. Marked paid weeks later, or never imported, is a gap in the record, not a legacy payment.
-  const paidBeforeSystem = isImported && profile.reg_fee_paid_at && profile.created_at
-    && new Date(profile.reg_fee_paid_at) < new Date(profile.created_at);
+  const paidBeforeSystem = !!profile.reg_fee_pre_system || (isImported && profile.reg_fee_paid_at && profile.created_at
+    && new Date(profile.reg_fee_paid_at) < new Date(profile.created_at));
   let legacy = null;
   if (paidStatus && noPaymentRecorded) {
     legacy = {
@@ -159,7 +159,7 @@ async function getClientRegistrationAudit(clientId) {
       amount: feeAmount,
       date: profile.reg_fee_paid_at,
       label: paidBeforeSystem
-        ? 'Paid before the system went live (imported client). No payment was recorded here, so this is not counted in Payments Made.'
+        ? 'Paid before the system went live. No payment was recorded here, so this is not counted in Payments Made.'
         : 'Marked paid but no payment was ever recorded. Staff need to record the payment or correct the status.',
     };
   }

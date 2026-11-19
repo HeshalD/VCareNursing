@@ -474,10 +474,10 @@ const ClientManagement = () => {
         )}
 
         <button
-          onClick={() => navigate('/admin/registration-integrity')}
+          onClick={() => navigate('/admin/ledger-health')}
           className="px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white border-slate-200 text-slate-500 hover:text-slate-700 transition-colors whitespace-nowrap"
         >
-          Registration Fee Audit
+          Ledger Health
         </button>
 
         {contactPendingCount > 0 && (

@@ -36,7 +36,8 @@ const CHECKS = [
     code: 'PAID_NO_PAYMENT',
     label: 'Marked PAID but no registration payment is recorded',
     severity: 'high',
-    where: `cp.reg_fee_status = 'PAID' AND NOT ${REG('CREDIT')}`,
+    where: `cp.reg_fee_status = 'PAID' AND NOT ${REG('CREDIT')} AND NOT cp.reg_fee_pre_system
+            AND NOT (cp.import_batch_id IS NOT NULL AND cp.reg_fee_paid_at < cp.created_at)`,
   },
   {
     code: 'PAYMENT_NO_INVOICE',
@@ -101,4 +102,4 @@ async function runChecks({ limitPerCheck = 500 } = {}) {
   return results;
 }
 
-module.exports = { runChecks, CHECKS };
+module.exports = { runChecks, CHECKS, TEST_CLIENTS_SQL: TEST };

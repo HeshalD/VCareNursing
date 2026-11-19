@@ -2923,6 +2923,8 @@ async function runMigration() {
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_invoiced_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token VARCHAR(64)`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token_expires_at TIMESTAMPTZ`);
+  // True when staff marked the fee paid because it was paid before the system (no ledger payment exists).
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_pre_system BOOLEAN NOT NULL DEFAULT false`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_url TEXT`);
 
   // Additional contact numbers beyond the primary (users.mobile_number) — e.g. a

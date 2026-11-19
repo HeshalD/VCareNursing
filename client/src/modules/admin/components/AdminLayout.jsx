@@ -41,7 +41,7 @@ const NAV_SECTIONS = [
     section: 'People',
     icon: Users,
     items: [
-      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') || p === '/admin/registration-integrity', permKey: 'VIEW_USER_MANAGEMENT' },
+      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/'), permKey: 'VIEW_USER_MANAGEMENT' },
       {
         icon: UserCog, label: 'Staff Management', path: '/admin/staff-management',
         match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' || p === '/admin/staff-missing-bank-details'

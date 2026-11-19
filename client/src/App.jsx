@@ -41,7 +41,6 @@ import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard'
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
 import StaffManagement from './modules/admin/user_managemnet/staff_management';
 import ClientDetailPage from './modules/admin/user_managemnet/client_detail_page';
-import RegistrationIntegrityPage from './modules/admin/user_managemnet/RegistrationIntegrityPage';
 import ClientFinancialBreakdownPage from './modules/admin/user_managemnet/ClientFinancialBreakdownPage';
 import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
@@ -564,11 +563,7 @@ function App() {
                 <BulkImportPage />
               </AdminAuthProvider>
             } />
-            <Route path="/admin/registration-integrity" element={
-              <AdminAuthProvider>
-                <RegistrationIntegrityPage />
-              </AdminAuthProvider>
-            } />
+            <Route path="/admin/registration-integrity" element={<Navigate to="/admin/ledger-health" replace />} />
             <Route path="/admin/staff-missing-bank-details" element={
               <AdminAuthProvider>
                 <StaffMissingBankDetails />

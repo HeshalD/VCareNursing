@@ -2309,10 +2309,11 @@ exports.updateRegFeeStatus = async (req, res) => {
     const updated = await db.query(
       `UPDATE client_profiles
        SET reg_fee_status = $1, is_registration_fee_paid = $2,
-           reg_fee_paid_at = $3, reg_fee_expires_at = $4
+           reg_fee_paid_at = $3, reg_fee_expires_at = $4,
+           reg_fee_pre_system = ($6::boolean AND $1::text = 'PAID')
        WHERE client_profile_id = $5
        RETURNING reg_fee_status, is_registration_fee_paid, reg_fee_expires_at`,
-      [status, feePaid, paidAt, expiresAt, client_id]
+      [status, feePaid, paidAt, expiresAt, client_id, isPreSystem]
     );
 
     if (updated.rows.length === 0) {

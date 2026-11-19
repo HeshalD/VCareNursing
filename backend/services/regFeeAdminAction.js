@@ -62,7 +62,7 @@ async function applyRegistrationChoice(runner, { clientId, action, amount, reaso
   // PAID_BEFORE
   await runner.query(
     `UPDATE client_profiles
-     SET reg_fee_status = 'PAID', is_registration_fee_paid = true,
+     SET reg_fee_status = 'PAID', is_registration_fee_paid = true, reg_fee_pre_system = true,
          reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
      WHERE client_profile_id = $1`, [clientId]);
   try { await resolveOverdueInvoices(runner, { client_id: clientId, source_type: 'REGISTRATION_FEE', resolution: 'PAID' }); }

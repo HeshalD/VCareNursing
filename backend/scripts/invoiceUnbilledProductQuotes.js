@@ -30,6 +30,9 @@ const { payInvoiceFromWallet, ensureInvoiceCharge } = require('../services/invoi
 const { getClientFinancialTotals } = require('../services/clientFinancials');
 
 const APPLY = process.argv.includes('--apply');
+// --skip EST-1234,EST-5678: service quotations to leave alone (matched on the service quotation's number).
+const skipIdx = process.argv.indexOf('--skip');
+const SKIP = new Set((skipIdx > -1 ? process.argv[skipIdx + 1] : '').split(',').map((x) => x.trim()).filter(Boolean));
 const jsonIdx = process.argv.indexOf('--json');
 const JSON_OUT = jsonIdx > -1 ? process.argv[jsonIdx + 1] : null;
 const num = (v) => Math.round((parseFloat(v || 0) + Number.EPSILON) * 100) / 100;
@@ -73,7 +76,7 @@ async function main() {
     await pg.query(`SET LOCAL application_name = 'invoice-unbilled-products'`);
 
     // The same rule as the Ledger Health check, grouped per service quotation.
-    const targets = (await pg.query(`
+    const allTargets = (await pg.query(`
       SELECT sq.quote_id AS service_quote_id, sq.estimate_number AS service_est,
              COALESCE(sr.client_id, sq.client_id) AS client_id,
              (SELECT b.booking_id FROM bookings b WHERE b.booking_id = sq.booking_id OR b.request_id = sq.request_id ORDER BY b.created_at DESC LIMIT 1) AS booking_id,
@@ -91,6 +94,8 @@ async function main() {
         AND NOT EXISTS (SELECT 1 FROM rental_agreements ra WHERE ra.quote_id = pq.quote_id)
       GROUP BY sq.quote_id, sq.estimate_number, sr.client_id, sq.client_id, sq.booking_id, sq.request_id
       ORDER BY MIN(pq.created_at)`)).rows;
+    const targets = allTargets.filter((t) => !SKIP.has(t.service_est));
+    report.skipped = allTargets.filter((t) => SKIP.has(t.service_est)).map((t) => t.service_est);
 
     // Before figures for every client touched (a booking's client can differ from the request's).
     const bookingClient = {};
@@ -198,7 +203,7 @@ async function main() {
   console.table(by);
   console.log('Per quotation:');
   report.rows.forEach((r) => console.log(`  ${r.service} ${(r.booking || 'no booking').padEnd(20)} Rs.${String(r.amount).padEnd(7)} ${r.error ? 'ERROR ' + r.error : `paid ${r.paid}, unpaid ${r.unpaid}, from wallet ${r.drawn || 0}`}`));
-  console.log(`\nStill uninvoiced after this: ${report.still_uninvoiced}`);
+  console.log(`\nStill uninvoiced after this: ${report.still_uninvoiced}${report.skipped.length ? ` (left alone on purpose: ${report.skipped.join(', ')})` : ''}`);
   console.log('\nClients (Total Invoiced / Overdue / Wallet, before -> after):');
   report.clients.filter((c) => JSON.stringify(c.before) !== JSON.stringify(c.after)).forEach((c) => {
     const f = (s) => `${s.invoiced} / ${s.overdue} / ${s.wallet}`;

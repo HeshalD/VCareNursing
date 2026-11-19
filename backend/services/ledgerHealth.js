@@ -14,6 +14,7 @@
 
 const db = require('../config/db');
 const { getClientFinancialBreakdown, BREAKDOWN_METRICS } = require('./clientFinancialBreakdown');
+const { CHECKS: REG_FEE_CHECKS, TEST_CLIENTS_SQL } = require('./registrationFeeIntegrity');
 const { bookingChargeSql, bookingSettledSql, unbookedDueInvoiceSql, invoiceUnpaidSql } = require('./clientFinancials');
 
 // Free-form custom charges were removed from the quotation builders on this date. A custom charge
@@ -159,23 +160,6 @@ const CHECKS = [
         };
       }),
   },
-  {
-    key: 'reg_fee_not_invoiced', group: 'Quotation charges', severity: 'WARNING',
-    title: 'Registration fee paid but not invoiced',
-    help: 'A payment was recorded on a quotation with a registration fee, but the client has no registration-fee invoice for it.',
-    run: async () => (await q(`
-      SELECT sq.quote_id AS id, sq.estimate_number AS label, sr.client_id, li.amount
-      FROM quotations sq
-      JOIN service_requests sr ON sr.request_id = sq.request_id
-      JOIN quote_line_items li ON li.quote_id = sq.quote_id AND li.is_registration_fee = true AND li.amount > 0
-      WHERE sq.quote_type = 'SERVICE' AND sr.client_id IS NOT NULL
-        AND EXISTS (SELECT 1 FROM payment_tracking p WHERE p.quote_id = sq.quote_id AND p.status = 'VERIFIED')
-        AND NOT EXISTS (SELECT 1 FROM client_reg_fee_invoices c WHERE c.client_id = sr.client_id)
-        AND NOT EXISTS (SELECT 1 FROM overdue_invoices o WHERE o.client_id = sr.client_id AND o.source_type = 'REGISTRATION_FEE')
-        AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.client_id = sr.client_id AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT')`))
-      .map((r) => ({ entity_type: 'QUOTATION', entity_id: r.id, entity_label: r.label, client_id: r.client_id, amount: r.amount, link_path: quotePath(r.id),
-        detail: `Quotation ${r.label} has a ${rs(r.amount)} registration fee and a recorded payment, but the client has no registration-fee invoice.` })),
-  },
 
   // ── Care and shift billing ─────────────────────────────────────────────────
   {
@@ -231,6 +215,61 @@ const CHECKS = [
   },
 ];
 
+
+// ─── Registration fee ────────────────────────────────────────────────────────
+// Built from the same read-only queries as services/registrationFeeIntegrity.js, so this page,
+// the client page banner and scripts/regFeeIntegrity.js can never disagree. One finding per client.
+// 'BOOKED_NOT_INVOICED' (booked, never paid, never invoiced) is deliberately left off the page:
+// those clients are for staff to deal with, and the command-line report still lists them.
+const REG_FEE_ON_PAGE = {
+  NO_REGISTRATION_INVOICE: {
+    severity: 'ERROR',
+    text: (c) => `${c.code} has paid the system but their registration fee (${rs(c.fee)}) was never invoiced, so it is missing from Total Invoiced.`,
+  },
+  PAID_NO_PAYMENT: {
+    severity: 'ERROR',
+    text: (c) => `${c.code}'s registration fee is marked PAID but no payment is recorded for it. Record the payment, correct the status, or mark it as paid before the system.`,
+  },
+  PAYMENT_NO_INVOICE: {
+    severity: 'ERROR',
+    text: (c) => `${c.code} has a registration payment but the fee was never invoiced.`,
+  },
+  DUPLICATE_INVOICE: {
+    severity: 'ERROR',
+    text: (c) => `${c.code} has more than one registration charge, so the fee is being billed twice.`,
+  },
+  AMOUNT_MISMATCH: {
+    severity: 'WARNING',
+    text: (c) => `${c.code}'s registration payments do not equal the registration charge (partly paid or overpaid).`,
+  },
+  PAID_NO_EXPIRY: {
+    severity: 'WARNING',
+    text: (c) => `${c.code}'s registration fee is ${c.status} but has no expiry date, so it will never lapse.`,
+  },
+  OVERDUE_BUT_PAID: {
+    severity: 'WARNING',
+    text: (c) => `${c.code}'s registration fee is PAID but an overdue registration invoice is still open.`,
+  },
+  CHARGED_NO_DOCUMENT: {
+    severity: 'WARNING',
+    text: (c) => `${c.code}'s registration fee was charged but no invoice document exists (the Invoices tab shows a ledger-only row).`,
+  },
+};
+
+const registrationFeeChecks = REG_FEE_CHECKS.filter((c) => REG_FEE_ON_PAGE[c.code]).map((c) => ({
+  key: `reg_fee_${c.code.toLowerCase()}`,
+  group: 'Registration fee',
+  severity: REG_FEE_ON_PAGE[c.code].severity,
+  title: `Registration fee: ${c.label.charAt(0).toLowerCase()}${c.label.slice(1)}`,
+  help: c.label + '. Open the client to see the Registration fee record, which shows every charge and payment.',
+  run: async () => (await q(`
+    SELECT cp.client_profile_id AS id, cp.client_code AS code, cp.full_name, cp.reg_fee_status AS status, cp.reg_fee_amount AS fee
+    FROM client_profiles cp
+    WHERE cp.client_code NOT IN ${TEST_CLIENTS_SQL} AND ${c.where}`))
+    .map((r) => ({ entity_type: 'CLIENT', entity_id: r.id, entity_label: `${r.code} ${r.full_name || ''}`.trim(), client_id: r.id,
+      amount: r.fee, link_path: clientPath(r.id), detail: REG_FEE_ON_PAGE[c.code].text(r) })),
+}));
+
 // ─── Client totals reconcile ─────────────────────────────────────────────────
 // Reuses the drill-down pages: each headline figure (Payments Made, Total Invoiced, Overdue,
 // Wallet) must equal the sum of the entries listed beneath it. A mismatch means money exists
@@ -277,7 +316,7 @@ const clientBreakdownCheck = {
   },
 };
 
-const ALL_CHECKS = [...CHECKS, clientBreakdownCheck];
+const ALL_CHECKS = [...CHECKS, ...registrationFeeChecks, clientBreakdownCheck];
 
 // ─── Running and recording ───────────────────────────────────────────────────
 
