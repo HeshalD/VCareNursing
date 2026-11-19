@@ -61,14 +61,38 @@ async function chargeRegistrationFeeForBooking(client, {
   // and nothing was paid here: there is nothing to charge this booking for.
   if (status === 'PAID' && paidOnQuote <= EPS) return result;
 
-  await client.query(
-    `INSERT INTO transactions (
-       booking_id, quote_id, client_id, category, amount, status, notes,
-       transaction_type, reference_number, created_at
-     ) VALUES ($1, $2, $3, $4, $5, 'COMPLETED', $6, 'DEBIT', $7, NOW())`,
-    [booking_id, quote_id, client_id, await resolveDebitCategory(client), fee,
-     'Registration fee charged during booking conversion', reference || quote_id]
+  // The fee may already be invoiced on the ledger without belonging to any booking yet — a
+  // standalone registration invoice, an admin payment entry, or a backfill. Charging again
+  // would bill the one-off fee twice, so such a debit is attached to this booking instead.
+  const category = await resolveDebitCategory(client);
+  const existingRes = await client.query(
+    `SELECT transaction_id, amount FROM transactions
+     WHERE client_id = $1 AND category::text = $2 AND transaction_type = 'DEBIT'
+       AND booking_id IS NULL AND quote_id IS NULL
+     ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+    [client_id, category]
   );
+  if (existingRes.rows.length > 0) {
+    const existing = existingRes.rows[0];
+    const differs = Math.abs(parseFloat(existing.amount) - fee) > EPS;
+    await client.query(
+      `UPDATE transactions
+       SET booking_id = $1, quote_id = $2, reference_number = COALESCE(reference_number, $3),
+           original_amount = CASE WHEN $5::boolean THEN COALESCE(original_amount, amount) ELSE original_amount END,
+           amount = $4::numeric
+       WHERE transaction_id = $6`,
+      [booking_id, quote_id, reference || quote_id, fee, differs, existing.transaction_id]
+    );
+  } else {
+    await client.query(
+      `INSERT INTO transactions (
+         booking_id, quote_id, client_id, category, amount, status, notes,
+         transaction_type, reference_number, created_at
+       ) VALUES ($1, $2, $3, $4, $5, 'COMPLETED', $6, 'DEBIT', $7, NOW())`,
+      [booking_id, quote_id, client_id, category, fee,
+       'Registration fee charged during booking conversion', reference || quote_id]
+    );
+  }
   result.charged = true;
 
   // Payments made before the booking existed had no booking to attach to.

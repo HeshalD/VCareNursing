@@ -378,9 +378,16 @@ const buildOverdue = async (clientId, totals) => {
   const settledBookings = bookings.filter((r) => !r.counted);
   const openInvoices = openRes.rows.map((r) => ({ id: r.id, date: r.date, code: r.code, source_type: r.source_type, amount: num(r.amount) }));
 
+  // Unpaid product invoices that belong to no booking (see unbookedDueInvoiceSql).
+  const productInvoices = (totals.unbookedInvoices || []).map((r) => ({
+    id: r.invoice_id, date: r.date, code: r.invoice_code, source_type: r.category, status: r.status,
+    invoiced: r.amount, paid: round2(r.amount - r.owing), amount: r.owing,
+  }));
+
   const bookingTotal = sum(owingBookings, (r) => r.amount);
   const invoiceTotal = sum(openInvoices, (r) => r.amount);
-  const derived = Math.max(round2(bookingTotal + invoiceTotal), 0);
+  const productInvoiceTotal = sum(productInvoices, (r) => r.amount);
+  const derived = Math.max(round2(bookingTotal + invoiceTotal + productInvoiceTotal), 0);
 
   const entries = entryRes.rows.map((r) => {
     const isDebit = r.type === 'DEBIT';
@@ -405,11 +412,13 @@ const buildOverdue = async (clientId, totals) => {
     formula: [
       { label: 'Bookings with an unpaid balance', value: bookingTotal },
       { label: 'Open registration-fee invoices', value: invoiceTotal },
+      { label: 'Unpaid product invoices not on a booking', value: productInvoiceTotal },
     ],
     rules: [
       'Worked out booking by booking: everything invoiced to the booking (ledger debits) minus everything settled against it (ledger credits, excluding staff salary).',
       'Only a booking that has been invoiced more than it has been settled counts. A booking paid ahead does not cancel another booking’s debt.',
       'Adds registration-fee invoices that are still marked overdue.',
+      'Adds product invoices that belong to no booking (a standalone sale, or products quoted before a booking exists) as soon as they are unpaid, less anything already paid on them. An invoice with a due date that has not passed yet is not counted. Product invoices that belong to a booking are already inside that booking’s balance above.',
       'Settled amounts here include wallet draws, refunds and forfeitures — anything credited to the booking — so they can differ from Payments Made.',
       'Not counted as invoices: wallet-payoff mirrors, refunds paid out, wallet adjustments and staff-salary clawbacks. They appear dimmed in the entries table with the reason, so a wallet payoff visibly settles a booking instead of being added to what it owes.',
     ],
@@ -439,6 +448,15 @@ const buildOverdue = async (clientId, totals) => {
         rows: openInvoices,
         total: { label: 'Total open invoices', value: invoiceTotal },
         empty: 'No overdue registration-fee invoices.',
+      },
+      {
+        key: 'product-invoices', tone: 'counted', title: 'Unpaid product invoices (no booking)',
+        description: 'Product and rental invoices not tied to a booking that are still unpaid.',
+        columns: [COL.date, col('code', 'Invoice', 'mono'), col('status', 'Status', 'category'),
+          col('invoiced', 'Invoiced', 'money'), col('paid', 'Paid', 'money'), col('amount', 'Owing', 'money')],
+        rows: productInvoices,
+        total: { label: 'Total owing on product invoices', value: productInvoiceTotal },
+        empty: 'No unpaid product invoices outside bookings.',
       },
       {
         key: 'settled', tone: 'excluded', title: 'Bookings not counted',

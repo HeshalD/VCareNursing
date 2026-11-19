@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const { IN_CATEGORIES, OUT_CATEGORIES } = require('../utils/transactionFlow');
-const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
+const { bookingChargeSql, bookingSettledSql, unbookedDueInvoiceSql, invoiceUnpaidSql } = require('../services/clientFinancials');
 const { resolvePeriodRange, CASH_FLOW_PERIODS, INCOME_EXPENSE_PERIODS, TOP_EXPENSES_PERIODS } = require('../utils/financePeriods');
 
 const getOverview = async (req, res) => {
@@ -26,7 +26,9 @@ const getOverview = async (req, res) => {
       SELECT
         COALESCE((SELECT SUM(amount) FROM booking_daily_invoices WHERE status = 'PENDING'), 0) AS outstanding_daily_invoices,
         COALESCE((SELECT SUM(amount) FROM invoices WHERE status IN ('PENDING', 'OVERDUE')), 0) AS outstanding_product_rental_invoices,
-        COALESCE((SELECT SUM(amount) FROM invoices WHERE status = 'OVERDUE'), 0) AS overdue_product_rental_invoices,
+        -- Same definition as a client's Overdue amount: unpaid product invoices that belong to no
+        -- booking (a booking's own invoices are already inside its balance below), less what is paid.
+        COALESCE((SELECT SUM(${invoiceUnpaidSql('i')}) FROM invoices i WHERE ${unbookedDueInvoiceSql('i')}), 0) AS overdue_product_rental_invoices,
         COALESCE((SELECT SUM(reg_fee_amount) FROM client_profiles WHERE reg_fee_status IN ('PENDING', 'EXPIRED')), 0) AS outstanding_registration_fees
     `;
 
@@ -514,12 +516,12 @@ const getReceivablesAging = async (req, res) => {
         i.invoice_id,
         i.invoice_code,
         COALESCE(cp.full_name, wic.full_name, 'Unknown') AS customer_name,
-        i.amount,
-        i.due_date AS reference_date
+        ${invoiceUnpaidSql('i')} AS amount,
+        COALESCE(i.due_date, i.created_at::date) AS reference_date
       FROM invoices i
       LEFT JOIN client_profiles cp ON cp.client_profile_id = i.client_id
       LEFT JOIN walk_in_customers wic ON wic.walk_in_customer_id = i.walk_in_customer_id
-      WHERE i.status = 'OVERDUE'
+      WHERE ${unbookedDueInvoiceSql('i')} AND ${invoiceUnpaidSql('i')} > 0.005
     `;
 
     const [bookingItemsResult, invoiceItemsResult] = await Promise.all([

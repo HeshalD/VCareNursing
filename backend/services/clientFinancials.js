@@ -18,7 +18,8 @@ const db = require('../config/db');
 //    figure matches the corrected day amounts.
 //  - Overdue = what is invoiced but not yet settled, worked out booking by booking (so a
 //    settled or refunded booking can't hide another one's debt) + unresolved
-//    overdue_invoices rows. Never negative.
+//    overdue_invoices rows + unpaid product invoices that belong to no booking
+//    (unbookedDueInvoiceSql). Never negative.
 const NON_PAYMENT_CREDIT_CATEGORIES = ['WALLET_REFUND', 'SETTLEMENT_FORFEITURE', 'STAFF_SALARY', 'WALLET_ADJUSTMENT'];
 const NON_CHARGE_DEBIT_CATEGORIES = ['WALLET_DEBIT', 'CLIENT_REFUND', 'DEPOSIT_REFUND', 'WALLET_ADJUSTMENT'];
 
@@ -40,8 +41,36 @@ const bookingSettledSql = (alias = '') => {
   return `(${p}transaction_type = 'CREDIT' AND COALESCE(${p}category::text, '') <> 'STAFF_SALARY')`;
 };
 
+// A product/rental invoice that is not part of a booking (a standalone sale, or a quotation's
+// products before any booking exists) has no booking ledger to be "overdue" on, so it counts on
+// its own: the moment it is unpaid, like a care day, unless a due date was set and has not passed.
+// Rental invoices keep their own rule: they count once the nightly job marks them OVERDUE after
+// the billing period. Invoices that belong to a booking are NOT counted here. Their charge is
+// already on that booking's balance, so counting them again would double the debt.
+// `a` is the invoices table alias. Shared by the client page, its Overdue breakdown and the
+// Finances dashboard so all three always agree.
+const unbookedDueInvoiceSql = (a = 'i') => `(
+  ${a}.booking_id IS NULL AND ${a}.status <> 'PAID'
+  AND (${a}.category = 'PRODUCT' OR (${a}.category IN ('RENTAL_ONE_TIME', 'RENTAL_RECURRING') AND ${a}.status = 'OVERDUE'))
+  AND (${a}.due_date IS NULL OR ${a}.due_date <= CURRENT_DATE)
+)`;
+const invoiceUnpaidSql = (a = 'i') =>
+  `GREATEST(${a}.amount - COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = ${a}.invoice_id), 0), 0)`;
+
+async function queryUnbookedInvoiceRows(clientId) {
+  const result = await db.query(
+    `SELECT i.invoice_id, i.invoice_code, i.category, i.status, i.amount, i.created_at AS date, i.due_date,
+            ${invoiceUnpaidSql('i')} AS owing
+     FROM invoices i
+     WHERE i.client_id = $1 AND ${unbookedDueInvoiceSql('i')} AND ${invoiceUnpaidSql('i')} > 0.005
+     ORDER BY i.created_at`,
+    [clientId]
+  );
+  return result.rows.map((r) => ({ ...r, amount: parseFloat(r.amount), owing: parseFloat(r.owing) }));
+}
+
 async function getClientFinancialTotals(clientId) {
-  const [txResult, oiResult, overduePayments, legacyResult, reversalResult] = await Promise.all([
+  const [txResult, oiResult, overduePayments, legacyResult, reversalResult, unbookedInvoices] = await Promise.all([
     db.query(
       `SELECT
          COALESCE(SUM(amount) FILTER (
@@ -88,7 +117,8 @@ async function getClientFinancialTotals(clientId) {
        WHERE client_id = $1 AND category::text = 'WALLET_REFUND' AND transaction_type = 'CREDIT'
          AND notes LIKE 'Reversal of %'`,
       [clientId]
-    )
+    ),
+    queryUnbookedInvoiceRows(clientId)
   ]);
 
   const totalPaid = parseFloat(txResult.rows[0]?.total_paid || 0);
@@ -97,21 +127,23 @@ async function getClientFinancialTotals(clientId) {
     - parseFloat(legacyResult.rows[0]?.reductions || 0)
     - parseFloat(reversalResult.rows[0]?.reversed || 0);
   const balanceDue = overduePayments.reduce((sum, row) => sum + row.balance_due, 0)
-    + parseFloat(oiResult.rows[0]?.open_overdue || 0);
+    + parseFloat(oiResult.rows[0]?.open_overdue || 0)
+    + unbookedInvoices.reduce((sum, row) => sum + row.owing, 0);
   return {
     totalPaid,
     totalInvoiced,
     balanceDue: Math.max(balanceDue, 0),
     overduePayments,
+    unbookedInvoices,
     overdueInvoiceCount: oiResult.rows[0]?.overdue_count || 0
   };
 }
 
 async function getClientOverdueBreakdown(clientId) {
-  const { balanceDue, overduePayments, overdueInvoiceCount } = await getClientFinancialTotals(clientId);
+  const { balanceDue, overduePayments, overdueInvoiceCount, unbookedInvoices } = await getClientFinancialTotals(clientId);
 
   const totalOverdue = balanceDue;
-  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount;
+  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount + unbookedInvoices.length;
 
   return {
     overduePayments,
@@ -178,6 +210,9 @@ module.exports = {
   BOOKING_NON_CHARGE_DEBIT_CATEGORIES,
   bookingChargeSql,
   bookingSettledSql,
+  unbookedDueInvoiceSql,
+  invoiceUnpaidSql,
+  queryUnbookedInvoiceRows,
   getClientFinancialTotals,
   getClientOverdueBreakdown,
   queryBookingOverdueRows,
