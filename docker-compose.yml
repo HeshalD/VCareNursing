@@ -23,6 +23,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: vcarenursing-backend
+    init: true  # reap orphaned Chrome zombies left by PDF generation
     environment:
       NODE_ENV: production
       PORT: 5000

@@ -35,6 +35,8 @@ export const CATEGORY_CONFIG = {
   WALLET_REFUND:      { label: 'Wallet Refund',      dot: 'bg-amber-400',   text: 'text-amber-700' },
   BOOKING_SETTLEMENT: { label: 'Booking Settlement', dot: 'bg-sky-400',     text: 'text-sky-700' },
   PRODUCT_SALE:       { label: 'Product Sale',       dot: 'bg-emerald-400', text: 'text-emerald-700' },
+  // Accrual charge for a product/rental invoice (NEUTRAL — no money moves).
+  PRODUCT_INVOICE:    { label: 'Product Invoice',    dot: 'bg-teal-400',    text: 'text-teal-700' },
   RENTAL_PAYMENT:     { label: 'Rental Payment',     dot: 'bg-purple-400',  text: 'text-purple-700' },
   DEPOSIT_REFUND:     { label: 'Deposit Refund',     dot: 'bg-rose-400',    text: 'text-rose-700' },
   ACCOUNT_TRANSFER:   { label: 'Account Transfer',   dot: 'bg-slate-400',   text: 'text-slate-600' },

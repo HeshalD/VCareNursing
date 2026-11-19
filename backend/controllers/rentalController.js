@@ -15,6 +15,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
+const { ensureInvoiceCharge } = require('../services/invoiceCharges');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -131,6 +132,8 @@ async function createRentalAgreementCore(pgClient, {
       agreement.rental_agreement_id, invoiceAmount, startDate, periodEnd, createdBy || null,
     ]
   );
+  // Puts the invoice on the client's ledger (Total Invoiced, statements).
+  await ensureInvoiceCharge(pgClient, invoiceResult.rows[0].invoice_id);
 
   // If this product is sourced from a vendor, record what's owed to them for
   // this rental and (if the admin chose to pay now) settle it immediately —

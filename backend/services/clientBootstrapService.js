@@ -6,6 +6,17 @@ const { creditSalespersonForRegistration } = require('./clientSalespersonService
 const { sendSms } = require('../utils/sms');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 
+// Product quotations built alongside a lead's service quotation (e.g. its transport)
+// are created before the lead has a client account. Once the account exists, they
+// belong to it, so their invoices bill the client.
+const attachClientToCompanionProductQuotes = (client, requestId, clientId) => client.query(
+  `UPDATE quotations pq SET client_id = $2
+   FROM quotations sq
+   WHERE sq.request_id = $1 AND pq.linked_quote_id = sq.quote_id AND pq.quote_type = 'PRODUCT'
+     AND pq.client_id IS NULL AND pq.walk_in_customer_id IS NULL`,
+  [requestId, clientId]
+);
+
 const getOrCreateClientProfileForQuotation = async (client, quotation) => {
   const requestResult = await client.query(
     `SELECT request_id, client_id, payer_name, payer_mobile, location_address,
@@ -22,6 +33,7 @@ const getOrCreateClientProfileForQuotation = async (client, quotation) => {
   const serviceRequest = requestResult.rows[0];
 
   if (serviceRequest.client_id) {
+    await attachClientToCompanionProductQuotes(client, serviceRequest.request_id, serviceRequest.client_id);
     return {
       client_id: serviceRequest.client_id,
       client_profile_created: false,
@@ -103,6 +115,7 @@ const getOrCreateClientProfileForQuotation = async (client, quotation) => {
     `UPDATE service_requests SET client_id = $1 WHERE request_id = $2`,
     [clientProfileId, serviceRequest.request_id]
   );
+  await attachClientToCompanionProductQuotes(client, serviceRequest.request_id, clientProfileId);
 
   return {
     client_id: clientProfileId,

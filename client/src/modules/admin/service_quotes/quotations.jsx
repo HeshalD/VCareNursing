@@ -402,8 +402,11 @@ const QuotationsPage = () => {
     setEditRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
 
+  // Only discounts can be added here. Custom charges are no longer allowed on a
+  // quotation — extras such as transport go on as catalogue products from the
+  // quotation builder (the server enforces this too).
   const addEditRow = () => {
-    setEditRows((prev) => [...prev, { item_type: 'CHARGE', description: '', quantity: 1, unit_price: 0 }]);
+    setEditRows((prev) => [...prev, { item_type: 'DISCOUNT', description: '', quantity: 1, unit_price: 0 }]);
   };
 
   const removeEditRow = (index) => {
@@ -837,14 +840,9 @@ const QuotationsPage = () => {
                                       </button>
                                     </div>
                                     <div className="flex items-center gap-1.5">
-                                      <select
-                                        value={row.item_type}
-                                        onChange={(e) => updateEditRow(idx, { item_type: e.target.value })}
-                                        className={`${inputCls} py-1.5 text-xs w-28`}
-                                      >
-                                        <option value="CHARGE">Charge</option>
-                                        <option value="DISCOUNT">Discount</option>
-                                      </select>
+                                      <span className="w-28 text-center rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-500">
+                                        {row.item_type === 'DISCOUNT' ? 'Discount' : 'Charge'}
+                                      </span>
                                       <input
                                         type="number"
                                         value={row.quantity}
@@ -866,7 +864,7 @@ const QuotationsPage = () => {
                                 ))}
                               </div>
                               <button onClick={addEditRow} className={`${ghostBtnCls} mt-2`}>
-                                <Plus className="h-3.5 w-3.5" /> Add Line
+                                <Plus className="h-3.5 w-3.5" /> Add Discount
                               </button>
 
                               <div className="mt-3">

@@ -110,7 +110,8 @@ const PERMISSIONS = {
   CLIENT_DELETE_NOTE:          { label: 'Delete Client Note',               module: 'User Management', entity: 'Client Note',    verb: 'Delete',              category: 'action' },
   CLIENT_SEND_REG_FEE_INVOICE: { label: 'Send Registration Fee Invoice',    module: 'User Management', entity: 'Client Billing', verb: 'Send Reg. Fee Invoice', category: 'action' },
   CLIENT_WAIVE_REG_FEE:        { label: 'Waive Registration Fee',           module: 'User Management', entity: 'Client Billing', verb: 'Waive Reg. Fee',      category: 'action' },
-  CLIENT_PROXY_CREATE:         { label: 'Proxy-Create Client Account',      module: 'User Management', entity: 'Client Account', verb: 'Create (Proxy)',      category: 'action' },
+  CLIENT_RECORD_PAST_REG_FEE:  { label: 'Record Past Registration Fee',       module: 'User Management', entity: 'Client Billing', verb: 'Record Past Reg. Fee', category: 'action' },
+  CLIENT_PROXY_CREATE:         { label: 'Proxy-Create Client Account',     module: 'User Management', entity: 'Client Account', verb: 'Create (Proxy)',      category: 'action' },
   WALKIN_CUSTOMER_CREATE:      { label: 'Create Walk-In Customer',          module: 'User Management', entity: 'Client Account', verb: 'Create (Walk-in)',    category: 'action' },
 
   // ── Staff (Nursing) Management ────────────────────────────────────────────
@@ -316,7 +317,7 @@ const ROLE_TEMPLATES = {
     'BOOKING_WALLET_PAYOFF', 'BOOKING_SWAP_STAFF', 'BOOKING_APPROVE_TERMINATION',
     'BOOKING_ADD_NOTE', 'BOOKING_EDIT_NOTE', 'BOOKING_DELETE_NOTE',
     'BOOKING_SEND_STATEMENT', 'BOOKING_SEND_STAFF_PROFILE', 'BOOKING_EXTEND', 'BOOKING_COMPLETE', 'BOOKING_TERMINATE',
-    'BOOKING_CREATE_DIRECT', 'BOOKING_CONVERT_FROM_LEAD', 'BOOKING_PAUSE', 'BOOKING_RESUME',
+    'BOOKING_CONVERT_FROM_LEAD', 'BOOKING_PAUSE', 'BOOKING_RESUME',
     'BOOKING_FORCE_STOP', 'BOOKING_MANAGE_SHIFT_PATTERN', 'BOOKING_UPDATE_HOSPITALIZATION',
     'BOOKING_UPDATE_RATE',
     'ASSIGNMENT_ASSIGN', 'ASSIGNMENT_UPDATE', 'ASSIGNMENT_COMPLETE',
@@ -392,7 +393,7 @@ const ROLE_TEMPLATES = {
     'VIEW_QUOTATIONS', 'VIEW_INVOICES', 'VIEW_RECEIPTS', 'VIEW_PRODUCTS', 'VIEW_RENTALS',
     'CLIENT_RECORD_PAYMENT', 'QUOTATION_RECORD_PAYMENT', 'INVOICE_RECORD_PAYMENT', 'BOOKING_RECORD_PAYMENT',
     'WALKIN_CUSTOMER_CREATE', 'CLIENT_PROXY_CREATE', 'PATIENT_CREATE',
-    'SERVICE_REQUEST_CREATE', 'BOOKING_CREATE_DIRECT',
+    'SERVICE_REQUEST_CREATE',
     'RECEIPT_SEND', 'CLIENT_ADD_NOTE',
   ],
   SALES: [

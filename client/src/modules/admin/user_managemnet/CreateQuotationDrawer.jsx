@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  X, Plus, Send, CheckCircle, AlertCircle, Loader2, Package, BadgeDollarSign, Percent, ShoppingBag, CalendarClock, Clock3,
+  X, Send, CheckCircle, AlertCircle, Loader2, Package, BadgeDollarSign, Percent, ShoppingBag, CalendarClock, Clock3, Truck,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
-import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import LineItemRow from '../service_quotes/LineItemRow';
 import RegistrationFeeRow from '../service_quotes/RegistrationFeeRow';
 import RateLineItemRow from '../service_quotes/RateLineItemRow';
@@ -31,7 +30,6 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
   const [quoteKind, setQuoteKind] = useState(null); // 'SERVICE' | 'PRODUCT'
   const [serviceRequests, setServiceRequests] = useState([]);
   const [selectedRequestId, setSelectedRequestId] = useState(null);
-  const [presets, setPresets] = useState([]);
   const [lineItems, setLineItems] = useState([]);
   const [products, setProducts] = useState([]);
   const [rentalUnits, setRentalUnits] = useState([]);
@@ -60,7 +58,6 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       return;
     }
 
-    fetchPresets();
     apiClient.getProducts().then((res) => setProducts(Array.isArray(res?.data) ? res.data : [])).catch(() => setProducts([]));
     apiClient.getRentalUnits({ status: 'AVAILABLE' }).then((res) => setRentalUnits(Array.isArray(res?.data) ? res.data : [])).catch(() => setRentalUnits([]));
     apiClient.getSalespersons().then((res) => setSalespersons(Array.isArray(res?.data) ? res.data : [])).catch(() => setSalespersons([]));
@@ -75,13 +72,6 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, quoteId]);
-
-  const fetchPresets = async () => {
-    try {
-      const res = await apiClient.getPresetItems();
-      setPresets(res.data || []);
-    } catch { /* non-fatal */ }
-  };
 
   const fetchServiceRequests = async () => {
     setLoading(true);
@@ -157,6 +147,21 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
   const removeProductLine = (idx) => setProductLineItems((items) => items.filter((_, i) => i !== idx));
 
   const validProductLineItems = productLineItems.filter((it) => it.description?.trim() && it.unit_price !== '');
+  // A product line must be a catalogue product (standalone refundable deposits excepted).
+  const unpickedProductLines = productLineItems.filter((it) => !it.isStandaloneDeposit && !it.product_id).length;
+  const UNPICKED_MSG = 'Every product line must be a product picked from the catalogue (e.g. Transport Charges). Remove or fix the free-text line.';
+
+  // Transport is always the catalogue "Transport Charges" product (price editable per quotation).
+  const transportProduct = products.find((p) => p.name === 'Transport Charges' && p.product_type !== 'RENTAL');
+  const addTransportLine = () => {
+    if (!transportProduct) return;
+    setProductLineItems((items) => [...items, {
+      ...emptyProductLine(),
+      product_id: transportProduct.product_id,
+      description: transportProduct.name,
+      unit_price: transportProduct.price,
+    }]);
+  };
 
   const productTotal = validProductLineItems.reduce(
     (sum, it) => sum + (parseFloat(it.quantity) || 1) * (parseFloat(it.unit_price) || 0), 0
@@ -204,10 +209,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     }
   };
 
-  const addPresetItem = (preset) => {
-    setLineItems(prev => [...prev, { ...preset, sort_order: prev.length }]);
-  };
-
+  // Only DISCOUNT is added free-form; charges come from the dedicated buttons.
   const addCustomItem = (type) => {
     setLineItems(prev => [
       ...prev,
@@ -262,6 +264,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
 
   const handleSubmitProductQuote = async () => {
     if (validProductLineItems.length === 0) { setError('Add at least one line item with a description and price.'); return; }
+    if (unpickedProductLines > 0) { setError(UNPICKED_MSG); return; }
     if (!validateRentalEndDates(validProductLineItems)) return;
 
     setSubmitting(true);
@@ -306,6 +309,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     if (lineItems.length === 0) { setError('Add at least one line item.'); return; }
     const { subtotal } = calculateTotals();
     if (subtotal <= 0) { setError('Quote total must be greater than zero.'); return; }
+    if (unpickedProductLines > 0) { setError(UNPICKED_MSG); return; }
     if (!validateRentalEndDates(validProductLineItems)) return;
 
     setSubmitting(true);
@@ -573,14 +577,9 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
           ) : (
             /* Build step — service line item editor (Zoho-style table, matches ModularQuoteBuilder) */
             <div className="space-y-5">
-              <div className="rounded-lg border border-gray-200 bg-white px-5 py-4">
-                <PresetItemSelector
-                  presets={presets}
-                  onSelectPreset={addPresetItem}
-                  onManagePresets={() => {}}
-                />
-              </div>
-
+              {/* No presets or free-form charges: a quotation is built only from the registration
+                  fee, the care/shift rate, discounts and catalogue products (transport is the
+                  "Transport Charges" product). */}
               <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
                 <div className="border-b border-gray-100">
                   <table className="w-full">
@@ -606,7 +605,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                       {lineItems.length === 0 && productLineItems.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-10 text-center text-[13px] text-gray-400">
-                            No items added. Select a preset above or add a custom item below.
+                            No items added. Add the rate, registration fee, a discount, or a product such as Transport below.
                           </td>
                         </tr>
                       ) : (
@@ -708,15 +707,19 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                       <span className="text-gray-200 select-none">|</span>
                     </>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => addCustomItem('CHARGE')}
-                    className="inline-flex items-center gap-1.5 text-[13px] text-blue-600 hover:text-blue-800 font-medium transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Charge
-                  </button>
-                  <span className="text-gray-200 select-none">|</span>
+                  {transportProduct && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={addTransportLine}
+                        className="inline-flex items-center gap-1.5 text-[13px] text-teal-700 hover:text-teal-900 font-medium transition-colors"
+                      >
+                        <Truck className="w-3.5 h-3.5" />
+                        Add Transport
+                      </button>
+                      <span className="text-gray-200 select-none">|</span>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => addCustomItem('DISCOUNT')}

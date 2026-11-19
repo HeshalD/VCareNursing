@@ -12,6 +12,7 @@
 // double-bill the same period — the INSERT ... ON CONFLICT DO NOTHING no-ops.
 const cron = require('node-cron');
 const db = require('../config/db');
+const { ensureInvoiceCharge } = require('../services/invoiceCharges');
 
 function addOneMonth(dateStr) {
   const d = new Date(dateStr);
@@ -92,6 +93,8 @@ const runRentalInvoicing = async () => {
 
         if (insertResult.rows.length > 0) {
           created += 1;
+          // Puts the invoice on the client's ledger (Total Invoiced, statements).
+          await ensureInvoiceCharge(client, insertResult.rows[0].invoice_id);
         }
 
         await client.query(

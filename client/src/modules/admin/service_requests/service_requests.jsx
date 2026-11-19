@@ -126,8 +126,9 @@ const formatMoney = (v) =>
 const QuoteOption = ({ quote, isActive, onSelect }) => {
   const [open, setOpen] = useState(false);
   const items = quote.line_items || [];
-  const total = Number(quote.total_amount || 0);
-  const paid = Number(quote.total_paid || 0);
+  // Match the quotation page: service quote + its companion products/rentals quote.
+  const total = Number(quote.total_amount || 0) + Number(quote.product_total || 0);
+  const paid = Number(quote.total_paid || 0) + Number(quote.product_paid || 0);
   const fullyPaid = total > 0 && paid >= total;
 
   return (

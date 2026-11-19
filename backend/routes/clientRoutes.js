@@ -37,7 +37,7 @@ router.post('/:client_id/send-reg-fee-invoice', protect, requirePermission('CLIE
 router.patch('/:client_id/reg-fee-status', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeStatus);
 router.patch('/:client_id/reg-fee-amount', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeAmount);
 router.post('/:client_id/verify-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAYMENT'), clientController.verifyRegFeePayment);
-router.post('/:client_id/backdate-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAYMENT'), clientController.backdateRegFeePayment);
+router.post('/:client_id/backdate-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAST_REG_FEE'), clientController.backdateRegFeePayment);
 router.post('/:client_id/admin-upload-reg-fee-receipt', protect, requirePermission('CLIENT_RECORD_PAYMENT'), uploadPaymentReceipt, clientController.adminUploadRegFeeReceipt);
 router.get('/:client_id/invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientInvoices);
 router.get('/:client_id/financial-breakdown/:metric', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientFinancialBreakdown);

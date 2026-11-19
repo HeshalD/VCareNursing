@@ -365,8 +365,11 @@ const QuotationDetailsPage = () => {
     setEditRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
 
+  // Only discounts can be added here. Custom charges are no longer allowed on a
+  // quotation — extras such as transport go on as catalogue products from the
+  // quotation builder (the server enforces this too).
   const addEditRow = () => {
-    setEditRows((prev) => [...prev, { item_type: 'CHARGE', description: '', quantity: 1, unit_price: 0 }]);
+    setEditRows((prev) => [...prev, { item_type: 'DISCOUNT', description: '', quantity: 1, unit_price: 0 }]);
   };
 
   const removeEditRow = (index) => {
@@ -589,14 +592,9 @@ const QuotationDetailsPage = () => {
                           placeholder="Description"
                           className="flex-1 min-w-[160px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
-                        <select
-                          value={row.item_type}
-                          onChange={(e) => updateEditRow(idx, { item_type: e.target.value })}
-                          className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 w-28"
-                        >
-                          <option value="CHARGE">Charge</option>
-                          <option value="DISCOUNT">Discount</option>
-                        </select>
+                        <span className="w-28 text-center rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-500">
+                          {row.item_type === 'DISCOUNT' ? 'Discount' : 'Charge'}
+                        </span>
                         <input
                           type="number"
                           value={row.quantity}
@@ -625,7 +623,7 @@ const QuotationDetailsPage = () => {
                   </div>
 
                   <button onClick={addEditRow} className={ghostBtnCls}>
-                    <Plus className="h-4 w-4" /> Add Line
+                    <Plus className="h-4 w-4" /> Add Discount
                   </button>
 
                   <div>

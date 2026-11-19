@@ -168,6 +168,12 @@ const drawWalletForBooking = async (client, { booking_id, client_id, maxAmount, 
 const settleBookingOutstandingFromWallet = async (client, { booking_id, client_id, verified_by = null }) => {
   if (!booking_id || !client_id) return 0;
 
+  // The booking's product invoices (e.g. its transport) are paid as invoices first,
+  // so they show as paid rather than their charge being covered anonymously below.
+  // (Lazy require: invoiceCharges depends on this module.)
+  const { payBookingProductInvoicesFromWallet } = require('./invoiceCharges');
+  const invoiceDrawn = await payBookingProductInvoicesFromWallet(client, { booking_id, verified_by });
+
   const res = await client.query(
     `SELECT
        COALESCE(SUM(amount) FILTER (WHERE ${bookingChargeSql()}), 0) AS invoiced,
@@ -177,19 +183,19 @@ const settleBookingOutstandingFromWallet = async (client, { booking_id, client_i
     [booking_id]
   );
   const outstanding = parseFloat(res.rows[0].invoiced) - parseFloat(res.rows[0].settled);
-  if (outstanding <= 0.005) return 0;
-
-  const drawn = await drawWalletForBooking(client, { booking_id, client_id, maxAmount: outstanding, verified_by });
+  const drawn = outstanding > 0.005
+    ? await drawWalletForBooking(client, { booking_id, client_id, maxAmount: outstanding, verified_by })
+    : 0;
 
   // Fully cleared → the booking is no longer overdue (the cron only ever flags
   // bookings, it never un-flags them).
-  if (drawn > 0 && outstanding - drawn <= 0.005) {
+  if (drawn + invoiceDrawn > 0 && outstanding - drawn <= 0.005) {
     await client.query(
       `UPDATE bookings SET status = 'ACTIVE' WHERE booking_id = $1 AND status = 'OVERDUE'`,
       [booking_id]
     );
   }
-  return drawn;
+  return drawn + invoiceDrawn;
 };
 
 // Quotation-payment entry point: finds the booking the quote belongs to — the

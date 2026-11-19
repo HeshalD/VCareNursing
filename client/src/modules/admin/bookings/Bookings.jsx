@@ -128,7 +128,7 @@ const StaffList = ({ staff }) => {
 };
 
 const Bookings = () => {
-  const { adminToken, isSuperAdmin } = useAdminAuth();
+  const { adminToken, isSuperAdmin, hasPermission } = useAdminAuth();
   const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -285,13 +285,15 @@ const Bookings = () => {
         title="Bookings"
         subtitle={`${counts.ALL ?? 0} total booking${counts.ALL !== 1 ? 's' : ''}`}
         actions={
-          <button
-            onClick={() => setShowDirectBooking(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Booking
-          </button>
+          hasPermission('BOOKING_CREATE_DIRECT') ? (
+            <button
+              onClick={() => setShowDirectBooking(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Booking
+            </button>
+          ) : null
         }
       >
         {/* Toolbar */}

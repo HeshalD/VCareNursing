@@ -128,7 +128,7 @@ const labelCls = 'block text-xs font-medium text-gray-600 mb-1';
 export default function PatientDetailPage() {
   const { patientId } = useParams();
   const navigate = useNavigate();
-  const { adminUser } = useAdminAuth();
+  const { adminUser, hasPermission } = useAdminAuth();
   const canEdit = !!adminUser;
 
   const [data, setData] = useState(null);
@@ -573,9 +573,9 @@ export default function PatientDetailPage() {
                 <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
                   {[
                     { label: 'Edit Profile', action: () => { setActiveSection('overview'); openEditProfile(); setActionsOpen(false); } },
-                    { label: 'Create Booking', action: () => { setShowDirectBooking(true); setActionsOpen(false); } },
+                    { label: 'Create Booking', permission: 'BOOKING_CREATE_DIRECT', action: () => { setShowDirectBooking(true); setActionsOpen(false); } },
                     { label: 'Delete Profile', danger: true, action: () => { setDeleteModalOpen(true); setActionsOpen(false); } },
-                  ].map(({ label, action, danger }) => (
+                  ].filter(({ permission }) => hasPermission(permission)).map(({ label, action, danger }) => (
                     <button
                       key={label}
                       type="button"

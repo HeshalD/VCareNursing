@@ -11,6 +11,20 @@ const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials, mark
 const { createRentalAgreementCore, RentalAgreementError } = require('./rentalController');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
+const { ensureInvoiceCharge, linkProductQuoteToBooking, payBookingProductInvoicesFromWallet } = require('../services/invoiceCharges');
+
+// Estimate numbers are EST-NNNN. The 4-digit space is small, so check for a
+// collision (retrying) and widen to 5 digits if it is nearly exhausted.
+async function generateUniqueEstimateNumber() {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const digits = attempt < 20 ? 4 : 5;
+    const min = Math.pow(10, digits - 1);
+    const candidate = `EST-${Math.floor(min + Math.random() * 9 * min)}`;
+    const { rows } = await db.query('SELECT 1 FROM quotations WHERE estimate_number = $1 LIMIT 1', [candidate]);
+    if (rows.length === 0) return candidate;
+  }
+  throw new Error('Could not generate a unique estimate number');
+}
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -49,7 +63,7 @@ exports.createQuotation = async (req, res) => {
         const subTotal = regFee + item2Amount + transport;
 
         // Generate a unique estimate number (e.g., EST-1001)
-        const estimateNumber = `EST-${Math.floor(1000 + Math.random() * 9000)}`;
+        const estimateNumber = await generateUniqueEstimateNumber();
 
         // 3. Insert into Database
         const query = `
@@ -127,11 +141,24 @@ exports.getQuotesByRequest = async (req, res) => {
     const { requestId } = req.params;
 
     try {
+        // Lazy require: invoiceController requires this module at load time.
+        const { lineItemDuplicateSql } = require('./invoiceController');
         const result = await db.query(`
             SELECT q.*, s.payer_name, s.payer_mobile, COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = s.patient_id), s.patient_name) AS patient_name, s.service_type,
                    s.status as request_status, s.active_quote_id, s.client_id as request_client_id,
                    cp.honorific as client_honorific,
                    pq.quote_id as product_quote_id,
+                   -- Companion PRODUCT quote (products/rentals), shown on the quotation page as part of
+                   -- the combined total: its amount plus each rental's refundable deposit (same as
+                   -- expandProductLineItemsForDisplay), and what's been paid on its real invoices.
+                   COALESCE(pq.total_amount, 0) + COALESCE((
+                       SELECT SUM(pli.deposit_amount) FROM quote_line_items pli
+                       WHERE pli.quote_id = pq.quote_id AND pli.rental_billing_type IS NOT NULL AND pli.deposit_amount > 0
+                   ), 0) as product_total,
+                   COALESCE((
+                       SELECT SUM(i.amount) FROM invoices i
+                       WHERE i.quote_id = pq.quote_id AND i.status = 'PAID' AND NOT ${lineItemDuplicateSql('i')}
+                   ), 0) as product_paid,
                    COALESCE((
                        SELECT SUM(amount_received)
                        FROM payment_tracking pt
@@ -509,10 +536,25 @@ exports.deletePresetItem = async (req, res) => {
 
 // ==================== MODULAR QUOTE OPERATIONS ====================
 
+// ─── What a SERVICE quotation may hold ────────────────────────────────────────
+// Only the registration fee, the dedicated care/shift rate lines and discounts.
+// Free-form "custom charges" were removed (they were being misused, and nothing
+// invoiced them); extras such as transport are catalogue products on the
+// companion PRODUCT quotation, which is invoiced as a product sale.
+const RATE_SUBTYPES = ['RATE_DAILY', 'RATE_SHIFT'];
+const isCustomChargeLine = (item) =>
+    item.item_type === 'CHARGE' && !item.is_registration_fee && !RATE_SUBTYPES.includes(item.item_subtype);
+const isDisallowedServiceLine = (item) =>
+    item.item_type !== 'DISCOUNT' && (item.item_type !== 'CHARGE' || isCustomChargeLine(item));
+const customChargeRejection = (item) =>
+    `"${(item.description || 'This line').trim()}" is a custom charge. Custom charges can no longer be added to a quotation — `
+    + 'add extras such as transport as a product (Transport Charges) instead.';
+
 exports.createModularQuotation = async (req, res) => {
     const {
-        request_id, line_items, terms_conditions, quote_type, client_id, walk_in_customer_id, linked_quote_id,
+        request_id, line_items, terms_conditions, quote_type, walk_in_customer_id, linked_quote_id,
     } = req.body;
+    let { client_id } = req.body;
     const isProductQuote = quote_type === 'PRODUCT';
 
     try {
@@ -520,12 +562,62 @@ exports.createModularQuotation = async (req, res) => {
             return res.status(400).json({ message: 'At least one line item is required' });
         }
 
+        // Custom charges are not allowed: a service quotation holds only the
+        // registration fee, the care/shift rate and discounts. Extras such as transport
+        // are catalogue products on its companion product quotation.
+        if (!isProductQuote) {
+            const bad = line_items.find(isDisallowedServiceLine);
+            if (bad) return res.status(400).json({ message: customChargeRejection(bad) });
+        }
+
+        let linkedServiceQuote = null;
+        if (isProductQuote && linked_quote_id) {
+            const sq = await db.query(
+                `SELECT q.quote_id, q.quote_type, sr.client_id AS request_client_id
+                 FROM quotations q LEFT JOIN service_requests sr ON sr.request_id = q.request_id
+                 WHERE q.quote_id = $1`,
+                [linked_quote_id]
+            );
+            linkedServiceQuote = sq.rows[0];
+            if (!linkedServiceQuote || linkedServiceQuote.quote_type !== 'SERVICE') {
+                return res.status(400).json({ message: 'linked_quote_id must be a service quotation' });
+            }
+            // A companion product line must be a catalogue product (transport is the
+            // "Transport Charges" product); only a standalone refundable deposit is free text.
+            const unpicked = line_items.find((i) => i.item_type !== 'DEPOSIT' && !i.product_id);
+            if (unpicked) {
+                return res.status(400).json({ message: `"${unpicked.description || 'Item'}" is not a catalogue product. Pick it from the product catalogue (transport is "Transport Charges").` });
+            }
+            // A lead has no client account until its first payment; the client is
+            // attached then (clientBootstrapService) or when the quote is accepted.
+            if (!client_id && !walk_in_customer_id) client_id = linkedServiceQuote.request_client_id || null;
+        }
+
         if (isProductQuote) {
-            if (!client_id && !walk_in_customer_id) {
+            if (!client_id && !walk_in_customer_id && !linkedServiceQuote) {
                 return res.status(400).json({ message: 'A PRODUCT quote requires either client_id or walk_in_customer_id' });
             }
         } else if (!request_id) {
             return res.status(400).json({ message: 'request_id is required for SERVICE quotes' });
+        }
+
+        // One companion product quotation per service quotation (the payment form and the
+        // combined invoice read a single one). Adding products later, e.g. transport while
+        // editing, extends it if it isn't accepted yet.
+        let appendToQuoteId = null;
+        if (linkedServiceQuote) {
+            const existing = await db.query(
+                `SELECT quote_id FROM quotations
+                 WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT' AND COALESCE(status, '') <> 'REJECTED'
+                 ORDER BY created_at LIMIT 1`,
+                [linked_quote_id]
+            );
+            if (existing.rows[0]) {
+                if (await isProductQuoteAccepted(db, existing.rows[0].quote_id)) {
+                    return res.status(409).json({ message: 'This quotation\'s products have already been accepted and invoiced, so no more can be added to it. Create a separate product sale instead.' });
+                }
+                appendToQuoteId = existing.rows[0].quote_id;
+            }
         }
 
         // A registration-fee line item settles client_profiles.reg_fee_status
@@ -625,8 +717,44 @@ exports.createModularQuotation = async (req, res) => {
             };
         });
 
+        // Adding to the service quotation's existing (not yet accepted) product quotation.
+        if (appendToQuoteId) {
+            const maxSort = await db.query(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM quote_line_items WHERE quote_id = $1`, [appendToQuoteId]);
+            const offset = parseInt(maxSort.rows[0].m, 10) + 1;
+            for (const [i, item] of processedItems.entries()) {
+                await db.query(`
+                    INSERT INTO quote_line_items (
+                        quote_id, item_type, description, quantity, unit_price, amount, sort_order, product_id,
+                        rental_billing_type, rental_start_date, rental_end_date, deposit_amount, unit_id, cost_price_snapshot
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                `, [
+                    appendToQuoteId, item.item_type, item.description, item.quantity, item.unit_price, item.amount, offset + i,
+                    item.product_id || null, item.rental_billing_type || null, item.rental_start_date || null,
+                    item.rental_billing_type === 'ONE_TIME' ? (item.rental_end_date || null) : null,
+                    parseFloat(item.deposit_amount) || 0, item.unit_id || null, item.cost_price_snapshot,
+                ]);
+            }
+            await db.query(
+                `UPDATE quotations q SET sub_total = t.total, total_amount = t.total, updated_at = CURRENT_TIMESTAMP,
+                        client_id = COALESCE(q.client_id, $2)
+                 FROM (SELECT COALESCE(SUM(amount), 0) AS total FROM quote_line_items WHERE quote_id = $1) t
+                 WHERE q.quote_id = $1`,
+                [appendToQuoteId, client_id || null]
+            );
+            const updated = await db.query(`SELECT * FROM quotations WHERE quote_id = $1`, [appendToQuoteId]);
+            await safeLog({
+                actorUserId: req.user?.user_id,
+                actorRole: extractActorRole(req.user?.role),
+                actionType: 'QUOTATION_UPDATED',
+                entityType: 'QUOTATION',
+                entityId: appendToQuoteId,
+                details: { quote_id: appendToQuoteId, added_line_items: processedItems.length, linked_quote_id },
+            });
+            return res.status(201).json({ status: 'success', data: updated.rows[0], appended_to_existing: true });
+        }
+
         // Generate estimate number
-        const estimateNumber = `EST-${Math.floor(1000 + Math.random() * 9000)}`;
+        const estimateNumber = await generateUniqueEstimateNumber();
 
         // Extract legacy values for backwards compatibility
         const registration_fee = processedItems.find(i =>
@@ -801,6 +929,20 @@ exports.updateQuoteLineItems = async (req, res) => {
     const { quote_id } = req.params;
     const { line_items, terms_conditions } = req.body;
 
+    // No new custom charges (see isDisallowedServiceLine). A custom charge the
+    // quotation already had (created before they were removed) may stay, so older
+    // quotations can still be edited — matched on its description.
+    if (Array.isArray(line_items)) {
+        const existing = await db.query(
+            `SELECT item_type, is_registration_fee, item_subtype, description FROM quote_line_items WHERE quote_id = $1`,
+            [quote_id]
+        );
+        const legacy = new Set(existing.rows.filter(isCustomChargeLine).map((r) => (r.description || '').trim().toLowerCase()));
+        const bad = line_items.find((i) => isDisallowedServiceLine(i)
+            && !(isCustomChargeLine(i) && legacy.has((i.description || '').trim().toLowerCase())));
+        if (bad) return res.status(400).json({ message: customChargeRejection(bad) });
+    }
+
     try {
         await db.query('BEGIN');
 
@@ -961,7 +1103,7 @@ exports.submitProductInterest = async (req, res) => {
         const qty = parseFloat(quantity) || 1;
         const amount = qty * parseFloat(product.price);
 
-        const estimateNumber = `EST-${Math.floor(1000 + Math.random() * 9000)}`;
+        const estimateNumber = await generateUniqueEstimateNumber();
 
         const quoteResult = await db.query(
             `INSERT INTO quotations (
@@ -1709,34 +1851,56 @@ exports.sendProductQuotePDF = async (req, res) => {
 //     invoiceController.createInvoiceFromQuote behaviour.
 // All-or-nothing: if any rental item can't be fulfilled (e.g. no available
 // unit), the whole acceptance rolls back — nothing is partially created.
-exports.acceptProductQuote = async (req, res) => {
-    const pgClient = await db.pool.connect();
-    const { quote_id } = req.params;
+class AcceptQuoteError extends Error {
+    constructor(status, message) {
+        super(message);
+        this.status = status;
+    }
+}
 
-    try {
-        await pgClient.query('BEGIN');
+// True once a product quote has been accepted (it has a real invoice or a rental
+// agreement). A LINE_ITEM invoice is a standalone document an admin can raise for a
+// single line item at any time (see invoiceController.generateLineItemInvoice); it
+// does not mean the quote was accepted.
+async function isProductQuoteAccepted(executor, quoteId) {
+    const r = await executor.query(
+        `SELECT 1 FROM invoices WHERE quote_id = $1 AND category <> 'LINE_ITEM'
+         UNION ALL SELECT 1 FROM rental_agreements WHERE quote_id = $1 LIMIT 1`,
+        [quoteId]
+    );
+    return r.rows.length > 0;
+}
 
+// Accepts a PRODUCT quotation inside the caller's open transaction: rental
+// agreements + their invoices, one PRODUCT invoice for everything else, vendor
+// bills. Shared by the "Accept" endpoint and booking conversion (see
+// attachLinkedProductsToBooking). Throws AcceptQuoteError / RentalAgreementError.
+//  - A companion quote built for a lead has no client yet: the lead's client account
+//    is created here (as the first payment would), so its invoices bill the client.
+//  - When the service quotation already has a booking, the invoices are tied to it.
+async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {}, actorUserId = null } = {}) {
         const quoteResult = await pgClient.query(
             `SELECT * FROM quotations WHERE quote_id = $1 AND quote_type = 'PRODUCT' FOR UPDATE`,
             [quote_id]
         );
-        if (quoteResult.rows.length === 0) {
-            await pgClient.query('ROLLBACK');
-            return res.status(404).json({ message: 'Product quote not found' });
-        }
+        if (quoteResult.rows.length === 0) throw new AcceptQuoteError(404, 'Product quote not found');
         const quote = quoteResult.rows[0];
 
-        // A LINE_ITEM invoice is a standalone document an admin can raise for a single line
-        // item at any time (see invoiceController.generateLineItemInvoice). It does not mean the
-        // quote was accepted, so it must not block acceptance.
-        const alreadyAccepted = await pgClient.query(
-            `SELECT 1 FROM invoices WHERE quote_id = $1 AND category <> 'LINE_ITEM'
-             UNION ALL SELECT 1 FROM rental_agreements WHERE quote_id = $1 LIMIT 1`,
-            [quote_id]
-        );
-        if (alreadyAccepted.rows.length > 0) {
-            await pgClient.query('ROLLBACK');
-            return res.status(409).json({ message: 'This quote has already been accepted' });
+        if (await isProductQuoteAccepted(pgClient, quote_id)) {
+            throw new AcceptQuoteError(409, 'This quote has already been accepted');
+        }
+
+        let bootstrap = null;
+        if (!quote.client_id && !quote.walk_in_customer_id) {
+            const serviceQuote = quote.linked_quote_id
+                ? (await pgClient.query(`SELECT * FROM quotations WHERE quote_id = $1`, [quote.linked_quote_id])).rows[0]
+                : null;
+            if (!serviceQuote?.request_id) {
+                throw new AcceptQuoteError(400, 'This product quotation has no client or walk-in customer');
+            }
+            bootstrap = await getOrCreateClientProfileForQuotation(pgClient, serviceQuote);
+            quote.client_id = bootstrap.client_id;
+            await pgClient.query(`UPDATE quotations SET client_id = $1 WHERE quote_id = $2`, [quote.client_id, quote_id]);
         }
 
         const lineItemsResult = await pgClient.query(
@@ -1746,15 +1910,11 @@ exports.acceptProductQuote = async (req, res) => {
              WHERE li.quote_id = $1`,
             [quote_id]
         );
-        if (lineItemsResult.rows.length === 0) {
-            await pgClient.query('ROLLBACK');
-            return res.status(400).json({ message: 'This quote has no line items' });
-        }
+        if (lineItemsResult.rows.length === 0) throw new AcceptQuoteError(400, 'This quote has no line items');
 
         const rentalItems = lineItemsResult.rows.filter(li => li.product_type === 'RENTAL');
         const otherItems = lineItemsResult.rows.filter(li => li.product_type !== 'RENTAL');
 
-        const vendorPayments = (req.body || {}).vendor_payments || {};
         const createdAgreements = [];
         const createdVendorBills = [];
         for (const item of rentalItems) {
@@ -1770,7 +1930,7 @@ exports.acceptProductQuote = async (req, res) => {
                 end_date: item.rental_end_date,
                 deposit_amount: item.deposit_amount,
                 vendor_payment: vendorPayments[item.line_item_id],
-                createdBy: req.user?.user_id,
+                createdBy: actorUserId,
             });
             createdAgreements.push({ ...agreement, invoice });
             if (vendor_bill) createdVendorBills.push(vendor_bill);
@@ -1793,9 +1953,11 @@ exports.acceptProductQuote = async (req, res) => {
                 `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, amount, created_by)
                  VALUES ('PRODUCT', $1, $2, $3, $4, $5)
                  RETURNING *`,
-                [quote.client_id, quote.walk_in_customer_id, quote_id, otherItemsTotal, req.user?.user_id || null]
+                [quote.client_id, quote.walk_in_customer_id, quote_id, otherItemsTotal, actorUserId]
             );
             genericInvoice = invoiceResult.rows[0];
+            // Puts the invoice on the client's ledger (Total Invoiced, statements).
+            await ensureInvoiceCharge(pgClient, genericInvoice.invoice_id);
         }
 
         // Vendor-sourced non-rental line items (plain product sales): record
@@ -1822,7 +1984,7 @@ exports.acceptProductQuote = async (req, res) => {
                 reference_id: quote_id,
                 amount: billAmount,
                 description: item.description,
-                createdBy: req.user?.user_id,
+                createdBy: actorUserId,
             });
 
             if (decision.pay_now) {
@@ -1838,7 +2000,7 @@ exports.acceptProductQuote = async (req, res) => {
                     cheque_date: decision.cheque_date,
                     reference_number: decision.reference_number,
                     notes: decision.notes,
-                    actorUserId: req.user?.user_id || null,
+                    actorUserId,
                 });
             }
 
@@ -1847,7 +2009,81 @@ exports.acceptProductQuote = async (req, res) => {
 
         await pgClient.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
 
+        // Already booked → the invoice belongs to that booking's account.
+        let bookingId = quote.booking_id;
+        if (!bookingId && quote.linked_quote_id) {
+            const sq = await pgClient.query(`SELECT booking_id FROM quotations WHERE quote_id = $1`, [quote.linked_quote_id]);
+            bookingId = sq.rows[0]?.booking_id || null;
+        }
+        if (bookingId) await linkProductQuoteToBooking(pgClient, { productQuoteId: quote_id, bookingId });
+
+        return { quote, createdAgreements, genericInvoice, createdVendorBills, bootstrap };
+}
+
+// Booking conversion: the products on the booking's quotation (e.g. transport — the
+// companion PRODUCT quotation) become invoices on the new booking, accepted here if
+// the first payment didn't already do it, then paid from whatever wallet money is
+// available to the booking. Runs inside the conversion's transaction; a failure to
+// accept (e.g. a quoted rental unit is gone) never blocks the booking — it comes
+// back as `warning` and the products can still be accepted from the Products page.
+async function attachLinkedProductsToBooking(pgClient, { serviceQuoteId, bookingId, actorUserId = null }) {
+    const pqRes = await pgClient.query(
+        `SELECT quote_id FROM quotations
+         WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT' AND COALESCE(status, '') <> 'REJECTED'
+         ORDER BY created_at LIMIT 1`,
+        [serviceQuoteId]
+    );
+    const productQuoteId = pqRes.rows[0]?.quote_id;
+    const result = { product_quote_id: productQuoteId || null, accepted: false, drawn_from_wallet: 0, warning: null };
+    if (!productQuoteId) return result;
+
+    // The booking's client is the billing client (a lead's account may have just been
+    // created by this conversion).
+    await pgClient.query(
+        `UPDATE quotations q
+         SET booking_id = COALESCE(q.booking_id, $1),
+             client_id = CASE WHEN q.client_id IS NULL AND q.walk_in_customer_id IS NULL THEN b.client_id ELSE q.client_id END
+         FROM bookings b
+         WHERE b.booking_id = $1 AND q.quote_id = $2`,
+        [bookingId, productQuoteId]
+    );
+
+    if (await isProductQuoteAccepted(pgClient, productQuoteId)) {
+        await linkProductQuoteToBooking(pgClient, { productQuoteId, bookingId });
+    } else {
+        await pgClient.query('SAVEPOINT accept_linked_products');
+        try {
+            // Reads the booking_id set above, so its invoice is tied to the booking.
+            await acceptProductQuoteCore(pgClient, productQuoteId, { actorUserId });
+            await pgClient.query('RELEASE SAVEPOINT accept_linked_products');
+            result.accepted = true;
+        } catch (err) {
+            await pgClient.query('ROLLBACK TO SAVEPOINT accept_linked_products');
+            result.warning = `The quotation's products could not be invoiced automatically (${err.message}). Accept them from the Products page.`;
+            return result;
+        }
+    }
+
+    result.drawn_from_wallet = await payBookingProductInvoicesFromWallet(pgClient, { booking_id: bookingId, verified_by: actorUserId });
+    return result;
+}
+exports.attachLinkedProductsToBooking = attachLinkedProductsToBooking;
+
+exports.acceptProductQuote = async (req, res) => {
+    const pgClient = await db.pool.connect();
+    const { quote_id } = req.params;
+
+    try {
+        await pgClient.query('BEGIN');
+        const { createdAgreements, genericInvoice, createdVendorBills, bootstrap } = await acceptProductQuoteCore(pgClient, quote_id, {
+            vendorPayments: (req.body || {}).vendor_payments || {},
+            actorUserId: req.user?.user_id || null,
+        });
         await pgClient.query('COMMIT');
+
+        // A lead's account was created here rather than at the payment that follows,
+        // so the welcome message with their login goes out from here.
+        sendClientWelcomeCredentials(bootstrap);
 
         await safeLog({
             actorUserId: req.user?.user_id,
@@ -1869,6 +2105,9 @@ exports.acceptProductQuote = async (req, res) => {
         });
     } catch (error) {
         await pgClient.query('ROLLBACK');
+        if (error instanceof AcceptQuoteError) {
+            return res.status(error.status).json({ message: error.message });
+        }
         if (error instanceof RentalAgreementError) {
             return res.status(error.status).json({ message: error.message });
         }

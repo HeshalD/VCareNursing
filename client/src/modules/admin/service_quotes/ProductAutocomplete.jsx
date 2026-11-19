@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Package, Wrench, Tag, PencilLine } from 'lucide-react';
+import { Search, Package, Wrench, Tag } from 'lucide-react';
 
 const fmtPrice = (n) => `Rs. ${Number(n || 0).toLocaleString()}`;
 
@@ -12,10 +12,11 @@ const DEFAULT_META = { label: 'Product', icon: Tag, badgeCls: 'bg-gray-100 text-
 const metaFor = (type) => TYPE_META[type] || DEFAULT_META;
 
 // Searchable product/service picker for the quote builder's item table.
-// Replaces a plain <select> — typing filters the catalogue live, and
-// anything typed that doesn't match a catalogue item is kept as a free-text
-// custom item, so admins never have to scroll a long dropdown to find (or
-// give up and hand-type) an item.
+// Replaces a plain <select> — typing filters the catalogue live. Only catalogue
+// items can be chosen: free-text "custom items" were removed because they let
+// arbitrary charges onto quotations (transport must be the "Transport Charges"
+// product). Text typed without picking a suggestion leaves the line unpicked,
+// which the builders refuse to save.
 const ProductAutocomplete = ({ products, item, onSelectProduct, onChangeDescription, placeholder }) => {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -45,16 +46,11 @@ const ProductAutocomplete = ({ products, item, onSelectProduct, onChangeDescript
     inputRef.current?.blur();
   };
 
-  const useAsCustom = () => {
-    setOpen(false);
-    inputRef.current?.blur();
-  };
-
   const handleChange = (e) => {
     const val = e.target.value;
     onChangeDescription(val);
     // Editing the text away from the selected product's name detaches it —
-    // it's now a free-text custom item until a suggestion is chosen again.
+    // the line is unpicked (and can't be saved) until a suggestion is chosen again.
     if (item.product_id && selected && val !== selected.name) {
       onSelectProduct('');
     }
@@ -72,7 +68,6 @@ const ProductAutocomplete = ({ products, item, onSelectProduct, onChangeDescript
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (filtered[highlight]) pick(filtered[highlight]);
-      else useAsCustom();
     } else if (e.key === 'Escape') {
       setOpen(false);
     }
@@ -100,10 +95,13 @@ const ProductAutocomplete = ({ products, item, onSelectProduct, onChangeDescript
           onChange={handleChange}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder || 'Search products & services, or type a custom item…'}
+          placeholder={placeholder || 'Search the product catalogue…'}
           className="w-full text-sm text-gray-800 bg-transparent placeholder-gray-300 border-0 outline-none focus:ring-0 p-0"
         />
       </div>
+      {!item.product_id && query.trim() && !open && (
+        <p className="mt-0.5 text-[11px] text-amber-600">Pick an item from the catalogue</p>
+      )}
 
       {open && (
         <div className="absolute left-0 top-full mt-1.5 w-80 max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-30 py-1.5">
@@ -140,25 +138,6 @@ const ProductAutocomplete = ({ products, item, onSelectProduct, onChangeDescript
             <div className="px-3 py-6 text-center">
               <p className="text-[13px] text-gray-400">No catalogue items match "{query}"</p>
             </div>
-          )}
-
-          {query.trim() && (
-            <>
-              <div className="mx-3 my-1.5 h-px bg-gray-100" />
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={useAsCustom}
-                className="w-full flex items-center gap-2 text-left px-3 py-2 hover:bg-gray-50 transition-colors"
-              >
-                <span className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md bg-gray-100 text-gray-500">
-                  <PencilLine className="w-3.5 h-3.5" />
-                </span>
-                <span className="text-[13px] text-gray-600">
-                  Use <span className="font-medium text-gray-800">"{query}"</span> as a custom item
-                </span>
-              </button>
-            </>
           )}
         </div>
       )}

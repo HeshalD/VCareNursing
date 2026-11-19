@@ -250,7 +250,7 @@ const buildTotalInvoiced = async (clientId, totals) => {
       { label: 'Revoked days (charge cancelled)', value: -reversed },
     ],
     rules: [
-      'Counts every ledger DEBIT that is a charge: daily/shift service invoices and registration-fee charges raised on a booking.',
+      'Counts every ledger DEBIT that is a charge: daily/shift service invoices, registration-fee charges raised on a booking, and product/rental invoices (PRODUCT_INVOICE — including a booking\'s transport charge).',
       'Does not count WALLET_DEBIT, CLIENT_REFUND or DEPOSIT_REFUND debits — wallet bookkeeping and money paid back are not charges.',
       'Adds every registration-fee invoice ever raised (the overdue-invoices list), whether it was paid or not.',
       'Subtracts care-day invoice reductions made before corrections edited the ledger entry in place — those left the original charge on the ledger.',

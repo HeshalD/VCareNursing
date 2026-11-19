@@ -4228,6 +4228,40 @@ async function runMigration() {
     console.error('Skipping trigram search indexes (pg_trgm unavailable):', error.message);
   }
 
+  // Product and rental invoices on the client ledger (services/invoiceCharges.js).
+  // Each chargeable invoice posts one PRODUCT_INVOICE DEBIT so it counts in Total
+  // Invoiced and appears on statements; invoices.booking_id ties an invoice (e.g. a
+  // booking's transport charge) to a booking so its charge counts on that booking.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'PRODUCT_INVOICE';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+  await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS booking_id UUID REFERENCES bookings(booking_id) ON DELETE SET NULL`);
+  await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS charge_transaction_id UUID REFERENCES transactions(transaction_id) ON DELETE SET NULL`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_invoices_booking ON invoices(booking_id) WHERE booking_id IS NOT NULL`);
+  // Deleting an invoice (booking hard-delete, removed custom charge, any script) takes
+  // its ledger charge with it, so Total Invoiced never keeps a charge for an invoice
+  // that no longer exists.
+  await db.query(`
+    CREATE OR REPLACE FUNCTION invoice_charge_cleanup() RETURNS trigger AS $$
+    BEGIN
+      IF OLD.charge_transaction_id IS NOT NULL THEN
+        DELETE FROM transactions WHERE transaction_id = OLD.charge_transaction_id;
+      END IF;
+      RETURN OLD;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await db.query(`DROP TRIGGER IF EXISTS trg_invoice_charge_cleanup ON invoices`);
+  await db.query(`
+    CREATE TRIGGER trg_invoice_charge_cleanup
+    AFTER DELETE ON invoices
+    FOR EACH ROW EXECUTE PROCEDURE invoice_charge_cleanup()
+  `);
+
   console.log('Migration completed successfully!');
 }
 

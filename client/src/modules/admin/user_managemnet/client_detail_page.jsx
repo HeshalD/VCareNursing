@@ -62,6 +62,7 @@ import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../act
 import { RefundDepositModal, ForfeitDepositModal } from '../products/ProductsPage';
 import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
 import RegFeeDrawer from './RegFeeDrawer';
+import RecordPastRegFeeModal from './RecordPastRegFeeModal';
 import CreateQuotationDrawer from './CreateQuotationDrawer';
 import CreateProductInvoiceDrawer from './CreateProductInvoiceDrawer';
 import RecordPaymentDrawer from './RecordPaymentDrawer';
@@ -328,15 +329,11 @@ const ClientDetailPage = () => {
   const [regFeeAmountEditError, setRegFeeAmountEditError] = useState('');
 
   // Backdated (historical) registration fee payment entry — for clients who paid
-  // before this was tracked in-system, or before this feature existed.
-  const [showBackdateRegFeeForm, setShowBackdateRegFeeForm] = useState(false);
-  const [backdateRegFeeAmount, setBackdateRegFeeAmount] = useState('10000.00');
-  const [backdateRegFeeDate, setBackdateRegFeeDate] = useState('');
+  // before this was tracked in-system. Opened only from the Actions dropdown
+  // ("Record Past Registration Fee"); the form lives in RecordPastRegFeeModal.
+  const [showPastRegFeeModal, setShowPastRegFeeModal] = useState(false);
   // Date the registration fee money was received — used by "Mark as Paid" / "Confirm Payment".
   const [regFeePaymentDate, setRegFeePaymentDate] = useState(todayISO());
-  const [backdateRegFeeSalespersonId, setBackdateRegFeeSalespersonId] = useState('');
-  const [backdateRegFeeLoading, setBackdateRegFeeLoading] = useState(false);
-  const [backdateRegFeeError, setBackdateRegFeeError] = useState('');
 
   // Registration Fee card UI — progressive disclosure so only the one action
   // relevant to the client's current step is on screen by default.
@@ -1109,28 +1106,11 @@ const ClientDetailPage = () => {
     }
   };
 
-  const handleBackdateRegFeePayment = async () => {
-    if (!backdateRegFeeDate) { setBackdateRegFeeError('Please select the date the fee was paid.'); return; }
-    if (!backdateRegFeeAmount || Number(backdateRegFeeAmount) <= 0) { setBackdateRegFeeError('Please enter a valid amount.'); return; }
-    setBackdateRegFeeLoading(true);
-    setBackdateRegFeeError('');
-    try {
-      await apiClient.backdateRegFeePayment(clientId, {
-        amount: backdateRegFeeAmount,
-        payment_date: backdateRegFeeDate,
-        salesperson_id: backdateRegFeeSalespersonId || null,
-      });
-      await refreshAfterPaymentChange();
-      if (backdateRegFeeSalespersonId) await reloadClientSalesperson();
-      setShowBackdateRegFeeForm(false);
-      setBackdateRegFeeDate('');
-      setBackdateRegFeeSalespersonId('');
-      setRegFeeMoreOpen(false);
-    } catch (err) {
-      setBackdateRegFeeError(err.message || 'Failed to record historical payment.');
-    } finally {
-      setBackdateRegFeeLoading(false);
-    }
+  // Called by RecordPastRegFeeModal after the past payment has been saved.
+  const handlePastRegFeeRecorded = async ({ salespersonId } = {}) => {
+    await refreshAfterPaymentChange();
+    if (salespersonId) await reloadClientSalesperson();
+    setRegFeeMoreOpen(false);
   };
 
   const clientProfile = detail?.client_profile || {};
@@ -3345,95 +3325,6 @@ const ClientDetailPage = () => {
                           )}
                         </div>
 
-                        {/* Backdated (historical) payment entry - for a client who paid
-                            their reg fee before this was tracked in-system, or before
-                            this feature existed. Once the fee is settled (paid/waived)
-                            there's nothing left to backdate. */}
-                        {!isSettled && (
-                        <div>
-                          {!showBackdateRegFeeForm ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowBackdateRegFeeForm(true);
-                                setBackdateRegFeeAmount(String(clientProfile.reg_fee_amount || '10000.00'));
-                                setBackdateRegFeeError('');
-                              }}
-                              className="text-xs font-medium text-blue-600 hover:text-blue-700"
-                            >
-                              Record a payment from the past
-                            </button>
-                          ) : (
-                            <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3">
-                              <p className="text-xs font-semibold text-gray-700">Record a Past Payment</p>
-                              <p className="text-[11px] text-gray-400">
-                                For a client who already paid before this was tracked here. Membership expiry is
-                                calculated 365 days from the date entered below, not from today.
-                              </p>
-                              <div className="grid gap-3 @md:grid-cols-2">
-                                <div>
-                                  <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Amount Paid (LKR)</label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={backdateRegFeeAmount}
-                                    onChange={(e) => setBackdateRegFeeAmount(e.target.value)}
-                                    onWheel={(e) => e.target.blur()}
-                                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Date Paid</label>
-                                  <DateInput
-                                    value={backdateRegFeeDate}
-                                    onChange={(e) => setBackdateRegFeeDate(e.target.value)}
-                                    max={todayISO()}
-                                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                                  />
-                                </div>
-                              </div>
-                              {salespersonsList.length > 0 && (
-                                <div>
-                                  <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Credit Registration To (optional)</label>
-                                  <select
-                                    value={backdateRegFeeSalespersonId}
-                                    onChange={(e) => setBackdateRegFeeSalespersonId(e.target.value)}
-                                    className="w-full @md:w-64 px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                                  >
-                                    <option value="">No salesperson</option>
-                                    {salespersonsList.map((sp) => (
-                                      <option key={sp.id} value={sp.id}>{sp.full_name}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              )}
-                              {backdateRegFeeError && (
-                                <p className="text-xs text-red-600">{backdateRegFeeError}</p>
-                              )}
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={handleBackdateRegFeePayment}
-                                  disabled={backdateRegFeeLoading}
-                                  className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                                >
-                                  {backdateRegFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                                  Save Past Payment
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { setShowBackdateRegFeeForm(false); setBackdateRegFeeError(''); }}
-                                  disabled={backdateRegFeeLoading}
-                                  className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        )}
                       </div>
                     )}
                   </div>
@@ -3867,14 +3758,16 @@ const ClientDetailPage = () => {
               <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
                 {[
                   { label: 'Record Payment',       action: () => { setShowRecordPayment(true); setActionsOpen(false); } },
-                  { label: 'Record Registration Fee', action: () => { setShowRegFeeDrawer(true); setActionsOpen(false); } },
+                  // Past (backdated) payments and direct bookings are permission-gated: granted per
+                  // staff member from the Permissions page, hidden for everyone else.
+                  { label: 'Record Past Registration Fee', permission: 'CLIENT_RECORD_PAST_REG_FEE', action: () => { setShowPastRegFeeModal(true); setActionsOpen(false); } },
                   { label: 'Create Quotation',      action: () => { setEditingQuoteId(null); setShowQuoteDrawer(true); setActionsOpen(false); } },
-                  { label: 'Create Booking',        action: () => { setShowDirectBooking(true); setActionsOpen(false); } },
+                  { label: 'Create Booking',        permission: 'BOOKING_CREATE_DIRECT', action: () => { setShowDirectBooking(true); setActionsOpen(false); } },
                   { label: 'Create Service Request', action: () => { setShowServiceRequestDrawer(true); setActionsOpen(false); } },
                   { label: 'Create Product Invoice', action: () => { setShowProductInvoiceDrawer(true); setActionsOpen(false); } },
                   { label: 'Add Care Profiles',     action: () => { setActiveSection('patients'); setShowAddPatient(true); setActionsOpen(false); } },
                   { label: 'Add Note',              action: () => { setActiveSection('notes'); setActionsOpen(false); } },
-                ].map(({ label, action }) => (
+                ].filter(({ permission }) => hasPermission(permission)).map(({ label, action }) => (
                   <button
                     key={label}
                     type="button"
@@ -4045,6 +3938,15 @@ const ClientDetailPage = () => {
         onSuccess={() => fetchBookingsPag()}
         preselectedClientId={clientId}
         preselectedClientName={detail?.client_profile?.full_name}
+      />
+
+      <RecordPastRegFeeModal
+        open={showPastRegFeeModal}
+        onClose={() => setShowPastRegFeeModal(false)}
+        clientId={clientId}
+        clientProfile={clientProfile}
+        salespersons={salespersonsList}
+        onSuccess={handlePastRegFeeRecorded}
       />
 
       <RegFeeDrawer

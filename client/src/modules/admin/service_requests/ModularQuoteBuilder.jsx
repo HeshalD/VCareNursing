@@ -12,7 +12,6 @@ import {
   AlertCircle,
   CheckCircle,
   ArrowLeft,
-  Plus,
   Eye,
   Edit3,
   Tag,
@@ -24,10 +23,9 @@ import {
   BadgeDollarSign,
   CalendarClock,
   Clock3,
+  Truck,
 } from 'lucide-react';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
-import PresetItemSelector from '../service_quotes/PresetItemSelector';
-import PresetManager from '../service_quotes/PresetManager';
 import LineItemRow from '../service_quotes/LineItemRow';
 import RegistrationFeeRow from '../service_quotes/RegistrationFeeRow';
 import RateLineItemRow from '../service_quotes/RateLineItemRow';
@@ -54,6 +52,8 @@ const InfoRow = ({ label, value }) => (
 // the client as a second quotation through the existing product-quote
 // pipeline (rental agreements, deposits, product invoices) rather than being
 // mixed into the booking's daily-invoice flow.
+const TRANSPORT_PRODUCT_NAME = 'Transport Charges';
+
 const emptyProductLine = () => ({
   description: '', quantity: 1, unit_price: '', product_id: '', unit_id: '',
   rental_billing_type: 'ONE_TIME', rental_start_date: new Date().toISOString().slice(0, 10),
@@ -365,14 +365,12 @@ const ModularQuoteBuilder = () => {
 
   const [serviceRequest, setServiceRequest] = useState(null);
   const [clientProfile, setClientProfile]   = useState(null);
-  const [presets, setPresets]               = useState([]);
   const [lineItems, setLineItems]           = useState([]);
   const [termsConditions, setTermsConditions] = useState(
     'The initial estimated amount is non-refundable.'
   );
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState(null);
-  const [showPresetManager, setShowPresetManager] = useState(false);
 
   // Products & Rentals — companion PRODUCT quotation (see emptyProductLine)
   const [products, setProducts]                 = useState([]);
@@ -394,7 +392,6 @@ const ModularQuoteBuilder = () => {
   useEffect(() => {
     if (requestId) {
       fetchServiceRequest();
-      fetchPresets();
     } else {
       fetchNewLeads();
     }
@@ -433,20 +430,8 @@ const ModularQuoteBuilder = () => {
     finally { setLoading(false); }
   };
 
-  const fetchPresets = async () => {
-    try {
-      const res  = await fetch('/api/quotes/presets', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-      });
-      const data = await res.json();
-      setPresets(data.data || []);
-    } catch { /* non-critical */ }
-  };
-
   // ── Line item helpers ──────────────────────────────────────────────────────
-  const addPresetItem = (p) =>
-    setLineItems(prev => [...prev, { ...p, sort_order: prev.length }]);
-
+  // Only DISCOUNT is added free-form; charges come from the dedicated buttons.
   const addItem = (type) =>
     setLineItems(prev => [
       ...prev,
@@ -539,6 +524,19 @@ const ModularQuoteBuilder = () => {
 
   // ── Product / Rental line item helpers ─────────────────────────────────────
   const addProductLine = () => setProductLineItems((prev) => [...prev, emptyProductLine()]);
+
+  // Transport is always the catalogue "Transport Charges" product (its price can
+  // be changed per quotation), never a free-form charge.
+  const transportProduct = products.find((p) => p.name === TRANSPORT_PRODUCT_NAME && p.product_type !== 'RENTAL');
+  const addTransportLine = () => {
+    if (!transportProduct) return;
+    setProductLineItems((prev) => [...prev, {
+      ...emptyProductLine(),
+      product_id: transportProduct.product_id,
+      description: transportProduct.name,
+      unit_price: transportProduct.price,
+    }]);
+  };
   const addDepositLine = () => setProductLineItems((prev) => [...prev, emptyDepositLine()]);
 
   const updateProductLine = (index, updated) => {
@@ -566,6 +564,8 @@ const ModularQuoteBuilder = () => {
   const grandTotal     = totalCharges - totalDiscounts;
 
   const validProductLineItems = productLineItems.filter((it) => it.description?.trim() && it.unit_price !== '');
+  // A product line must be a catalogue product (standalone refundable deposits excepted).
+  const unpickedProductLines = productLineItems.filter((it) => !it.isStandaloneDeposit && !it.product_id).length;
   // Mirrors quoteController.expandProductLineItemsForDisplay: a rental
   // item's own deposit_amount rides along as its own line/total on the
   // merged PDF, same as a standalone deposit line's full amount.
@@ -580,6 +580,10 @@ const ModularQuoteBuilder = () => {
   const handlePreviewClick = () => {
     if (validLineItems.length === 0) return;
     if (combinedTotal <= 0) { setError('Quote total must be greater than zero'); return; }
+    if (unpickedProductLines > 0) {
+      setError('Every product line must be a product picked from the catalogue (e.g. Transport Charges). Remove or fix the free-text line.');
+      return;
+    }
     for (const it of validProductLineItems) {
       if (isRentalLine(it) && it.rental_billing_type === 'ONE_TIME' && !it.rental_end_date) {
         setError(`End date is required for the one-time rental item "${it.description}"`);
@@ -838,16 +842,9 @@ const ModularQuoteBuilder = () => {
             />
           ) : (
             <>
-              {/* Preset selector */}
-              <div className="rounded-lg border border-gray-200 bg-white px-5 py-4">
-                <PresetItemSelector
-                  presets={presets}
-                  onSelectPreset={addPresetItem}
-                  onManagePresets={() => setShowPresetManager(true)}
-                />
-              </div>
-
-              {/* Line items table (Zoho-style) */}
+              {/* Line items table (Zoho-style). No presets or free-form charges: a quotation
+                  is built only from the registration fee, the care/shift rate, discounts and
+                  catalogue products (transport is the "Transport Charges" product). */}
               <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
 
                 {/* Table header row */}
@@ -877,7 +874,7 @@ const ModularQuoteBuilder = () => {
                           <td colSpan={6} className="py-12 text-center">
                             <p className="text-[13px] text-gray-400">No items added yet</p>
                             <p className="text-[12px] text-gray-300 mt-1">
-                              Search a saved preset above, or use the buttons below to add a charge, discount, product or rental
+                              Use the buttons below to add the rate, registration fee, a discount, or a product such as Transport Charges
                             </p>
                           </td>
                         </tr>
@@ -969,44 +966,47 @@ const ModularQuoteBuilder = () => {
                       </button>
                     )}
                     <button
-                      onClick={() => addItem('CHARGE')}
-                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Custom Charge
-                    </button>
-                    <button
                       onClick={() => addItem('DISCOUNT')}
                       className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
                     >
                       <Percent className="w-3.5 h-3.5" />
                       Discount
                     </button>
-                    {serviceRequest?.client_id && (
-                      <>
-                        <button
-                          onClick={addProductLine}
-                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
-                        >
-                          <ShoppingBag className="w-3.5 h-3.5" />
-                          Product / Rental
-                        </button>
-                        <button
-                          onClick={addDepositLine}
-                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-amber-100 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
-                        >
-                          <Package className="w-3.5 h-3.5" />
-                          Refundable Deposit
-                        </button>
-                      </>
+                    {/* Products are available for new leads too: the companion product
+                        quotation gets the client attached once the client account is
+                        created at the first payment (see quoteController.acceptProductQuote). */}
+                    {transportProduct && (
+                      <button
+                        onClick={addTransportLine}
+                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-teal-100 bg-teal-50 text-teal-700 hover:bg-teal-100 transition-colors"
+                      >
+                        <Truck className="w-3.5 h-3.5" />
+                        Transport
+                      </button>
                     )}
+                    <button
+                      onClick={addProductLine}
+                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+                    >
+                      <ShoppingBag className="w-3.5 h-3.5" />
+                      Product / Rental
+                    </button>
+                    <button
+                      onClick={addDepositLine}
+                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-amber-100 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                    >
+                      <Package className="w-3.5 h-3.5" />
+                      Refundable Deposit
+                    </button>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                     {registrationFeeAlreadySettled && (
                       <span className="text-[11px] text-gray-400">Registration fee already settled for this client</span>
                     )}
-                    {!serviceRequest?.client_id && (
-                      <span className="text-[11px] text-gray-400">Link this lead to a client account to add products or rentals</span>
+                    {unpickedProductLines > 0 && (
+                      <span className="text-[11px] text-amber-600">
+                        Pick a product from the catalogue for every product line — free-text items aren't allowed
+                      </span>
                     )}
                     {skippedCount > 0 && (
                       <span className="text-[11px] text-gray-400 ml-auto">
@@ -1091,12 +1091,6 @@ const ModularQuoteBuilder = () => {
           Back to Service Requests
         </button>
       </div>
-
-      <PresetManager
-        isOpen={showPresetManager}
-        onClose={() => setShowPresetManager(false)}
-        onSave={() => { setShowPresetManager(false); fetchPresets(); }}
-      />
     </AdminLayout>
   );
 };

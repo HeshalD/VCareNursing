@@ -16,6 +16,8 @@ const { sendClientInvoice } = require('../utils/metaWhatsapp');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { parsePaymentDate } = require('../utils/paymentDate');
 const { editInvoiceAmount: editInvoiceAmountCore, editQuoteLineAmounts, getQuoteLinesForEdit } = require('../services/invoiceAmountEdits');
+const { ensureInvoiceCharge } = require('../services/invoiceCharges');
+const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
@@ -96,6 +98,8 @@ exports.createInvoiceFromQuote = async (req, res) => {
        RETURNING *`,
       [quote.client_id, quote.walk_in_customer_id, quote_id, quote.total_amount, due_date || null, req.user?.user_id || null]
     );
+    // Puts the invoice on the client's ledger (Total Invoiced, statements).
+    await ensureInvoiceCharge(pgClient, result.rows[0].invoice_id);
 
     await pgClient.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
 
@@ -650,20 +654,50 @@ async function applyInvoicePayment(pgClient, {
   // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
   const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
 
+  // booking_id: an invoice raised for a booking (e.g. its transport charge) has its
+  // charge on that booking's account, so the payment settles the booking too.
   const txResult = await pgClient.query(
     `INSERT INTO transactions
-       (client_id, quote_id, category, transaction_type, amount, payment_method,
+       (client_id, booking_id, quote_id, category, transaction_type, amount, payment_method,
         bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
         notes, status, verified_by, created_at)
-     VALUES ($1,$2,$3,'CREDIT',$4,$5,$6,$7,$8,$9,$10,$11,'COMPLETED',$12,COALESCE($13::timestamptz, NOW()))
+     VALUES ($1,$14,$2,$3,'CREDIT',$4,$5,$6,$7,$8,$9,$10,$11,'COMPLETED',$12,COALESCE($13::timestamptz, NOW()))
      RETURNING transaction_id`,
     [
       invoice.client_id, invoice.quote_id, transactionCategory, amount, payment_method,
       resolvedBankAccountId, cheque_number || null, cheque_date || null,
       reference_number || null, slip_url || null, finalNotes, actorUserId, ledgerTimestamp,
+      invoice.booking_id || null,
     ]
   );
   const transaction_id = txResult.rows[0].transaction_id;
+
+  if (invoice.booking_id) {
+    await pgClient.query(
+      `INSERT INTO booking_payment_tracking (
+         booking_id, client_id, amount_received, payment_method, bank_account_id, reference_number,
+         notes, status, verified_at, verified_by, payment_date
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,'VERIFIED',NOW(),$8,COALESCE($9::timestamptz, NOW()))`,
+      [invoice.booking_id, invoice.client_id, amount, payment_method, resolvedBankAccountId,
+        reference_number || null, finalNotes, actorUserId, ledgerTimestamp]
+    );
+    await pgClient.query(
+      `UPDATE bookings
+       SET amount_paid = (SELECT COALESCE(SUM(amount_received), 0) FROM booking_payment_tracking
+                          WHERE booking_id = $1 AND status = 'VERIFIED')
+       WHERE booking_id = $1`,
+      [invoice.booking_id]
+    );
+    // Paid up → no longer overdue (the nightly job only ever flags, never clears).
+    await pgClient.query(
+      `UPDATE bookings b SET status = 'ACTIVE'
+       WHERE b.booking_id = $1 AND b.status = 'OVERDUE'
+         AND (SELECT COALESCE(SUM(t.amount) FILTER (WHERE ${bookingChargeSql('t')}), 0)
+                   - COALESCE(SUM(t.amount) FILTER (WHERE ${bookingSettledSql('t')}), 0)
+              FROM transactions t WHERE t.booking_id = b.booking_id) <= 0.005`,
+      [invoice.booking_id]
+    );
+  }
 
   await pgClient.query(
     `INSERT INTO invoice_payments

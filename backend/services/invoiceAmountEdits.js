@@ -6,10 +6,11 @@
 // Care-day invoices go through services/amountCorrections.js instead, and the
 // registration fee through clientController.updateRegFeeAmount.
 //
-// None of these invoices is a ledger entry: raising one posts nothing to
-// `transactions` — only the payments against it do. So an edit changes what the
-// client owes, never money already received, and is refused below what has
-// already been paid (that difference would be a refund, which is its own flow).
+// A product/rental invoice carries one ledger charge (services/invoiceCharges.js),
+// which an edit restates in place. Extra-charge and combined invoices are documents
+// only. Either way an edit changes what the client owes, never money already
+// received, and is refused below what has already been paid (that difference would
+// be a refund, which is its own flow).
 //
 // ─── Which figure is edited ──────────────────────────────────────────────────
 // • Product/rental invoice — the invoice's own amount. Its PDF lists the
@@ -22,6 +23,8 @@
 //
 // Registration-fee and rental lines on a quotation are not editable here — each
 // has its own invoice with its own edit path.
+
+const { restateInvoiceCharge } = require('./invoiceCharges');
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -125,6 +128,8 @@ const editInvoiceAmount = async (client, { invoice_id, new_amount, reason, actor
   await stampInvoice(client, invoice_id, {
     newAmount, fullyPaid: paid >= newAmount - 0.01, reason: why, actorUserId, actorName,
   });
+  // The invoice's ledger charge follows it, marked edited the same way.
+  await restateInvoiceCharge(client, invoice_id, { reason: why, actorUserId, actorName });
 
   return {
     changed: true, kind: 'PRODUCT', invoice_id, invoice_code: invoice.invoice_code,

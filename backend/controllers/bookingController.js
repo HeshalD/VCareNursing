@@ -1182,6 +1182,15 @@ const convertToBookingInternal = async (req, res) => {
             [bookingId, bookingQuoteId]
         );
 
+        // 7b. The quotation's products (e.g. the Transport Charges product) become
+        // invoices on this booking — accepted now if the first payment hasn't already —
+        // and are paid from the wallet money reserved above. Never blocks the booking.
+        const { attachLinkedProductsToBooking } = require('./quoteController');
+        const productInvoicing = await attachLinkedProductsToBooking(client, {
+            serviceQuoteId: bookingQuoteId, bookingId, actorUserId: req.user?.user_id || null,
+        });
+        if (productInvoicing.warning) console.warn(`[convertToBooking] ${bookingId}: ${productInvoicing.warning}`);
+
         // 8. Update Service Request Status to 'BOOKING_CREATED'
         // Note: Service request remains open for payment recording phase
         await client.query(
@@ -1241,6 +1250,7 @@ const convertToBookingInternal = async (req, res) => {
                 status: 'PENDING',
                 quote_id: bookingQuoteId,
                 quotation_amount: parseFloat(quoteData.total_amount),
+                product_invoicing: productInvoicing,
                 next_steps: {
                     step_1: "Record client payment(s) via POST /api/quotations/:quote_id/record-payment",
                     step_2: "Assign staff to booking via POST /api/bookings/:booking_id/assign-staff"

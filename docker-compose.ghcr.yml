@@ -6,6 +6,7 @@ services:
   backend:
     image: ghcr.io/${IMAGE_OWNER:-heshald}/vcarenursing-backend:${IMAGE_TAG:-latest}
     container_name: vcarenursing-backend
+    init: true  # reap orphaned Chrome zombies left by PDF generation
     restart: unless-stopped
     env_file:
       - ./backend/.env
