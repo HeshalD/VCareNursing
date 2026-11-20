@@ -1,306 +1,255 @@
 import React from 'react';
-import { ChevronDown, ChevronUp, CheckSquare, Square } from 'lucide-react';
+import { ChevronDown, Check, Minus, Lock } from 'lucide-react';
+import { DEFAULT_HIGH_VERBS, analyzeModule, nextToggle, triState } from './permissionUtils';
 
-export const PermToggle = ({ label, checked, onToggle, locked }) => (
-  <div
-    className={`flex items-center justify-between gap-3 py-1.5 px-2 -mx-2 rounded-md transition-colors ${
-      locked ? '' : 'hover:bg-slate-100'
-    }`}
-  >
-    <span className="text-sm text-slate-700 flex items-center gap-1.5">
-      {label}
-      {locked && (
-        <span className="text-[9px] font-semibold uppercase tracking-wide text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">
-          via role
-        </span>
-      )}
-    </span>
-    <button
-      type="button"
-      onClick={locked ? undefined : onToggle}
-      aria-pressed={checked}
-      disabled={locked}
-      className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-        checked ? 'bg-blue-600' : 'bg-slate-200'
-      } ${locked ? 'opacity-70 cursor-not-allowed' : ''}`}
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 mt-0.5 ${
-          checked ? 'translate-x-4' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
-  </div>
-);
+export const moduleDomId = (mod) => `perm-mod-${String(mod).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
 
-// Plain checkbox used inside an entity/verb table cell — checked+disabled
-// (rather than hidden) when granted via role, so the grid still shows the
-// full picture of what's enabled, just non-interactive for that cell.
-const PermCheckbox = ({ checked, onChange, locked, title }) => (
-  <input
-    type="checkbox"
-    checked={checked}
-    onChange={locked ? undefined : onChange}
-    disabled={locked}
-    title={locked ? `${title} — granted via role` : title}
-    className={`h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 ${
-      locked ? 'opacity-70 cursor-not-allowed accent-blue-400' : 'cursor-pointer accent-blue-600'
-    }`}
-  />
-);
+export const Highlight = ({ text, q }) => {
+  const s = String(text ?? '');
+  const n = (q || '').trim();
+  if (!n) return s;
+  const i = s.toLowerCase().indexOf(n.toLowerCase());
+  if (i < 0) return s;
+  return (
+    <>
+      {s.slice(0, i)}
+      <mark className="bg-yellow-200 rounded-sm">{s.slice(i, i + n.length)}</mark>
+      {s.slice(i + n.length)}
+    </>
+  );
+};
 
-// Compact, pill-shaped toggle used everywhere a group of permissions can be
-// bulk-checked/unchecked — an icon + label reads clearly at a glance, unlike
-// a bare "Select all" text link that gets lost next to real toggles.
-const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle, compact }) => {
-  const togglable = perms.filter((p) => !lockedKeys?.has(p.key));
-  if (togglable.length === 0) return null;
-  const allChecked = togglable.every((p) => checkedKeys.has(p.key));
-  const Icon = allChecked ? CheckSquare : Square;
+// Tri-state checkbox: state = 'on' | 'off' | 'mixed'
+export const TriBox = ({ state, onClick, label, disabled, ring }) => {
+  const filled = state !== 'off';
   return (
     <button
       type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onSectionToggle(togglable.map((p) => p.key), !allChecked);
-      }}
-      className={`inline-flex items-center gap-1 font-semibold rounded-md border transition-colors flex-shrink-0 whitespace-nowrap ${
-        compact ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-1'
-      } ${
-        allChecked
-          ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-700'
-      }`}
+      role="checkbox"
+      aria-checked={state === 'mixed' ? 'mixed' : state === 'on'}
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`h-5 w-5 shrink-0 rounded flex items-center justify-center transition outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+        filled ? 'bg-blue-600 border border-blue-600 text-white' : 'border-[1.5px] border-slate-400 bg-white hover:border-blue-600'
+      } ${disabled ? 'opacity-40 cursor-not-allowed' : ''} ${ring ? 'ring-2 ring-offset-1 ring-blue-300' : ''}`}
     >
-      <Icon className={compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
-      {allChecked ? 'Clear all' : 'Select all'}
+      {state === 'on' && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+      {state === 'mixed' && <Minus className="w-3.5 h-3.5" strokeWidth={3} />}
     </button>
   );
 };
 
-// Entity (rows) x verb (columns) table for one module — the actual "tick one
-// by one" grid. `entityGroups` is { [entityName]: perm[] }; `verbs` is the
-// ordered, deduplicated list of every verb used anywhere in the module (a
-// module's entities rarely share every verb, so most rows have gaps — shown
-// as a dash rather than an empty cell so it reads as "not applicable", not
-// "forgot to check this").
-const EntityVerbTable = ({ entityGroups, verbs, checkedKeys, lockedKeys, onToggle, onSectionToggle }) => {
-  const columnKeys = (verb) =>
-    Object.values(entityGroups)
-      .map((perms) => perms.find((p) => p.verb === verb))
-      .filter(Boolean)
-      .map((p) => p.key);
+const NA_CELL = (
+  <div className="flex justify-center">
+    <span
+      className="h-[22px] w-[26px] rounded bg-[repeating-linear-gradient(135deg,#F1F5F9_0_5px,#E2E8F0_5px_10px)]"
+      title="Not available for this item"
+    />
+  </div>
+);
 
+const Cell = ({ perm, entity, verb, checked, locked, changed, dim, onToggle, roleSources }) => {
+  if (!perm) return NA_CELL;
+  const name = perm.category === 'page' ? `${entity}` : `${entity} · ${verb}`;
+  if (locked) {
+    return (
+      <div className={`flex justify-center ${dim ? 'opacity-20' : ''}`}>
+        <button
+          type="button"
+          aria-disabled="true"
+          aria-label={`${name} (granted by role)`}
+          title={`${name} — granted by ${roleSources || 'a role'}. Edit that role to change it.`}
+          className="h-5 w-5 rounded bg-slate-200 border border-slate-300 text-slate-600 flex items-center justify-center cursor-not-allowed"
+        >
+          <Lock className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
   return (
-    <div className="overflow-x-auto -mx-1">
-      <table className="min-w-full text-sm border-collapse">
-        <thead>
-          <tr>
-            <th className="text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-2 py-1.5 whitespace-nowrap">
-              Entity
-            </th>
-            {verbs.map((verb) => (
-              <th key={verb} className="text-center px-2 py-1.5 align-bottom">
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-[10.5px] font-semibold text-slate-500 whitespace-nowrap">{verb}</span>
-                  <SectionSelectAll
-                    perms={columnKeys(verb).map((key) => ({ key }))}
-                    checkedKeys={checkedKeys}
-                    lockedKeys={lockedKeys}
-                    onSectionToggle={onSectionToggle}
-                    compact
-                  />
-                </div>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(entityGroups).map(([entity, perms]) => {
-            const byVerb = new Map(perms.map((p) => [p.verb, p]));
-            return (
-              <tr key={entity} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                <td className="px-2 py-2 whitespace-nowrap">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-700">{entity}</span>
-                    <SectionSelectAll perms={perms} checkedKeys={checkedKeys} lockedKeys={lockedKeys} onSectionToggle={onSectionToggle} compact />
-                  </div>
-                </td>
-                {verbs.map((verb) => {
-                  const perm = byVerb.get(verb);
-                  return (
-                    <td key={verb} className="text-center px-2 py-2">
-                      {perm ? (
-                        <PermCheckbox
-                          checked={checkedKeys.has(perm.key)}
-                          onChange={() => onToggle(perm.key)}
-                          locked={lockedKeys?.has(perm.key)}
-                          title={perm.label}
-                        />
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className={`flex justify-center ${dim ? 'opacity-20' : ''}`}>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={name}
+        title={perm.label}
+        onClick={() => onToggle(perm.key)}
+        className={`h-5 w-5 rounded flex items-center justify-center transition outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+          checked
+            ? 'bg-blue-600 border border-blue-600 text-white'
+            : 'border-[1.5px] border-slate-400 bg-white hover:border-blue-600 hover:scale-110'
+        } ${changed ? 'ring-2 ring-offset-1 ring-blue-300' : ''}`}
+      >
+        {checked && (
+          <span key="on" className="flex" style={{ animation: 'pop .22s' }}>
+            <Check className="w-3.5 h-3.5" strokeWidth={3} />
+          </span>
+        )}
+      </button>
     </div>
   );
 };
 
-// registry: { [moduleName]: [{ key, label, category, entity?, verb? }] }
-// checkedKeys: Set<string>
-// lockedKeys: optional Set<string> — permissions granted via a role, shown checked + non-interactive
+const verbRisk = (verb) =>
+  String(verb).toLowerCase() === 'delete' ? { text: 'text-red-700' } : { text: 'text-slate-700' };
+
+// registry: { [module]: [{ key, label, category, entity?, verb? }] }
+// checkedKeys: Set (effective, incl. role-locked) · originalKeys: Set (effective at last save)
+// lockedKeys: Set of role-granted keys · roleSources: string naming the roles
 const PermissionModuleList = ({
   registry,
   checkedKeys,
+  originalKeys,
   onToggle,
   onSectionToggle,
   expandedModules,
-  onToggleModule,
+  onToggleModule, // (module, nextOpen)
   lockedKeys,
+  roleSources,
+  search = '',
+  filter = 'all',
+  highVerbs = DEFAULT_HIGH_VERBS,
 }) => {
-  const isModuleExpanded = (mod) => expandedModules[mod] !== false;
+  const apply = (keys) => {
+    const t = nextToggle(keys, checkedKeys, lockedKeys);
+    if (t) onSectionToggle(t.keys, t.checked);
+  };
 
   return (
-    <>
+    <div className="space-y-3">
       {Object.entries(registry).map(([mod, perms]) => {
-        const expanded = isModuleExpanded(mod);
-        const enabledCount = perms.filter((p) => checkedKeys.has(p.key)).length;
-        const pagePerms = perms.filter((p) => p.category === 'page');
-        const actionPerms = perms.filter((p) => p.category === 'action');
+        const a = analyzeModule(mod, perms, { search, filter, checked: checkedKeys, locked: lockedKeys, highVerbs });
+        if (a.active && !a.hasMatch) return null;
 
-        // A module with two or more distinct action permissions is worth grouping
-        // by entity (rows) — one lone action (Settings, Receipts, etc.) gets a
-        // table of one cell, which isn't clearer than the plain toggle it'd replace.
-        const useGrid = actionPerms.length > 1;
-        const entityGroups = useGrid
-          ? actionPerms.reduce((acc, perm) => {
-              const entity = perm.entity || mod; // defensive fallback for any unmapped key
-              if (!acc[entity]) acc[entity] = [];
-              acc[entity].push(perm);
-              return acc;
-            }, {})
-          : null;
-        // Column order = first-appearance order of each verb in the registry,
-        // which already clusters related verbs together (e.g. Create/Edit/Delete
-        // before the more one-off actions).
-        const verbs = useGrid
-          ? [...new Set(actionPerms.map((p) => p.verb || p.label))]
-          : null;
+        const open = expandedModules[mod] ?? (a.active && a.hasMatch);
+        const enabledCount = perms.filter((p) => checkedKeys.has(p.key)).length;
+        const pct = perms.length ? Math.round((enabledCount / perms.length) * 100) : 0;
+        const edited = originalKeys && perms.some((p) => checkedKeys.has(p.key) !== originalKeys.has(p.key));
+
+        const visibleRows = a.rows.filter((r) => r.visible);
+        const rowKeys = (r) => a.columns.map((c) => r.cells[c]).filter((p) => p && a.cellOk(p)).map((p) => p.key);
+        const colKeys = (c) => visibleRows.map((r) => r.cells[c]).filter((p) => p && a.cellOk(p)).map((p) => p.key);
+        const modKeys = visibleRows.flatMap(rowKeys);
+        const gridCols = { gridTemplateColumns: `220px repeat(${a.columns.length}, minmax(112px, 1fr))` };
+        const minW = 220 + a.columns.length * 112;
 
         return (
-          <div key={mod} className="border border-slate-200 rounded-lg overflow-hidden">
-            <div
-              onClick={() => onToggleModule(mod)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <span className="font-semibold text-sm text-slate-800">{mod}</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                    enabledCount === perms.length && perms.length > 0
-                      ? 'bg-green-100 text-green-700'
-                      : enabledCount > 0
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  {enabledCount}/{perms.length}
+          <div
+            key={mod}
+            id={moduleDomId(mod)}
+            className="bg-white border border-slate-200 rounded-lg overflow-hidden scroll-mt-48"
+            style={{ animation: 'fadeUp .4s both' }}
+          >
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-50">
+              <TriBox
+                state={triState(modKeys, checkedKeys)}
+                onClick={() => apply(modKeys)}
+                label={`Toggle all in ${mod}`}
+                disabled={!modKeys.some((k) => !lockedKeys?.has(k))}
+                ring={edited}
+              />
+              <button
+                type="button"
+                aria-expanded={!!open}
+                onClick={() => onToggleModule(mod, !open)}
+                className="flex-1 min-w-0 flex items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
+              >
+                <span className="font-semibold text-slate-900 truncate">
+                  <Highlight text={mod} q={search} />
                 </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <SectionSelectAll
-                  perms={perms}
-                  checkedKeys={checkedKeys}
-                  lockedKeys={lockedKeys}
-                  onSectionToggle={onSectionToggle}
-                />
-                {expanded ? (
-                  <ChevronUp className="w-4 h-4 text-slate-400" />
-                ) : (
-                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 whitespace-nowrap">
+                  {enabledCount} / {perms.length}
+                </span>
+                <span className="hidden sm:block h-1.5 w-28 rounded-full bg-slate-200 overflow-hidden">
+                  <span
+                    className={`block h-full transition-[width] duration-500 ${'bg-blue-600'}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </span>
+                {edited && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full border border-slate-300 bg-white text-slate-700">Edited</span>
                 )}
-              </div>
+                <ChevronDown
+                  className={`ml-auto w-4 h-4 text-slate-500 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
+                />
+              </button>
             </div>
 
-            {expanded && (
-              <div>
-                {pagePerms.length > 0 && (
-                  <div className="px-4 pt-3 pb-2">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                      Page Access
-                    </p>
-                    <div className="space-y-2">
-                      {pagePerms.map((perm) => (
-                        <PermToggle
-                          key={perm.key}
-                          label={perm.label}
-                          checked={checkedKeys.has(perm.key)}
-                          onToggle={() => onToggle(perm.key)}
-                          locked={lockedKeys?.has(perm.key)}
-                        />
-                      ))}
+            <div className={`grid transition-[grid-template-rows] duration-300 ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr] invisible'}`}>
+              <div className="min-h-0 overflow-hidden">
+                <div className="overflow-x-auto thin-scroll border-t border-slate-100">
+                  <div style={{ minWidth: minW }}>
+                    <div className="grid items-stretch bg-slate-50 border-b border-slate-200" style={gridCols}>
+                      <div className="px-4 py-3 flex items-end text-xs font-semibold uppercase tracking-wide text-slate-500">Entity</div>
+                      {a.columns.map((c) => {
+                        const keys = colKeys(c);
+                        const risk = verbRisk(c);
+                        const hit = a.q && String(c).toLowerCase().includes(a.q);
+                        return (
+                          <div
+                            key={c}
+                            className={`flex flex-col items-center justify-between gap-2 px-2 py-3 text-center ${hit ? 'bg-yellow-100' : ''}`}
+                          >
+                            <span className={`text-xs font-semibold leading-tight ${risk.text}`}>
+                              <Highlight text={c} q={search} />
+                            </span>
+                            <TriBox
+                              state={triState(keys, checkedKeys)}
+                              onClick={() => apply(keys)}
+                              label={`Toggle ${c} for all visible items in ${mod}`}
+                              disabled={!keys.some((k) => !lockedKeys?.has(k))}
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
+
+                    {visibleRows.map((r) => {
+                      const keys = rowKeys(r);
+                      return (
+                        <div key={r.id} className="grid items-center border-t border-slate-100 min-h-[44px] hover:bg-slate-50" style={gridCols}>
+                          <div className="px-4 flex items-center gap-2.5 min-w-0">
+                            <TriBox
+                              state={triState(keys, checkedKeys)}
+                              onClick={() => apply(keys)}
+                              label={`Toggle all for ${r.entity}`}
+                              disabled={!keys.some((k) => !lockedKeys?.has(k))}
+                            />
+                            <span className="font-medium text-slate-800 truncate">
+                              <Highlight text={r.entity} q={search} />
+                            </span>
+                          </div>
+                          {a.columns.map((c) => {
+                            const perm = r.cells[c];
+                            return (
+                              <Cell
+                                key={c}
+                                perm={perm}
+                                entity={r.entity}
+                                verb={c}
+                                checked={!!perm && checkedKeys.has(perm.key)}
+                                locked={!!perm && !!lockedKeys?.has(perm.key)}
+                                changed={!!perm && !!originalKeys && checkedKeys.has(perm.key) !== originalKeys.has(perm.key)}
+                                dim={a.active && !!perm && !a.cellOk(perm)}
+                                onToggle={onToggle}
+                                roleSources={roleSources}
+                              />
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
-                {actionPerms.length > 0 && (
-                  <div
-                    className={`px-4 pt-3 pb-3 ${
-                      pagePerms.length > 0 ? 'border-t border-slate-100' : ''
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      {pagePerms.length > 0 ? (
-                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                          Actions
-                        </p>
-                      ) : (
-                        <span />
-                      )}
-                      {!useGrid && (
-                        <SectionSelectAll
-                          perms={actionPerms}
-                          checkedKeys={checkedKeys}
-                          lockedKeys={lockedKeys}
-                          onSectionToggle={onSectionToggle}
-                        />
-                      )}
-                    </div>
-                    {useGrid ? (
-                      <EntityVerbTable
-                        entityGroups={entityGroups}
-                        verbs={verbs}
-                        checkedKeys={checkedKeys}
-                        lockedKeys={lockedKeys}
-                        onToggle={onToggle}
-                        onSectionToggle={onSectionToggle}
-                      />
-                    ) : (
-                      <div className="space-y-2">
-                        {actionPerms.map((perm) => (
-                          <PermToggle
-                            key={perm.key}
-                            label={perm.label}
-                            checked={checkedKeys.has(perm.key)}
-                            onToggle={() => onToggle(perm.key)}
-                            locked={lockedKeys?.has(perm.key)}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                </div>
               </div>
-            )}
+            </div>
           </div>
         );
       })}
-    </>
+    </div>
   );
 };
 
