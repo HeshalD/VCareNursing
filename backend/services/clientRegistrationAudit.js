@@ -19,6 +19,7 @@
 
 const db = require('../config/db');
 const { queryRegistrationOutstanding } = require('./clientFinancials');
+const { describeTier } = require('./registrationTier');
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const num = (v) => parseFloat(v || 0);
@@ -209,13 +210,18 @@ async function getClientRegistrationAudit(clientId) {
     payments_made: paidCash,
     overdue: waived ? 0 : round2(outstanding.outstanding),
     overdue_on_booking: waived ? 0 : linkedOwed,
-    note: linkedOwed > EPS
+    not_yet_due: round2(outstanding.notYetDue || 0),
+    note: outstanding.notYetDue > EPS
+      ? 'Invoiced, but the client has no started booking yet, so it is not counted as overdue until they do.'
+      : linkedOwed > EPS
       ? 'Part of the unpaid fee sits on a booking, so it is shown in that booking’s balance on the Overdue page.'
       : null,
   };
 
   return {
     client_code: profile.client_code,
+    tier: outstanding.tier,
+    tier_reason: describeTier({ tier: outstanding.tier, reg_fee_status: status, reg_fee_expires_at: profile.reg_fee_expires_at }),
     status: {
       state: status, amount: feeAmount, invoiced_at: profile.reg_fee_invoiced_at,
       paid_at: profile.reg_fee_paid_at, expires_at: profile.reg_fee_expires_at,

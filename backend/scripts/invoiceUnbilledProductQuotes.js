@@ -26,7 +26,7 @@
 const fs = require('fs');
 const db = require('../config/db');
 const { acceptProductQuoteCore, attachLinkedProductsToBooking, isProductQuoteAccepted } = require('../controllers/quoteController');
-const { payInvoiceFromWallet, ensureInvoiceCharge } = require('../services/invoiceCharges');
+const { payInvoiceFromWallet } = require('../services/invoiceCharges');
 const { getClientFinancialTotals } = require('../services/clientFinancials');
 
 const APPLY = process.argv.includes('--apply');
@@ -43,25 +43,8 @@ async function snapshot(pg, clientId) {
   return { invoiced: num(t.totalInvoiced), overdue: num(t.balanceDue), wallet: num(w.rows[0]?.w) };
 }
 
-// A product quotation can be marked accepted and carry only a document-only "extra charge"
-// (LINE_ITEM) invoice for its items. Acceptance then bills nothing, and any payment made on that
-// document reached the ledger with no charge to match. When one document covers the whole
-// quotation, it becomes the quotation's real product invoice, keeping its INV number and any
-// payment on it. Returns how many were converted.
-async function convertDocumentInvoice(pg, productQuoteId, clientId) {
-  const docs = (await pg.query(`SELECT * FROM invoices WHERE category = 'LINE_ITEM' AND quote_id = $1 FOR UPDATE`, [productQuoteId])).rows;
-  if (docs.length === 0) return 0;
-  const total = num((await pg.query(`SELECT total_amount FROM quotations WHERE quote_id = $1`, [productQuoteId])).rows[0].total_amount);
-  if (docs.length !== 1 || Math.abs(num(docs[0].amount) - total) > 0.01) {
-    throw new Error(`its ${docs.length} item invoice(s) do not match the quotation total of ${total}, so it needs invoicing by hand`);
-  }
-  await pg.query(
-    `UPDATE invoices SET category = 'PRODUCT', line_item_id = NULL, client_id = COALESCE(client_id, $2), pdf_url = NULL WHERE invoice_id = $1`,
-    [docs[0].invoice_id, clientId]
-  );
-  await ensureInvoiceCharge(pg, docs[0].invoice_id);
-  return 1;
-}
+// (A line that only has a document-only invoice is converted in place by the shared acceptance, see
+// quoteController.billProductLine: same invoice number and payment, plus its ledger charge.)
 
 async function main() {
   const pg = await db.pool.connect();
@@ -112,8 +95,6 @@ async function main() {
       try {
         await pg.query('SAVEPOINT one_quote');
         const invoiceIds = [];
-        row.documents_converted = 0;
-        for (const pqId of t.product_quote_ids) row.documents_converted += await convertDocumentInvoice(pg, pqId, clientOf(t));
 
         if (t.booking_id) {
           const b = (await pg.query(`SELECT booking_code, status FROM bookings WHERE booking_id = $1`, [t.booking_id])).rows[0];

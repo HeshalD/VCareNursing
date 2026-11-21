@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Products page — visual reference</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  VISUAL REFERENCE ONLY. Not production code. Recreate with the app's React + Tailwind + lucide-react.
+  Tokens map 1:1 to Tailwind defaults (slate/blue/emerald/amber/red, system font). No custom fonts or colours.
+  Tab buttons and row chevrons below are clickable; everything else is a static snapshot of a state.
+  Tailwind hints are in comments like  /* tw: ... */
+-->
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px}
+button{font-family:inherit;cursor:pointer}input,select{font-family:inherit}
+.page{max-width:1440px;margin:0 auto;padding:24px 32px 72px;display:flex;flex-direction:column;gap:20px}
+h1{margin:0;font-size:22px;font-weight:600}.sub{margin:4px 0 0;color:#64748b}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+/* buttons: tw h-9 px-3.5 rounded-md border border-slate-300 bg-white text-[13px] font-semibold text-slate-700 hover:bg-slate-100 */
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:13px;font-weight:600;white-space:nowrap}
+.btn:hover{background:#f1f5f9}.btn-sm{height:30px;padding:0 10px;font-size:12px}
+.p{background:#2563eb;border-color:#2563eb;color:#fff}.p:hover{background:#1d4ed8}
+.g{background:#047857;border-color:#047857;color:#fff}.d{color:#b91c1c;border-color:#fecaca}.dp{background:#dc2626;border-color:#dc2626;color:#fff}
+.icon{width:36px;height:36px;border:0;background:transparent;border-radius:6px;color:#475569}.icon:hover{background:#e2e8f0}
+.field{height:36px;width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:0 10px;font-size:14px;background:#fff;color:#1e293b}
+/* page tabs: underline, blue-600 active, count pill */
+.tabs{display:flex;border-bottom:1px solid #e2e8f0}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:10px 4px;margin-right:24px;font-weight:600;color:#64748b;display:inline-flex;gap:8px;align-items:center;font-size:14px}
+.tab.on{color:#1d4ed8;border-color:#2563eb}.pill{font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;background:#f1f5f9;color:#475569}.tab.on .pill{background:#dbeafe;color:#1d4ed8}
+/* KPI cards: clickable filters */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kpi{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:4px}.kpi.on{border-color:#2563eb;background:#eff6ff}
+.kpi small{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}.kpi b{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.kpi span{font-size:12px;color:#64748b}
+/* segmented filter: tw inline-flex gap-0.5 rounded-lg bg-slate-100 p-[3px] */
+.seg{display:inline-flex;gap:2px;background:#f1f5f9;border-radius:8px;padding:3px}.seg button{border:0;background:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;color:#475569}.seg .on{background:#fff;color:#0f172a;box-shadow:0 1px 2px rgba(15,23,42,.12)}.seg i{font-style:normal;font-weight:500;color:#64748b}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.search{position:relative;flex:1 1 280px;max-width:380px}.search svg{position:absolute;left:11px;top:10px;color:#64748b}.search .field{padding-left:34px}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}.scroll{overflow-x:auto}.tbl{min-width:1000px}
+.hd,.row{display:grid;align-items:center;column-gap:12px;padding:0 16px}
+.hd{min-height:40px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.row{min-height:60px;padding:8px 16px;border-bottom:1px solid #f1f5f9;color:#334155}.row:hover{background:#f8fafc}
+.cat{grid-template-columns:28px minmax(240px,2.2fr) minmax(120px,1fr) 120px 170px 110px 130px}
+.quo{grid-template-columns:90px 150px minmax(190px,1.6fr) 130px 180px 200px 36px}
+.agr{grid-template-columns:minmax(190px,1.5fr) minmax(160px,1.3fr) 110px 110px 170px 120px 150px 36px}
+.dep{grid-template-columns:90px minmax(170px,1.3fr) minmax(190px,1.5fr) 120px 130px 190px}
+.tile{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.name{font-weight:600;color:#0f172a}.mut{font-size:12px;color:#64748b}.mono{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:600}
+/* status chip: dot + label, one component, tone = green|amber|red|blue|slate */
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}.chip:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.green{background:#ecfdf5;color:#047857}.amber{background:#fffbeb;color:#b45309}.red{background:#fef2f2;color:#b91c1c}.blue{background:#eff6ff;color:#1d4ed8}.slate{background:#f1f5f9;color:#475569}
+.days{display:inline-flex;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}
+.sw{width:36px;height:20px;border-radius:999px;border:0;padding:2px;display:flex;align-items:center;background:#cbd5e1;justify-content:flex-start}.sw.on{background:#2563eb;justify-content:flex-end}.sw i{width:16px;height:16px;border-radius:50%;background:#fff}
+.bulk{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:#eff6ff;border-bottom:1px solid #bfdbfe}.bulk b{color:#1d4ed8;font-size:13px}
+.expand{background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:14px 16px 16px 56px}
+.lbl{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b;margin-bottom:10px}
+.step{display:flex;gap:10px;align-items:center;font-size:13px;margin-bottom:8px}.step i{width:10px;height:10px;border-radius:50%;background:#10b981}.step.todo i{background:#fff;border:2px solid #cbd5e1}.step.todo{color:#64748b}
+.menu{width:210px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 10px 24px rgba(15,23,42,.14);padding:4px}.menu button{display:block;width:100%;text-align:left;border:0;background:none;padding:8px 12px;font-size:13px;font-weight:500;color:#334155;border-radius:4px}.menu button:hover{background:#f1f5f9}
+.foot{padding:12px 16px;border-top:1px solid #e2e8f0;color:#64748b;font-size:13px}
+.panel{display:none;flex-direction:column;gap:16px}.panel.on{display:flex}
+/* overlays: shown inline as specimens */
+.spec{border:1px dashed #94a3b8;border-radius:10px;padding:16px;background:#e2e8f0}.spec>h3{margin:0 0 10px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#475569}
+.drawer{background:#fff;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.18);max-width:700px;display:flex;flex-direction:column}.dh{padding:16px 20px;border-bottom:1px solid #e2e8f0}.dh b{font-size:16px}.db{padding:20px;display:flex;flex-direction:column;gap:18px}.df{display:flex;gap:8px;padding:14px 20px;border-top:1px solid #e2e8f0;background:#f8fafc}
+.flabel{display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:6px}.err{font-size:12px;color:#b91c1c;margin-top:4px}.fe{border-color:#dc2626}
+.dialog{background:#fff;border-radius:10px;box-shadow:0 20px 48px rgba(15,23,42,.28);width:420px;padding:22px}
+.toast{display:inline-flex;gap:14px;align-items:center;background:#0f172a;color:#f8fafc;border-radius:8px;padding:10px 14px}.toast a{color:#93c5fd;font-weight:700}
+.sum{border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;width:340px;margin-left:auto}.sum div{display:flex;justify-content:space-between;padding:8px 12px;font-size:13px;color:#475569}.sum div:last-child{background:#f8fafc;border-top:1px solid #e2e8f0;font-size:14px;color:#0f172a;font-weight:700}
+.pick{border:1px solid #e2e8f0;border-radius:8px}.pick div{display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #f1f5f9}.pick .sel{background:#eff6ff;box-shadow:inset 3px 0 0 #2563eb}
+.line{border:1px solid #e2e8f0;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:10px}.line.rent{border-color:#bfdbfe;background:#f8fbff}
+.l5{display:grid;grid-template-columns:minmax(0,1fr) 72px 120px 110px 36px;gap:8px;align-items:center}
+</style></head><body>
+<div class="page">
+
+<!-- 1. HEADER: one primary action whose label changes per tab (New product / New quotation / New rental agreement) -->
+<div class="top"><div><h1>Products</h1><p class="sub">Catalog, quotations and rentals in one place.</p></div><button class="btn p" id="primary">+ New product</button></div>
+<div class="tabs" role="tablist">
+  <button class="tab on" data-t="cat" data-p="New product">Catalog <span class="pill">12</span></button>
+  <button class="tab" data-t="quo" data-p="New quotation">Quotes &amp; Invoices <span class="pill">8</span></button>
+  <button class="tab" data-t="ren" data-p="New rental agreement">Rentals <span class="pill">5</span></button>
+</div>
+
+<!-- 2. CATALOG -->
+<section class="panel on" id="cat">
+  <div class="kpis"><!-- each KPI is a button that sets a filter; .on = active filter -->
+    <button class="kpi on"><small>Active products</small><b>12</b><span>1 deactivated</span></button>
+    <button class="kpi"><small>On public catalog</small><b>10</b><span>2 hidden from customers</span></button>
+    <button class="kpi"><small>Needs restocking</small><b style="color:#b45309">3</b><span>Low or out of stock</span></button>
+    <button class="kpi"><small>Units rented</small><b>5</b><span>of 13 rental units</span></button>
+  </div>
+  <div class="bar"><div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="field" placeholder="Search products, categories, unit codes…"></div>
+    <select class="field" style="width:200px"><option>All categories</option></select><select class="field" style="width:200px"><option>Any stock status</option></select><span style="flex:1"></span><button class="btn">Export CSV</button></div>
+  <div class="card">
+    <div class="bar" style="justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e2e8f0">
+      <div class="seg"><button class="on">All <i>13</i></button><button>Rentals <i>3</i></button><button>Items <i>7</i></button><button>Services <i>3</i></button></div>
+      <span class="mut" style="font-size:13px">Showing 13 of 13</span></div>
+    <div class="bulk"><b>2 selected</b><button class="btn btn-sm">Show on public catalog</button><button class="btn btn-sm">Hide from catalog</button><button class="btn btn-sm">Change category</button><button class="btn btn-sm d">Deactivate</button><span style="flex:1"></span><button class="btn-sm" style="border:0;background:none;color:#2563eb;font-weight:600">Clear selection</button></div>
+    <div class="scroll"><div class="tbl">
+      <div class="hd cat"><input type="checkbox"><div>Product ↑</div><div>Category</div><div style="text-align:right">Price</div><div>Stock</div><div>On catalog</div><div style="text-align:right">Actions</div></div>
+      <!-- RENTAL row: stock = "x of y free" + 4px bar; actions = Units toggle + ⋯ menu -->
+      <div class="row cat"><input type="checkbox" checked><div style="display:flex;gap:12px;align-items:center"><div class="tile" style="background:#dbeafe;color:#1d4ed8">E</div><div><div class="name">Electric Hospital Bed</div><div class="mut">Rental</div></div></div><div>Mobility &amp; Beds</div>
+        <div style="text-align:right"><div class="name">Rs. 12,500</div><div class="mut">per month</div></div>
+        <div><b>3</b> of 6 free<div style="height:4px;border-radius:2px;background:#e2e8f0;margin-top:5px;width:110px;overflow:hidden"><div style="width:50%;height:100%;background:#10b981"></div></div></div>
+        <div><button class="sw on"><i></i></button></div><div style="display:flex;gap:6px;justify-content:flex-end;position:relative"><button class="btn btn-sm">Units ▾</button><button class="icon">⋯</button></div></div>
+      <div class="expand"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><b style="font-size:13px">Units · 3 available, 2 rented, 1 in maintenance</b><span><button class="btn btn-sm">Add unit</button> <button class="btn btn-sm">Bulk add units</button></span></div>
+        <div class="card"><div class="hd" style="grid-template-columns:100px 130px 1.2fr 160px 170px;min-height:34px"><div>Unit</div><div>Status</div><div>Rented by</div><div>Until</div><div style="text-align:right">Action</div></div>
+        <div class="row" style="grid-template-columns:100px 130px 1.2fr 160px 170px;min-height:48px"><div class="mono">B-004</div><div><span class="chip blue">Rented</span></div><div>S. Jayawardena</div><div>Nov 18 <span class="days red">3d overdue</span></div><div></div></div>
+        <div class="row" style="grid-template-columns:100px 130px 1.2fr 160px 170px;min-height:48px"><div class="mono">B-005</div><div><span class="chip amber">Maintenance</span></div><div>—</div><div>—</div><div style="text-align:right"><button class="btn btn-sm">Mark available</button></div></div></div></div>
+      <!-- ITEM row: number + Low/Out badge -->
+      <div class="row cat"><input type="checkbox" checked><div style="display:flex;gap:12px;align-items:center"><div class="tile" style="background:#e2e8f0;color:#334155">A</div><div><div class="name">Adult Diapers (L), pack of 12</div><div class="mut">Item</div></div></div><div>Consumables</div><div style="text-align:right"><div class="name">Rs. 2,650</div><div class="mut">each</div></div><div><b>3</b> <span class="chip amber">Low</span></div><div><button class="sw on"><i></i></button></div><div style="display:flex;gap:6px;justify-content:flex-end;position:relative"><button class="btn btn-sm">Edit</button><button class="icon">⋯</button>
+        <div class="menu" style="position:absolute;right:0;top:40px;z-index:2"><button>Edit product</button><button>Purchase history</button><button>Duplicate</button><button style="color:#b91c1c">Deactivate</button></div></div></div>
+      <div class="row cat" style="padding-top:60px"><input type="checkbox"><div style="display:flex;gap:12px;align-items:center"><div class="tile" style="background:#e2e8f0;color:#334155">S</div><div><div class="name">Surgical Gloves, box of 100</div><div class="mut">Item</div></div></div><div>Consumables</div><div style="text-align:right"><div class="name">Rs. 1,850</div></div><div><b>0</b> <span class="chip red">Out of stock</span></div><div><button class="sw on"><i></i></button></div><div style="text-align:right"><button class="btn btn-sm">Edit</button> <button class="icon">⋯</button></div></div>
+      <!-- SERVICE row: stock = "Not tracked". INACTIVE row: opacity .6 + "Deactivated" badge, menu shows Reactivate -->
+      <div class="row cat"><input type="checkbox"><div style="display:flex;gap:12px;align-items:center"><div class="tile" style="background:#d1fae5;color:#047857">N</div><div><div class="name">Night Nursing Shift (12h)</div><div class="mut">Service</div></div></div><div>Care Services</div><div style="text-align:right"><div class="name">Rs. 14,000</div><div class="mut">per visit / shift</div></div><div class="mut" style="font-size:13px">Not tracked</div><div><button class="sw on"><i></i></button></div><div style="text-align:right"><button class="btn btn-sm">Edit</button> <button class="icon">⋯</button></div></div>
+      <div class="row cat" style="opacity:.6"><input type="checkbox"><div style="display:flex;gap:12px;align-items:center"><div class="tile" style="background:#e2e8f0;color:#334155">G</div><div><div class="name">Glucometer Strips (old model)</div><div class="mut">Item <span class="chip slate" style="padding:1px 8px">Deactivated</span></div></div></div><div>Monitoring</div><div style="text-align:right"><div class="name">Rs. 1,600</div></div><div><b>40</b></div><div><button class="sw"><i></i></button></div><div style="text-align:right"><button class="btn btn-sm">Edit</button> <button class="icon">⋯</button></div></div>
+    </div></div>
+    <div class="foot" style="display:flex;justify-content:space-between"><span>13 products · 2 selected</span><span>Rows per page: 25</span></div>
+  </div>
+</section>
+
+<!-- 3. QUOTES -->
+<section class="panel" id="quo">
+  <div class="kpis"><button class="kpi on"><small>Total quotes</small><b>8</b><span>This quarter</span></button><button class="kpi"><small>Pending acceptance</small><b>3</b><span>Waiting for the client</span></button><button class="kpi"><small>Awaiting payment</small><b style="color:#b45309">Rs. 109,100</b><span>2 quotes</span></button><button class="kpi"><small>Collected</small><b style="color:#047857">Rs. 168,100</b><span>3 fully paid</span></button></div>
+  <div class="bar"><div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="field" placeholder="Search quote #, recipient or invoice code…"></div>
+    <div class="seg"><button class="on">All <i>8</i></button><button>Pending <i>3</i></button><button>Awaiting payment <i>2</i></button><button>Paid <i>3</i></button></div><span style="flex:1"></span><button class="btn">Export CSV</button></div>
+  <div class="card"><div class="scroll"><div class="tbl" style="min-width:1020px">
+    <div class="hd quo"><div>Date</div><div>Quote #</div><div>Recipient</div><div style="text-align:right">Total</div><div>Status</div><div style="text-align:right">Next step</div><div></div></div>
+    <!-- PENDING: one green primary button. Click opens confirm dialog summarising what will be created -->
+    <div class="row quo"><div class="mut" style="font-size:13px">Nov 20</div><div><div class="mono">EST-2411-018</div><div class="mut">Product only</div></div><div><div class="name">Mrs. K. Perera</div><div class="mut" style="color:#1d4ed8;font-weight:600">1 rental item</div></div><div style="text-align:right"><div class="name">Rs. 25,000</div><div class="mut">+ Rs. 10,000 deposit</div></div><div><span class="chip slate">Pending acceptance</span></div><div style="text-align:right"><button class="btn btn-sm g">Accept and create rental</button></div><button class="icon" style="width:32px;height:32px">▾</button></div>
+    <!-- AWAITING (expanded): timeline + invoices + secondary actions -->
+    <div class="row quo"><div class="mut" style="font-size:13px">Nov 15</div><div><div class="mono">EST-2411-015</div><div class="mut">Product only</div></div><div><div class="name">S. Jayawardena</div><div class="mut"><span style="color:#b45309;font-weight:600">Walk-in</span> · 2 rental items</div></div><div style="text-align:right"><div class="name">Rs. 30,800</div><div class="mut">+ Rs. 15,000 deposit</div></div><div><span class="chip amber">Awaiting payment (1/2)</span></div><div style="text-align:right"><button class="btn btn-sm p">Record payment</button></div><button class="icon" style="width:32px;height:32px">▴</button></div>
+    <div class="expand" style="padding-left:16px;display:flex;gap:32px;flex-wrap:wrap">
+      <div style="flex:1 1 280px"><div class="lbl">Progress</div><div class="step"><i></i>Quotation created</div><div class="step"><i></i>Sent to client</div><div class="step"><i></i>Accepted and invoiced</div><div class="step todo"><i></i>Fully paid</div></div>
+      <div style="flex:1 1 320px"><div class="lbl">Invoices</div>
+        <div class="card" style="padding:8px 12px;display:flex;justify-content:space-between;margin-bottom:8px"><span><span class="mono" style="font-weight:400;color:#475569">INV-0328</span> <span class="chip green">Paid</span></span><b>Rs. 30,800</b></div>
+        <div class="card" style="padding:8px 12px;display:flex;justify-content:space-between"><span><span class="mono" style="font-weight:400;color:#475569">INV-0329</span> <span class="chip amber">Unpaid</span></span><span><b>Rs. 15,000</b> <button class="btn btn-sm p">Pay</button></span></div></div>
+      <div style="flex:0 0 100%;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm">Download PDF</button><button class="btn btn-sm">Resend via WhatsApp</button><button class="btn btn-sm">Preview invoice contents</button><button class="btn btn-sm">Send payment reminder</button></div></div>
+    <div class="row quo"><div class="mut" style="font-size:13px">Nov 12</div><div><div class="mono">EST-2411-014</div><div class="mut">Product only</div></div><div class="name">Dr. M. Silva</div><div style="text-align:right" class="name">Rs. 12,600</div><div><span class="chip green">Paid</span></div><div style="text-align:right" class="mut">Complete</div><button class="icon" style="width:32px;height:32px">▾</button></div>
+  </div></div><div class="foot">Showing 8 of 8 quotations</div></div>
+</section>
+
+<!-- 4. RENTALS -->
+<section class="panel" id="ren">
+  <div class="seg" style="align-self:flex-start"><button class="on">Agreements</button><button>Refundable deposits</button></div>
+  <div class="kpis"><button class="kpi on"><small>Active agreements</small><b>5</b><span>1 completed or cancelled</span></button><button class="kpi"><small>Ending in 7 days</small><b style="color:#b45309">2</b><span>Plan returns or renewals</span></button><button class="kpi"><small>Overdue returns</small><b style="color:#b91c1c">1</b><span>Past the end date</span></button><button class="kpi"><small>Monthly recurring</small><b style="color:#047857">Rs. 30,500</b><span>From active recurring rentals</span></button></div>
+  <div class="bar"><div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input class="field" placeholder="Search product, unit or recipient…"></div>
+    <div class="seg"><button class="on">All <i>6</i></button><button>Ending in 7 days <i>2</i></button><button>Overdue <i>1</i></button><button>Recurring <i>2</i></button><button>Deposit pending <i>1</i></button></div></div>
+  <div class="card"><div class="scroll"><div class="tbl" style="min-width:1060px">
+    <div class="hd agr"><div>Product / unit</div><div>Recipient</div><div>Billing</div><div style="text-align:right">Rate</div><div>Deposit</div><div>Status</div><div>Next / end</div><div></div></div>
+    <div class="row agr"><div><div class="name">Electric Hospital Bed</div><div class="mut mono" style="font-weight:400">B-004</div></div><div>S. Jayawardena<div class="mut" style="color:#b45309;font-weight:600">Walk-in</div></div><div><span class="chip slate">One-time</span></div><div style="text-align:right" class="name">Rs. 15,000</div><div><span class="chip slate">Pending payment</span></div><div><span class="chip green">Active</span></div><div><div style="font-size:13px;color:#475569">Ends Nov 18</div><span class="days chip red" style="padding:1px 8px">3d overdue</span></div><button class="icon" style="width:32px;height:32px">▴</button></div>
+    <div class="expand" style="padding-left:16px;display:flex;gap:32px;flex-wrap:wrap"><div style="flex:1 1 320px"><div class="lbl">Timeline</div><div class="step"><i></i>Agreement created <span class="mut">Nov 04</span></div><div class="step"><i></i>Invoice paid <span class="mut">Nov 15</span></div><div class="step todo"><i></i>Return was due <span class="mut">Nov 18</span></div></div>
+      <div style="flex:1 1 260px"><div class="lbl">Actions</div><button class="btn btn-sm p">Record payment</button> <button class="btn btn-sm">Mark unit as returned</button> <button class="btn btn-sm">Send reminder</button> <button class="btn btn-sm">Download agreement PDF</button></div></div>
+    <div class="row agr"><div><div class="name">Oxygen Concentrator 5L</div><div class="mut mono" style="font-weight:400">O-01</div></div><div>Lanka Care Home</div><div><span class="chip blue">Monthly</span></div><div style="text-align:right" class="name">Rs. 18,000</div><div><span class="chip amber">Held Rs. 25,000</span></div><div><span class="chip green">Active</span></div><div><div style="font-size:13px;color:#475569">Next invoice Nov 28</div><span class="chip amber" style="padding:1px 8px">In 7d</span></div><button class="icon" style="width:32px;height:32px">▾</button></div>
+  </div></div><div class="foot">Showing 6 of 6 agreements</div></div>
+  <div class="kpi" style="width:240px"><small>Deposits · Total held</small><b style="color:#b45309">Rs. 40,000</b><span>3 deposits held</span></div>
+  <div class="card"><div class="scroll"><div class="tbl" style="min-width:880px"><div class="hd dep"><div>Held since</div><div>Recipient</div><div>Product / unit</div><div style="text-align:right">Amount</div><div>Status</div><div style="text-align:right">Action</div></div>
+    <div class="row dep"><div class="mut" style="font-size:13px">Nov 03</div><div class="name">Mrs. K. Perera</div><div>Electric Hospital Bed<div class="mut">B-001</div></div><div style="text-align:right" class="name">Rs. 10,000</div><div><span class="chip amber">Held</span></div><div style="text-align:right"><button class="btn btn-sm g">Refund</button> <button class="btn btn-sm d">Forfeit</button></div></div></div></div></div>
+</section>
+
+<!-- 5. OVERLAY SPECIMENS (all static here; in the app they are fixed-position with a slate-900/40 backdrop) -->
+<div class="spec"><h3>Product drawer (right, 500px) — unsaved-changes guard, inline errors, live margin</h3>
+  <div class="drawer" style="width:500px"><div class="dh"><b>New product</b><div class="mut" style="font-size:13px">Add a product, rental or service to your catalog.</div></div>
+  <div class="db"><div><span class="flabel">Type</span><div class="seg"><button class="on">Item</button><button>Rental</button><button>Service</button></div><div class="mut" style="margin-top:6px">Sold per unit with a tracked stock quantity.</div></div>
+    <div><span class="flabel">Name</span><input class="field fe"><div class="err">Enter a product name.</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><span class="flabel">Price (Rs.)</span><input class="field" value="9800"></div><div><span class="flabel">Cost price</span><input class="field" value="6400"></div>
+      <div style="grid-column:1/-1;display:flex;justify-content:space-between;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;font-size:13px"><span style="color:#64748b">Estimated margin</span><b style="color:#047857">Rs. 3,400 (35%)</b></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px"><div><b>Show on public catalog</b><div class="mut">Customers can see this product on the website.</div></div><button class="sw on"><i></i></button></div></div>
+  <div class="df"><button class="btn">Cancel</button><span style="flex:1"></span><button class="btn">Save and add another</button><button class="btn p">Create product</button></div></div></div>
+
+<div class="spec"><h3>Composer drawer (right, 700px) — New quotation. “New rental agreement” reuses the Recipient block, then Rental terms</h3>
+  <div class="drawer"><div class="dh"><b>New quotation</b><div class="mut" style="font-size:13px">Add products and services for a client or a walk-in customer.</div></div>
+  <div class="db"><div><b style="font-size:13px">1. Recipient</b><div style="margin:8px 0"><div class="seg"><button class="on">Existing client</button><button>Walk-in customer</button></div></div>
+    <input class="field" placeholder="Search clients by name or mobile…"><div class="pick" style="margin-top:8px"><div class="sel"><b>Mrs. K. Perera</b><span class="mut">077 123 4567</span></div><div><b>Mr. R. Fernando</b><span class="mut">071 882 3390</span></div></div></div>
+    <div><div style="display:flex;justify-content:space-between;margin-bottom:10px"><b style="font-size:13px">2. Line items</b><span><button class="btn btn-sm">Add refundable deposit</button> <button class="btn btn-sm">Add line</button></span></div>
+      <div class="line rent"><div class="l5"><select class="field"><option>Electric Hospital Bed (Rental)</option></select><input class="field" value="1"><input class="field" value="12500"><b style="text-align:right">Rs. 12,500</b><button class="icon">✕</button></div>
+        <div style="border-top:1px solid #dbeafe;padding-top:10px"><b style="font-size:12px;color:#1d4ed8">Rental terms for this item</b><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><select class="field"><option>Auto-assign next free unit</option></select><select class="field"><option>One-time (fixed period)</option></select><input class="field" value="2026-11-21"><div><input class="field fe"><div class="err">End date is required for one-time rentals.</div></div></div></div></div></div>
+    <div class="sum"><div><span>Items and services</span><b>Rs. 12,500</b></div><div><span>Refundable deposits</span><b>Rs. 0</b></div><div><span>Due once accepted</span><span>Rs. 12,500</span></div></div></div>
+  <div class="df"><button class="btn">Cancel</button><span style="flex:1"></span><button class="btn p">Create quotation</button></div></div></div>
+
+<div class="spec"><h3>Dialogs and toast</h3><div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
+  <div class="dialog"><b style="font-size:16px">Accept quotation EST-2411-018?</b><p style="color:#475569;line-height:1.5">This will create 2 invoices and 1 rental agreement for Mrs. K. Perera, totalling Rs. 35,000.</p><div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn">Cancel</button><button class="btn g">Accept and create rental</button></div></div>
+  <div class="dialog"><b style="font-size:16px">Discard unsaved changes?</b><p style="color:#475569;line-height:1.5">You have edits in this form that have not been saved.</p><div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn">Keep editing</button><button class="btn dp">Discard changes</button></div></div>
+  <div><div class="toast">Glucometer Strips deactivated <a href="#">Undo</a> ✕</div><p class="mut" style="max-width:300px">Toasts last 6s, bottom-centre, slate-900. Undo only on reversible actions (deactivate, refund, forfeit).</p></div></div></div>
+
+<div class="spec"><h3>Small modals (620px): Purchase history · Invoice contents · Change category · Add unit · Bulk add units · Image crop</h3>
+  <div class="mut" style="font-size:13px;line-height:1.6;max-width:760px">Same shell for all: header (title + subtitle + close), body, footer (Close/Cancel + primary). History = 6-col table (Date, Buyer, Quote, Qty, Amount, Invoice chip). Invoice contents = one card per invoice (code + chip + amount, then line rows; deposit invoice shows “Refundable deposit (held, not income)”). Bulk add units = Prefix / From / To inputs + live preview “Adds 6 units as Available · B-007 to B-012” (limit 1–50). Image crop = 4:3 frame on slate-900 with a zoom slider 100–250%.</div></div>
+
+</div>
+<script>
+var tabs=document.querySelectorAll('.tab');tabs.forEach(function(t){t.onclick=function(){tabs.forEach(function(x){x.classList.remove('on')});t.classList.add('on');document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('on')});document.getElementById(t.dataset.t).classList.add('on');document.getElementById('primary').textContent='+ '+t.dataset.p;};});
+document.querySelectorAll('.seg button').forEach(function(b){b.onclick=function(){b.parentNode.querySelectorAll('button').forEach(function(x){x.classList.remove('on')});b.classList.add('on');};});
+</script></body></html>

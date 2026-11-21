@@ -1541,15 +1541,21 @@ async function runMigration() {
   // database that already has duplicate PRODUCT invoices (from the bug this
   // guards against) would otherwise fail this migration and block startup —
   // those duplicates must be reconciled manually before this index can apply.
+  // Since product lines are invoiced one by one (see quoteController.billProductLine) a quotation
+  // can have many PRODUCT invoices, one per line (line_item_id set; idx_invoices_line_item_unique
+  // already allows only one invoice per line). Only the older combined invoice, which covers every
+  // non-rental line and has no line_item_id, stays limited to one per quotation.
+  await db.query(`DROP INDEX IF EXISTS idx_invoices_product_quote_unique`);
+  await db.query(`DROP INDEX IF EXISTS idx_invoices_one_product_invoice_per_quote`);
   try {
     await db.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_product_quote_unique
-      ON invoices(quote_id) WHERE category = 'PRODUCT'
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_one_combined_product_invoice_per_quote
+      ON invoices(quote_id) WHERE category = 'PRODUCT' AND line_item_id IS NULL AND quote_id IS NOT NULL
     `);
   } catch (err) {
     console.error(
-      'Could not create idx_invoices_product_quote_unique — likely existing duplicate PRODUCT invoices for the same quote_id. ' +
-      'Find and reconcile them (SELECT quote_id, COUNT(*) FROM invoices WHERE category = \'PRODUCT\' GROUP BY quote_id HAVING COUNT(*) > 1), then restart to retry this index.',
+      'Could not create idx_invoices_one_combined_product_invoice_per_quote — some quote already has more than one combined PRODUCT invoice. ' +
+      'Find and reconcile them (SELECT quote_id, COUNT(*) FROM invoices WHERE category = \'PRODUCT\' AND line_item_id IS NULL GROUP BY quote_id HAVING COUNT(*) > 1), then restart to retry this index.',
       err.message
     );
   }
@@ -1607,18 +1613,8 @@ async function runMigration() {
   } catch (err) {
     console.error('Could not create the duplicate line-item invoice guard trigger:', err.message);
   }
-  try {
-    await db.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_one_product_invoice_per_quote
-      ON invoices(quote_id) WHERE category = 'PRODUCT' AND quote_id IS NOT NULL
-    `);
-  } catch (err) {
-    console.error(
-      'Could not create idx_invoices_one_product_invoice_per_quote — some quote already has more than one PRODUCT invoice. ' +
-      "Reconcile them (SELECT quote_id, COUNT(*) FROM invoices WHERE category = 'PRODUCT' GROUP BY quote_id HAVING COUNT(*) > 1), then restart to retry.",
-      err.message
-    );
-  }
+  // (The one-PRODUCT-invoice-per-quotation index that used to be created here is replaced by
+  // idx_invoices_one_combined_product_invoice_per_quote above.)
 
   // A combined Invoice document for a SERVICE quote (and its linked PRODUCT
   // quote, if any — e.g. daily-rate charges + a rental + its deposit) — one
@@ -2496,6 +2492,28 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_booking_daily_invoices_status
     ON booking_daily_invoices(status);
+  `);
+
+  // Per-day payment tracking for care invoices. A booking's payments are one pool; this table
+  // records how much of it settles each individual day row (a SHIFT_BASED slot, a LIVE_IN
+  // first/last day for one assignment, ...). Positive rows allocate, negative rows release
+  // (revoke, correction, voided payment), so history is kept and a day's paid amount is the SUM.
+  // See services/dayAllocation.js.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS daily_invoice_payments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      daily_invoice_id UUID NOT NULL REFERENCES booking_daily_invoices(daily_invoice_id) ON DELETE CASCADE,
+      transaction_id UUID REFERENCES transactions(transaction_id) ON DELETE SET NULL,
+      amount NUMERIC(12,2) NOT NULL,
+      source VARCHAR(20) NOT NULL DEFAULT 'AUTO',
+      created_by UUID REFERENCES users(user_id),
+      note TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_daily_invoice_payments_invoice
+    ON daily_invoice_payments(daily_invoice_id);
   `);
 
   // =========================================================

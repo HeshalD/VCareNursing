@@ -3,6 +3,8 @@
 // and the manual attendance/invoice confirmation endpoints.
 
 const { bookingChargeSql, bookingSettledSql } = require('./clientFinancials');
+const { getBookingFinancialTotals } = require('./bookingSettlement');
+const { drawWalletForBooking } = require('./walletService');
 
 // ─── Billing Engine (per-booking client charge calculation) ───────────────────
 
@@ -238,7 +240,14 @@ const reverseStaffSalary = async (client, { staff_profile_id, booking_id, amount
 // balance without mutating the original SERVICE_INVOICE DEBIT row. Returns null (no
 // transaction) for NO_REFUND. Must be called within an open client transaction.
 
-const reverseServiceInvoice = async (client, { booking_id, client_id, amount, notes, settlementAction = 'WALLET_REFUND' }) => {
+// WALLET_REFUND only puts back in the wallet what the booking does NOT still owe.
+// The reversal frees the revoked day's payment; if the booking has other unpaid
+// invoices, that freed money pays them first (drawn straight back out of the wallet
+// as an ordinary "Auto-applied from client wallet balance" payment) and only the
+// excess stays in the wallet. Without this the same money was counted twice — once
+// as settling the unpaid invoice, once as spendable wallet cash (BK-00322).
+// Pass an `outcome` object to learn the split: { refundedToWallet, appliedToUnpaid }.
+const reverseServiceInvoice = async (client, { booking_id, client_id, amount, notes, settlementAction = 'WALLET_REFUND', outcome = null }) => {
   if (settlementAction === 'NO_REFUND') {
     return null;
   }
@@ -284,10 +293,35 @@ const reverseServiceInvoice = async (client, { booking_id, client_id, amount, no
     // The day was paid for out of this booking's earmark, so returning the money
     // to the wallet also restores its reservation — otherwise it would silently
     // become unearmarked and be spendable by the client's other bookings.
-    await client.query(
-      `UPDATE bookings SET wallet_earmarked = COALESCE(wallet_earmarked, 0) + $1 WHERE booking_id = $2`,
+    const earmarkRes = await client.query(
+      `UPDATE bookings SET wallet_earmarked = COALESCE(wallet_earmarked, 0) + $1 WHERE booking_id = $2
+       RETURNING amount_paid`,
       [amount, booking_id]
     );
+
+    // What the booking still owes once this day's charge and payment are netted out
+    // (same netting the settlement screens use). Only the money this reversal just
+    // freed may be used for it — never other wallet funds.
+    const totals = await getBookingFinancialTotals(client, booking_id);
+    const stillOwed = totals.total_invoiced - totals.total_paid;
+    const toApply = Math.min(stillOwed, Number(amount));
+    let applied = 0;
+    if (toApply > 0.005) {
+      applied = await drawWalletForBooking(client, { booking_id, client_id, maxAmount: toApply });
+      // drawWalletForBooking recomputes amount_paid from payment tracking, which would
+      // undo the decrement above; restore the intended figure.
+      await client.query(
+        `UPDATE bookings SET amount_paid = $1 WHERE booking_id = $2`,
+        [Number(earmarkRes.rows[0].amount_paid) + applied, booking_id]
+      );
+    }
+    if (outcome) {
+      outcome.appliedToUnpaid = applied;
+      outcome.refundedToWallet = Number(amount) - applied;
+    }
+  } else if (outcome) {
+    outcome.appliedToUnpaid = 0;
+    outcome.refundedToWallet = 0;
   }
 
   return result.rows[0].transaction_id;

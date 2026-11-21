@@ -9,6 +9,7 @@ const { settleWalletForDeletedTransactions } = require('../services/walletLedger
 const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew, sendCandidateProfile } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
+const { reconcileBookingDays, releaseDay } = require('../services/dayAllocation');
 const { createServiceInvoice, calculateShiftSlotCharge, checkAndFlagBookingOverdue, reverseStaffSalary, reverseServiceInvoice } = require('../services/billingService');
 const {
     getBookingFinancialTotals,
@@ -45,6 +46,7 @@ const { chargeRegistrationFeeForBooking } = require('../services/registrationFee
 const { warnIfRegistrationIncomplete, blockIfRegistrationMissing } = require('../services/registrationFeeGuard');
 const { applyRegistrationChoice } = require('../services/regFeeAdminAction');
 const { isServiceDay } = require('../services/repeatDays');
+const { previewStartDateChange, applyStartDateChange } = require('../services/bookingStartDate');
 const { FORCE_MANUAL_FOR_SWAP_SQL, restoreAutoInvoicingIfSwapResolved } = require('../services/invoicingMode');
 
 function extractActorRole(role) {
@@ -2265,6 +2267,9 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
                     RETURNING *`,
                     [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName]
                 );
+
+    // Pin down which payments settle which day (the draw above may already have paid it).
+    if (approve) await reconcileBookingDays(client, booking_id);
 
     return { invoice: result.rows[0], finalAmount };
 }
@@ -5241,8 +5246,10 @@ const reverseDaysAfterAssignmentEnd = async (client, {
                  WHERE daily_invoice_id = $5`,
                 [reversalTransactionId, userId, userName, pauseReason, inv.daily_invoice_id]
             );
+            await releaseDay(client, inv.daily_invoice_id, 'Day revoked');
             invoices.push({ service_date: inv.service_date, action: 'REFUNDED', amount });
         }
+        await reconcileBookingDays(client, booking_id);
     }
 
     return { salaries, invoices };
@@ -6205,6 +6212,147 @@ exports.hardDeleteBooking = async (req, res) => {
         await client.query('ROLLBACK');
         console.error('hardDeleteBooking error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to delete booking.' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/start-date/preview?new_start_date=YYYY-MM-DD
+ * @desc    Read-only: what moving a SHIFT_BASED booking's start date earlier would change,
+ *          and anything that blocks it. See services/bookingStartDate.js.
+ * @access  Private (BOOKING_CHANGE_START_DATE)
+ */
+exports.previewStartDate = async (req, res) => {
+    try {
+        const data = await previewStartDateChange(db, {
+            booking_id: req.params.booking_id,
+            new_start_date: req.query.new_start_date,
+        });
+        res.status(200).json({ status: 'success', data });
+    } catch (error) {
+        if (error.statusCode) return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        console.error('previewStartDate error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to check the start date change' });
+    }
+};
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/start-date
+ * @desc    Moves a SHIFT_BASED or LIVE_IN booking's start date earlier (booking, first pattern
+ *          and first assignments move together). Creates no salary or attendance. For LIVE_IN
+ *          each added service day gets a pending invoice row, and the admin may invoice some
+ *          of them in the same transaction via `added_days`.
+ * @access  Private (BOOKING_CHANGE_START_DATE; + BOOKING_CONFIRM_DAILY_INVOICE to invoice days)
+ * @body    new_start_date, expected_old_start_date, reason, added_days? (LIVE_IN)
+ */
+exports.changeStartDate = async (req, res) => {
+    const { booking_id } = req.params;
+    const { new_start_date, expected_old_start_date, reason } = req.body || {};
+    // LIVE_IN only. Optional per-day choice for the added service days:
+    //   [{ service_date, invoice: boolean, amount? }]
+    // invoice=true bills that day now (through the normal day-invoice path); anything else
+    // is left as a pending day to decide on the care timeline. Omit it to leave all pending.
+    const addedDays = req.body?.added_days;
+
+    if (!reason || reason.trim().length < 3) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required' });
+    }
+    if (!expected_old_start_date) {
+        return res.status(400).json({ status: 'error', message: 'expected_old_start_date is required' });
+    }
+    if (addedDays !== undefined && !Array.isArray(addedDays)) {
+        return res.status(400).json({ status: 'error', message: 'added_days must be a list' });
+    }
+    const invoiceNow = (addedDays || []).filter((d) => d && d.invoice === true);
+    if (invoiceNow.length > 0 && !(await userHasPermission(req.user, 'BOOKING_CONFIRM_DAILY_INVOICE'))) {
+        return res.status(403).json({ status: 'error', message: 'You need the BOOKING_CONFIRM_DAILY_INVOICE permission to invoice the added days.' });
+    }
+
+    const client = await db.pool.connect();
+    const invoicedDays = [];
+    try {
+        await client.query('BEGIN');
+        const result = await applyStartDateChange(client, { booking_id, new_start_date, expected_old_start_date });
+
+        if (addedDays !== undefined) {
+            if (result.booking.service_model !== 'LIVE_IN') {
+                throw Object.assign(new Error('Invoicing the added days applies to live-in bookings only.'), { statusCode: 400 });
+            }
+            // The list must name exactly the added service days — no extras, no repeats.
+            const expected = result.added_days_detail.filter((d) => d.is_service_day).map((d) => d.service_date);
+            const sent = addedDays.map((d) => String(d?.service_date || '').slice(0, 10));
+            if (new Set(sent).size !== sent.length || sent.length !== expected.length || !expected.every((d) => sent.includes(d))) {
+                throw Object.assign(new Error('added_days must list each added service day exactly once.'), { statusCode: 400 });
+            }
+
+            const actorName = await getActorName(req.user?.user_id);
+            // Oldest first, so the client's wallet is applied in date order.
+            const ordered = invoiceNow
+                .map((d) => ({ service_date: String(d.service_date).slice(0, 10), amount: d.amount }))
+                .sort((a, b) => a.service_date.localeCompare(b.service_date));
+            for (const day of ordered) {
+                const amount = day.amount === undefined || day.amount === null || day.amount === ''
+                    ? result.booking.daily_rate
+                    : Number(day.amount);
+                const { finalAmount } = await applyInvoiceDecision(client, {
+                    booking_id, service_date: day.service_date, approve: true, amount,
+                    deciderUserId: req.user?.user_id, deciderName: actorName,
+                });
+                invoicedDays.push({ service_date: day.service_date, amount: finalAmount });
+            }
+        }
+
+        await client.query('COMMIT');
+
+        const actorName = await getActorName(req.user?.user_id);
+        for (const d of invoicedDays) {
+            logActivity({
+                actorUserId: req.user?.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user?.role),
+                actionType: 'DAILY_INVOICE_CONFIRMED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { service_date: d.service_date, amount: d.amount, shift_slot_id: null, via: 'START_DATE_CORRECTION' },
+            }).catch((err) => console.error('Activity log failed (changeStartDate invoice):', err.message));
+        }
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorName,
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'BOOKING_START_DATE_CHANGED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: {
+                booking_id,
+                booking_code: result.booking.booking_code,
+                from: result.booking.current_start_date,
+                to: new_start_date,
+                reason: reason.trim(),
+                patterns_moved: result.changes.patterns.map((p) => p.pattern_id),
+                assignments_moved: result.changes.assignments.map((a) => ({ assignment_id: a.assignment_id, staff_code: a.staff_code })),
+                days_added: result.days_added,
+                days_left_pending: (result.seeded_dates || []).filter((d) => !invoicedDays.some((i) => i.service_date === d)),
+                days_invoiced: invoicedDays,
+            },
+        }).catch((err) => console.error('Activity log failed (changeStartDate):', err.message));
+
+        const pendingCount = (result.seeded_dates || []).length - invoicedDays.length;
+        const message = result.booking.service_model === 'LIVE_IN'
+            ? `Start date moved to ${new_start_date}. ${invoicedDays.length} day(s) invoiced now, ${Math.max(pendingCount, 0)} left to decide on the care timeline. Staff pay for the added days is decided on the care timeline.`
+            : `Start date moved to ${new_start_date}. Confirm the ${result.days_added.length} added day(s) from the care timeline.`;
+
+        res.status(200).json({
+            status: 'success',
+            message,
+            data: { start_date: new_start_date, days_added: result.days_added, days_invoiced: invoicedDays },
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        console.error('changeStartDate error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to change the start date' });
     } finally {
         client.release();
     }

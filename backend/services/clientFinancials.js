@@ -5,6 +5,7 @@
 // built from exactly the same rules as the numbers they explain.
 
 const db = require('../config/db');
+const { TIER_SQL, TIERS } = require('./registrationTier');
 
 // Single source of truth for a client's Payments Made / Total Invoiced / Overdue.
 //  - Payments Made = real money the client handed over (cash, transfer, cheque, ...). Wallet
@@ -38,7 +39,21 @@ const bookingChargeSql = (alias = '') => {
 };
 const bookingSettledSql = (alias = '') => {
   const p = alias ? `${alias}.` : '';
-  return `(${p}transaction_type = 'CREDIT' AND COALESCE(${p}category::text, '') <> 'STAFF_SALARY')`;
+  return `(${p}transaction_type = 'CREDIT' AND COALESCE(${p}category::text, '') <> 'STAFF_SALARY' AND NOT ${refundedReversalSql(alias)})`;
+};
+
+// The "Reversal of …" credit a revoked day leaves behind (billingService.reverseServiceInvoice).
+// It is NOT a payment: it cancels the day's charge AND returns the payment that covered it (to
+// the wallet, or out of the system for a bank refund), and those two cancel each other. So the
+// booking's owed amount is simply charges − payments, ignoring both the cancelled charge's
+// offset and the returned payment — i.e. this credit must not count as settled. Counting it did:
+// a booking with another unpaid invoice read as fully paid while the returned money also sat in
+// the wallet (BK-00322 — the same Rs. counted twice). "(booking extended)" reversals are the
+// exception: the payment stays on the booking to fund the extra day, so they keep their old
+// reading. Pre-existing "Correction for …" credits are different rows and stay counted.
+const refundedReversalSql = (alias = '') => {
+  const p = alias ? `${alias}.` : '';
+  return `(${p}category::text = 'WALLET_REFUND' AND COALESCE(${p}notes, '') LIKE 'Reversal of %' AND COALESCE(${p}notes, '') NOT LIKE '%(booking extended)%')`;
 };
 
 // A product/rental invoice that is not part of a booking (a standalone sale, or a quotation's
@@ -75,7 +90,12 @@ async function queryUnbookedInvoiceRows(clientId) {
 // "overdue" on, so it counts here: unlinked fee debits minus unlinked fee credits. Every kind of
 // payment settles it — cash, transfer, wallet draw — because this is about what is still owed, not
 // about Payments Made. A WAIVED fee owes nothing. Never negative.
+// Registration TIER (services/registrationTier.js) decides whether it is OVERDUE yet: a client who
+// has not started any booking (tier INACTIVE) has been invoiced but nothing is due from them, so the
+// amount is reported as `notYetDue` and left out of Overdue. It is still in Total Invoiced.
 async function queryRegistrationOutstanding(clientId) {
+  const tierRes = await db.query(`SELECT ${TIER_SQL} AS tier FROM client_profiles cp WHERE cp.client_profile_id = $1`, [clientId]);
+  const tier = tierRes.rows[0]?.tier || TIERS.INACTIVE;
   const result = await db.query(
     `SELECT cp.reg_fee_status,
             COALESCE(SUM(t.amount) FILTER (WHERE t.transaction_type = 'DEBIT'  AND t.booking_id IS NULL), 0) AS unlinked_debit,
@@ -87,12 +107,17 @@ async function queryRegistrationOutstanding(clientId) {
     [clientId]
   );
   const row = result.rows[0];
-  if (!row) return { outstanding: 0, unlinkedDebit: 0, unlinkedCredit: 0, waived: false };
+  if (!row) return { outstanding: 0, notYetDue: 0, tier, unlinkedDebit: 0, unlinkedCredit: 0, waived: false };
   const unlinkedDebit = parseFloat(row.unlinked_debit);
   const unlinkedCredit = parseFloat(row.unlinked_credit);
   const waived = row.reg_fee_status === 'WAIVED';
-  const outstanding = waived ? 0 : Math.max(Math.round((unlinkedDebit - unlinkedCredit) * 100) / 100, 0);
-  return { outstanding, unlinkedDebit, unlinkedCredit, waived };
+  const unpaid = waived ? 0 : Math.max(Math.round((unlinkedDebit - unlinkedCredit) * 100) / 100, 0);
+  const overdueNow = tier !== TIERS.INACTIVE;
+  return {
+    outstanding: overdueNow ? unpaid : 0,
+    notYetDue: overdueNow ? 0 : unpaid,
+    tier, unlinkedDebit, unlinkedCredit, waived,
+  };
 }
 
 async function getClientFinancialTotals(clientId) {
@@ -248,6 +273,7 @@ module.exports = {
   BOOKING_NON_CHARGE_DEBIT_CATEGORIES,
   bookingChargeSql,
   bookingSettledSql,
+  refundedReversalSql,
   unbookedDueInvoiceSql,
   invoiceUnpaidSql,
   queryUnbookedInvoiceRows,

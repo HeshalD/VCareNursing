@@ -94,9 +94,25 @@ function buildSections(r, creator = { type: 'CLIENT' }) {
     .filter(([, rows]) => rows.length > 0);
 }
 
+// Plain-text version of the request laid out for pasting straight into WhatsApp:
+// *bold* headings, one "Label: value" per line, no HTML. Shown in the email inside a
+// pre-wrap box so selecting + copying it keeps the line breaks exactly.
+function buildWhatsappText(r, sections) {
+  const head = `*New service request${r.service_request_code ? ` ${r.service_request_code}` : ''}*`;
+  const body = sections.map(([title, rows]) => [
+    `*${title}*`,
+    ...rows.map(([l, v, href]) => {
+      const isLink = href && !String(href).startsWith('tel:') && !String(href).startsWith('mailto:');
+      return `${l}: ${isLink ? href : String(v).trim()}`;
+    }),
+  ].join('\n'));
+  return [head, ...body].join('\n\n');
+}
+
 function buildEmail(r, creator = { type: 'CLIENT' }) {
   const isStaff = creator.type === 'STAFF';
   const sections = buildSections(r, creator);
+  const whatsappText = buildWhatsappText(r, sections);
   const intro = isStaff
     ? `A new service request was created by ${creator.name || 'an internal team member'} (internal team member).`
     : 'A new service request was submitted by a client online. It is an unassigned service request.';
@@ -108,6 +124,9 @@ function buildEmail(r, creator = { type: 'CLIENT' }) {
     '',
     ...sections.flatMap(([title, rows]) => [`${title.toUpperCase()}`, ...rows.map(([l, v, href]) => `  ${l}: ${v}${href && !String(href).startsWith('tel:') && !String(href).startsWith('mailto:') ? ` (${href})` : ''}`), '']),
     link ? `Open in the admin dashboard: ${link}` : '',
+    '',
+    '----- COPY FOR WHATSAPP -----',
+    whatsappText,
   ].join('\n');
 
   const sectionHtml = sections.map(([title, rows]) => `
@@ -130,6 +149,9 @@ function buildEmail(r, creator = { type: 'CLIENT' }) {
     <tr><td style="padding:0 24px 24px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${sectionHtml}</table>
       ${link ? `<div style="margin-top:24px;"><a href="${esc(link)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:8px;">Open in admin dashboard</a></div>` : ''}
+      <div style="margin-top:28px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#16a34a;">Copy for WhatsApp</div>
+      <div style="margin-top:4px;font-size:12px;color:#64748b;">Select the box below, copy, and paste it into WhatsApp as is.</div>
+      <div style="margin-top:8px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.55;color:#0f172a;white-space:pre-wrap;word-break:break-word;">${esc(whatsappText)}</div>
     </td></tr>
   </table>
   <p style="text-align:center;font-size:11px;color:#94a3b8;margin-top:14px;">Sent automatically whenever a service request is created.</p>

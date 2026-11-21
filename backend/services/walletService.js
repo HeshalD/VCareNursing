@@ -82,13 +82,17 @@ const creditClientWallet = async (client, {
   return txResult.rows[0].transaction_id;
 };
 
-// Draws up to maxAmount from the client's wallet to fund a booking's amount_paid,
-// taking this booking's own earmark first and then any unearmarked balance —
-// never another booking's earmark (see the note at the top of this file). Returns
-// the amount actually drawn (0 if nothing was available). Locks the wallet row
-// FOR UPDATE so concurrent draws can't double-spend the same balance.
-const drawWalletForBooking = async (client, { booking_id, client_id, maxAmount, verified_by = null }) => {
-  if (!(maxAmount > 0)) return 0;
+// Takes money out of the client's wallet and releases the matching reservation(s). The one place
+// that decides WHICH money is spent:
+//   1. the target booking's own reservation, 2. unreserved money, then — only when the admin
+//   explicitly allows it (allowOtherEarmarks) — 3. other bookings' reservations, largest first.
+// Without the override the old rule holds: a prepayment for booking A is never silently consumed
+// by booking B. With it, the client's money is treated as one pool; the bookings it was reserved
+// for simply have less prepaid cover afterwards. Locks the wallet row FOR UPDATE so concurrent
+// draws can't double-spend. Returns the breakdown; drawn is 0 when nothing was available.
+const takeFromWallet = async (client, { client_id, booking_id = null, amount, allowOtherEarmarks = false }) => {
+  const none = { drawn: 0, fromOwn: 0, fromUnreserved: 0, fromOthers: 0, others: [] };
+  if (!(amount > 0)) return none;
 
   const walletRes = await client.query(
     `SELECT COALESCE(wallet_balance, 0) as wallet_balance FROM client_profiles WHERE client_profile_id = $1 FOR UPDATE`,
@@ -96,43 +100,84 @@ const drawWalletForBooking = async (client, { booking_id, client_id, maxAmount, 
   );
   const walletBalance = parseFloat(walletRes.rows[0]?.wallet_balance || 0);
 
-  const ownRes = await client.query(
-    `SELECT COALESCE(wallet_earmarked, 0) AS own FROM bookings WHERE booking_id = $1 FOR UPDATE`,
-    [booking_id]
-  );
-  const ownEarmark = parseFloat(ownRes.rows[0]?.own || 0);
+  let ownEarmark = 0;
+  if (booking_id) {
+    const ownRes = await client.query(
+      `SELECT COALESCE(wallet_earmarked, 0) AS own FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+      [booking_id]
+    );
+    ownEarmark = parseFloat(ownRes.rows[0]?.own || 0);
+  }
 
   // Anything in the wallet not reserved by any booking is fair game for this one.
   const earmarkedTotal = await getEarmarkedTotal(client, client_id);
-  const unearmarked = Math.max(0, walletBalance - earmarkedTotal);
+  const unreserved = Math.max(0, walletBalance - earmarkedTotal);
 
-  const available = Math.min(walletBalance, ownEarmark + unearmarked);
-  const drawAmount = Math.min(maxAmount, available);
-  if (drawAmount <= 0.005) return 0;
+  const available = allowOtherEarmarks ? walletBalance : Math.min(walletBalance, ownEarmark + unreserved);
+  const drawn = Math.round(Math.min(amount, available) * 100) / 100;
+  if (drawn <= 0.005) return none;
 
-  // Consume the booking's own reservation first so unearmarked money stays
-  // available for whatever needs it next.
-  const fromEarmark = Math.min(drawAmount, ownEarmark);
+  const fromOwn = Math.min(drawn, ownEarmark);
+  const fromUnreserved = Math.min(drawn - fromOwn, unreserved);
+  const fromOthers = Math.round((drawn - fromOwn - fromUnreserved) * 100) / 100;
 
   await client.query(
     `UPDATE client_profiles SET wallet_balance = wallet_balance - $1 WHERE client_profile_id = $2`,
-    [drawAmount, client_id]
+    [drawn, client_id]
   );
 
-  if (fromEarmark > 0) {
+  // Consume the booking's own reservation first so unreserved money stays available for whatever
+  // needs it next.
+  if (fromOwn > 0) {
     await client.query(
       `UPDATE bookings SET wallet_earmarked = GREATEST(COALESCE(wallet_earmarked, 0) - $1, 0) WHERE booking_id = $2`,
-      [fromEarmark, booking_id]
+      [fromOwn, booking_id]
     );
   }
+
+  const others = [];
+  if (fromOthers > 0.005) {
+    const otherRes = await client.query(
+      `SELECT booking_id, booking_code, wallet_earmarked FROM bookings
+       WHERE client_id = $1 AND COALESCE(wallet_earmarked, 0) > 0 AND booking_id IS DISTINCT FROM $2
+       ORDER BY wallet_earmarked DESC, booking_id FOR UPDATE`,
+      [client_id, booking_id]
+    );
+    let left = fromOthers;
+    for (const o of otherRes.rows) {
+      if (left <= 0.005) break;
+      const take = Math.round(Math.min(left, parseFloat(o.wallet_earmarked)) * 100) / 100;
+      await client.query(
+        `UPDATE bookings SET wallet_earmarked = GREATEST(COALESCE(wallet_earmarked, 0) - $1, 0) WHERE booking_id = $2`,
+        [take, o.booking_id]
+      );
+      others.push({ booking_id: o.booking_id, booking_code: o.booking_code, amount: take });
+      left = Math.round((left - take) * 100) / 100;
+    }
+  }
+
+  return { drawn, fromOwn, fromUnreserved, fromOthers, others };
+};
+
+// Draws up to maxAmount from the client's wallet to fund a booking's amount_paid (see
+// takeFromWallet for which money is used). Returns the amount actually drawn (0 if nothing was
+// available). Pass `outcome` to receive the full breakdown.
+const drawWalletForBooking = async (client, { booking_id, client_id, maxAmount, verified_by = null, allowOtherEarmarks = false, outcome = null, notes = null }) => {
+  if (!(maxAmount > 0)) return 0;
+
+  const taken = await takeFromWallet(client, { client_id, booking_id, amount: maxAmount, allowOtherEarmarks });
+  if (outcome) Object.assign(outcome, taken);
+  const drawAmount = taken.drawn;
+  if (drawAmount <= 0.005) return 0;
 
   await client.query(
     `INSERT INTO booking_payment_tracking (
        booking_id, client_id, amount_received, payment_method, notes,
        status, verified_at, verified_by
-     ) VALUES ($1, $2, $3, 'WALLET', 'Auto-applied from client wallet balance', 'VERIFIED', NOW(), $4)`,
-    [booking_id, client_id, drawAmount, verified_by]
+     ) VALUES ($1, $2, $3, 'WALLET', $5, 'VERIFIED', NOW(), $4)`,
+    [booking_id, client_id, drawAmount, verified_by, notes || 'Auto-applied from client wallet balance']
   );
+
 
   await client.query(
     `UPDATE bookings
@@ -147,13 +192,15 @@ const drawWalletForBooking = async (client, { booking_id, client_id, maxAmount, 
     [booking_id]
   );
 
-  await client.query(
+  const txRes = await client.query(
     `INSERT INTO transactions (
        client_id, booking_id, category, transaction_type, amount, payment_method,
        status, notes, verified_by
-     ) VALUES ($1, $2, 'BOOKING_PAYMENT', 'CREDIT', $3, 'WALLET', 'COMPLETED', 'Auto-applied from client wallet balance', $4)`,
-    [client_id, booking_id, drawAmount, verified_by]
+     ) VALUES ($1, $2, 'BOOKING_PAYMENT', 'CREDIT', $3, 'WALLET', 'COMPLETED', $5, $4)
+     RETURNING transaction_id`,
+    [client_id, booking_id, drawAmount, verified_by, notes || 'Auto-applied from client wallet balance']
   );
+  if (outcome) outcome.transaction_id = txRes.rows[0].transaction_id;
 
   return drawAmount;
 };
@@ -225,6 +272,7 @@ const settleQuoteBookingFromWallet = async (client, { quote_id, client_id, verif
 module.exports = {
   creditClientWallet,
   drawWalletForBooking,
+  takeFromWallet,
   getEarmarkedTotal,
   settleBookingOutstandingFromWallet,
   settleQuoteBookingFromWallet,

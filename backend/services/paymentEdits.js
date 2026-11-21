@@ -28,6 +28,7 @@
 const db = require('../config/db');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { creditClientWallet } = require('./walletService');
+const { reconcileBookingDays } = require('./dayAllocation');
 const { generateReceiptPdf } = require('./receiptService');
 
 class PaymentEditError extends Error {
@@ -182,8 +183,8 @@ const adjustEarmark = (client, bookingId, delta) => {
   );
 };
 
-const recomputeBookingPaid = (client, bookingId) =>
-  client.query(
+const recomputeBookingPaid = async (client, bookingId) => {
+  const res = await client.query(
     `UPDATE bookings
      SET amount_paid = (
        SELECT COALESCE(SUM(amount_received), 0) FROM booking_payment_tracking
@@ -192,6 +193,10 @@ const recomputeBookingPaid = (client, bookingId) =>
      WHERE booking_id = $1`,
     [bookingId]
   );
+  // A payment changed: keep each care day's paid amount in step with the booking's payments.
+  await reconcileBookingDays(client, bookingId);
+  return res;
+};
 
 // After a credit was reduced/removed the wallet can be negative: the money was already
 // spent paying invoices. Un-pay the most recent wallet draw-downs (newest first, across

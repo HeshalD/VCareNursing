@@ -17,7 +17,7 @@ import AssignCoordinatorModal from './AssignCoordinatorModal';
 import CitySelect from '../../../components/common/CitySelect';
 import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
 import apiClient from '../../../api/api';
-import DateInput, { todayISO } from '../../../components/common/DateInput';
+import DateInput, { todayISO, daysAgoISO, MAX_BACKDATE_DAYS } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
@@ -1217,7 +1217,10 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                           <div>
                             <label className={labelCls}>Preferred Start Date</label>
-                            <DateInput value={editForm.start_date} onChange={e => set('start_date')(e.target.value)} min={todayISO()} className={inputCls} />
+                            <DateInput value={editForm.start_date} onChange={e => set('start_date')(e.target.value)} min={daysAgoISO(MAX_BACKDATE_DAYS)} className={inputCls} />
+                            {editForm.start_date && editForm.start_date < todayISO() && (
+                              <p className="mt-1 text-xs text-amber-700">This date is in the past. Care already given will need its invoice and salary confirmed day by day once the booking exists.</p>
+                            )}
                           </div>
                           <div>
                             <label className={labelCls}>Requested End Date</label>

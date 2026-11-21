@@ -75,6 +75,7 @@ import EditedAmountBadge from '../components/EditedAmountBadge';
 import { PreviewButton } from '../invoices/InvoicePreviewModal';
 import { invoicePreview } from '../invoices/invoicePreviewSources';
 import ClientInvoicesPanel from './ClientInvoicesPanel';
+import WalletPayModal from './WalletPayModal';
 import RegistrationAuditPanel from './RegistrationAuditPanel';
 import useInvoiceAmountEditor from './useInvoiceAmountEditor';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -981,6 +982,10 @@ const ClientDetailPage = () => {
   };
   const [openInvoiceEdit, invoiceEditModal] = useInvoiceAmountEditor({ clientId, onSaved: refreshAfterInvoiceEdit });
 
+  // Pay unpaid invoices out of the client's wallet (Invoices tab).
+  const canPayFromWallet = hasPermission('INVOICE_PAY_FROM_WALLET');
+  const [walletPayTargets, setWalletPayTargets] = useState(null);
+
   const handleSaveRegFeeAmountEdit = async () => {
     const parsed = parseFloat(regFeeAmountEdit);
     if (!regFeeAmountEdit || isNaN(parsed) || parsed <= 0) {
@@ -1699,8 +1704,17 @@ const ClientDetailPage = () => {
         return (
           <>
           {invoiceEditModal}
+          <WalletPayModal
+            open={Boolean(walletPayTargets)}
+            clientId={clientId}
+            targets={walletPayTargets || []}
+            onClose={() => setWalletPayTargets(null)}
+            onPaid={refreshAfterInvoiceEdit}
+          />
           <ClientInvoicesPanel
             canEdit={invoiceEditPermissions}
+            walletBalance={clientProfile?.wallet_balance}
+            onPayFromWallet={canPayFromWallet ? setWalletPayTargets : null}
             onEdit={openInvoiceEdit}
             regFeeInvoices={regFeeInvoices}
             registrationAudit={registrationAudit}
@@ -3799,6 +3813,22 @@ const ClientDetailPage = () => {
             </div>
           </div>
         )}
+        {/* Registration tier (computed on the server from fee status, expiry and bookings) */}
+        {registrationAudit?.tier && (() => {
+          const tierMeta = {
+            ACTIVE_PAID:   { label: 'Active · Paid',   cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+            ACTIVE_UNPAID: { label: 'Active · Unpaid', cls: 'border-amber-200 bg-amber-50 text-amber-800' },
+            INACTIVE:      { label: 'Inactive',        cls: 'border-gray-200 bg-gray-100 text-gray-600' },
+          }[registrationAudit.tier];
+          if (!tierMeta) return null;
+          return (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <span className="font-semibold uppercase tracking-wide text-gray-400">Registration tier</span>
+              <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${tierMeta.cls}`}>{tierMeta.label}</span>
+              {registrationAudit.tier_reason && <span>{registrationAudit.tier_reason}</span>}
+            </div>
+          );
+        })()}
         {/* Top action bar */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">

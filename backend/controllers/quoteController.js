@@ -13,6 +13,7 @@ const { createRentalAgreementCore, RentalAgreementError } = require('./rentalCon
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
 const { ensureInvoiceCharge, linkProductQuoteToBooking, payBookingProductInvoicesFromWallet } = require('../services/invoiceCharges');
+const { unbilledLinesSql } = require('../services/productBilling');
 
 // Estimate numbers are EST-NNNN. The 4-digit space is small, so check for a
 // collision (retrying) and widen to 5 digits if it is nearly exhausted.
@@ -1189,7 +1190,14 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
                         'vendor_id', p.vendor_id,
                         'vendor_name', v.name,
                         'cost_price_snapshot', li.cost_price_snapshot,
-                        'product_cost_price', p.cost_price
+                        'product_cost_price', p.cost_price,
+                        'invoice_id', (SELECT i.invoice_id FROM invoices i WHERE i.line_item_id = li.line_item_id AND i.category <> 'LINE_ITEM' LIMIT 1),
+                        'invoice_code', (SELECT i.invoice_code FROM invoices i WHERE i.line_item_id = li.line_item_id AND i.category <> 'LINE_ITEM' LIMIT 1),
+                        'invoice_status', (SELECT i.status FROM invoices i WHERE i.line_item_id = li.line_item_id AND i.category <> 'LINE_ITEM' LIMIT 1),
+                        'billed', (p.product_type::text = 'RENTAL' AND EXISTS (SELECT 1 FROM rental_agreements ra WHERE ra.quote_id = li.quote_id))
+                                  OR (COALESCE(p.product_type::text, '') <> 'RENTAL' AND EXISTS (
+                                       SELECT 1 FROM invoices i WHERE i.category <> 'LINE_ITEM'
+                                         AND (i.line_item_id = li.line_item_id OR (i.line_item_id IS NULL AND i.category = 'PRODUCT' AND i.quote_id = li.quote_id))))
                     ) ORDER BY li.sort_order
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
             FROM quotations q
@@ -1251,7 +1259,8 @@ exports.listProductQuotes = async (req, res) => {
                        SELECT SUM(li.deposit_amount) + COALESCE(SUM(li.amount) FILTER (WHERE li.item_type = 'DEPOSIT'), 0)
                        FROM quote_line_items li
                        WHERE li.quote_id = q.quote_id
-                   ), 0) as total_deposit_amount
+                   ), 0) as total_deposit_amount,
+                   (SELECT COUNT(*)::int FROM (${unbilledLinesSql('q.quote_id')}) ub) AS unbilled_line_count
             FROM quotations q
             LEFT JOIN client_profiles cp ON q.client_id = cp.client_profile_id
             LEFT JOIN users u ON cp.user_id = u.user_id
@@ -1876,27 +1885,109 @@ class AcceptQuoteError extends Error {
     }
 }
 
-// True once a product quote has been accepted (it has a real invoice or a rental
-// agreement). A LINE_ITEM invoice is a standalone document an admin can raise for a
-// single line item at any time (see invoiceController.generateLineItemInvoice); it
-// does not mean the quote was accepted.
+// ─── How a product quotation is billed ───────────────────────────────────────
+// Every product line (and every standalone refundable deposit) gets its OWN invoice, with its own
+// charge on the client's ledger. A rental line is billed by its rental agreement instead. A line
+// can be invoiced on its own at any time (the per-line buttons on the quotation payment form), or
+// all together by accepting the quotation; either way the same function bills it, so the invoice,
+// ledger charge, booking tie and vendor bill are always the same.
+//
+// Older quotations were billed with ONE invoice for all their non-rental lines (invoices.line_item_id
+// is NULL). Those still count as billing every such line.
+
+// Lines still waiting for an invoice (or, for rentals, an agreement): see services/productBilling.js.
+const UNBILLED_LINES_SQL = unbilledLinesSql('$1');
+
+async function unbilledLineIds(executor, quoteId) {
+    return (await executor.query(UNBILLED_LINES_SQL, [quoteId])).rows.map((r) => r.line_item_id);
+}
+
+// True once nothing is left to bill on a product quotation (and something has been billed).
 async function isProductQuoteAccepted(executor, quoteId) {
-    const r = await executor.query(
+    const billed = await executor.query(
         `SELECT 1 FROM invoices WHERE quote_id = $1 AND category <> 'LINE_ITEM'
          UNION ALL SELECT 1 FROM rental_agreements WHERE quote_id = $1 LIMIT 1`,
         [quoteId]
     );
-    return r.rows.length > 0;
+    if (billed.rows.length === 0) return false;
+    return (await unbilledLineIds(executor, quoteId)).length === 0;
 }
 
-// Accepts a PRODUCT quotation inside the caller's open transaction: rental
-// agreements + their invoices, one PRODUCT invoice for everything else, vendor
-// bills. Shared by the "Accept" endpoint and booking conversion (see
-// attachLinkedProductsToBooking). Throws AcceptQuoteError / RentalAgreementError.
+// Bills one non-rental product line: its own invoice, its ledger charge, and (for a vendor-sourced
+// product) what is owed to the vendor. A document-only invoice already raised for the line is
+// converted in place, keeping its invoice number and any payment on it, instead of billing twice.
+// Returns { invoice, vendorBill, created } or null when the line is already billed.
+async function billProductLine(pgClient, { quote, line, vendorDecision = {}, actorUserId = null, dueDate = null }) {
+    const existing = (await pgClient.query(`SELECT * FROM invoices WHERE line_item_id = $1 FOR UPDATE`, [line.line_item_id])).rows[0];
+    if (existing && existing.category !== 'LINE_ITEM') return null;
+
+    let invoice;
+    if (existing) {
+        invoice = (await pgClient.query(
+            `UPDATE invoices SET category = 'PRODUCT', client_id = COALESCE(client_id, $2), walk_in_customer_id = COALESCE(walk_in_customer_id, $3),
+                    due_date = COALESCE(due_date, $4), pdf_url = NULL
+             WHERE invoice_id = $1 RETURNING *`,
+            [existing.invoice_id, quote.client_id, quote.walk_in_customer_id, dueDate]
+        )).rows[0];
+    } else {
+        invoice = (await pgClient.query(
+            `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, due_date, created_by)
+             VALUES ('PRODUCT', $1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+            [quote.client_id, quote.walk_in_customer_id, quote.quote_id, line.line_item_id, line.amount, dueDate, actorUserId]
+        )).rows[0];
+    }
+    // Puts the invoice on the client's ledger (Total Invoiced, statements).
+    await ensureInvoiceCharge(pgClient, invoice.invoice_id);
+
+    let vendorBill = null;
+    if (line.vendor_id) {
+        const decision = vendorDecision || {};
+        const defaultAmount = parseFloat(line.cost_price_snapshot ?? line.product_cost_price ?? 0) * parseFloat(line.quantity || 1);
+        const billAmount = decision.amount !== undefined && decision.amount !== null && decision.amount !== ''
+            ? parseFloat(decision.amount) : defaultAmount;
+        if (billAmount && billAmount > 0) {
+            vendorBill = await createVendorBillCore(pgClient, {
+                vendor_id: line.vendor_id, source_type: 'PRODUCT_SALE', product_id: line.product_id,
+                reference_id: quote.quote_id, amount: billAmount, description: line.description, createdBy: actorUserId,
+            });
+            if (decision.pay_now) {
+                const vendor = (await pgClient.query('SELECT * FROM vendors WHERE vendor_id = $1', [line.vendor_id])).rows[0];
+                await applyVendorBillPayment(pgClient, {
+                    bill: vendorBill, vendor, amount: billAmount, payment_method: decision.payment_method,
+                    bank_account_id: decision.bank_account_id, cheque_number: decision.cheque_number, cheque_date: decision.cheque_date,
+                    reference_number: decision.reference_number, notes: decision.notes, actorUserId,
+                });
+            }
+        }
+    }
+    return { invoice, vendorBill, created: !existing };
+}
+
+// The booking a product quotation belongs to: its own, or its service quotation's.
+async function bookingOfProductQuote(pgClient, quote) {
+    if (quote.booking_id) return quote.booking_id;
+    if (!quote.linked_quote_id) return null;
+    const sq = await pgClient.query(`SELECT booking_id FROM quotations WHERE quote_id = $1`, [quote.linked_quote_id]);
+    return sq.rows[0]?.booking_id || null;
+}
+
+// Loads the lines of a product quotation with what billing needs to know about their product.
+async function loadBillableLines(pgClient, quoteId) {
+    return (await pgClient.query(
+        `SELECT li.*, p.product_type, p.vendor_id, p.cost_price AS product_cost_price
+         FROM quote_line_items li LEFT JOIN products p ON li.product_id = p.product_id
+         WHERE li.quote_id = $1 ORDER BY li.sort_order`, [quoteId]
+    )).rows;
+}
+
+// Accepts a PRODUCT quotation inside the caller's open transaction: rental agreements and their
+// invoices, then one invoice per remaining product line, then vendor bills. Shared by the "Accept"
+// endpoint and booking conversion (see attachLinkedProductsToBooking). Lines already invoiced on
+// their own are left as they are. Throws AcceptQuoteError / RentalAgreementError.
 //  - A companion quote built for a lead has no client yet: the lead's client account
 //    is created here (as the first payment would), so its invoices bill the client.
 //  - When the service quotation already has a booking, the invoices are tied to it.
-async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {}, actorUserId = null } = {}) {
+async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {}, actorUserId = null, dueDate = null } = {}) {
         const quoteResult = await pgClient.query(
             `SELECT * FROM quotations WHERE quote_id = $1 AND quote_type = 'PRODUCT' FOR UPDATE`,
             [quote_id]
@@ -1921,121 +2012,50 @@ async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {},
             await pgClient.query(`UPDATE quotations SET client_id = $1 WHERE quote_id = $2`, [quote.client_id, quote_id]);
         }
 
-        const lineItemsResult = await pgClient.query(
-            `SELECT li.*, p.product_type, p.vendor_id, p.cost_price AS product_cost_price
-             FROM quote_line_items li
-             LEFT JOIN products p ON li.product_id = p.product_id
-             WHERE li.quote_id = $1`,
-            [quote_id]
-        );
-        if (lineItemsResult.rows.length === 0) throw new AcceptQuoteError(400, 'This quote has no line items');
-
-        const rentalItems = lineItemsResult.rows.filter(li => li.product_type === 'RENTAL');
-        const otherItems = lineItemsResult.rows.filter(li => li.product_type !== 'RENTAL');
+        const lines = await loadBillableLines(pgClient, quote_id);
+        if (lines.length === 0) throw new AcceptQuoteError(400, 'This quote has no line items');
 
         const createdAgreements = [];
         const createdVendorBills = [];
-        for (const item of rentalItems) {
-            const { agreement, invoice, vendor_bill } = await createRentalAgreementCore(pgClient, {
-                product_id: item.product_id,
-                unit_id: item.unit_id,
-                client_id: quote.client_id,
-                walk_in_customer_id: quote.walk_in_customer_id,
-                quote_id,
-                billing_type: item.rental_billing_type,
-                rate: item.amount,
-                start_date: item.rental_start_date,
-                end_date: item.rental_end_date,
-                deposit_amount: item.deposit_amount,
-                vendor_payment: vendorPayments[item.line_item_id],
-                createdBy: actorUserId,
-            });
-            createdAgreements.push({ ...agreement, invoice });
-            if (vendor_bill) createdVendorBills.push(vendor_bill);
-        }
-
-        // An item the admin already invoiced individually (a LINE_ITEM invoice) is billed by that
-        // invoice; billing it again in the quote's product invoice would double-invoice it.
-        const documentedRes = await pgClient.query(
-            `SELECT line_item_id FROM invoices WHERE quote_id = $1 AND category = 'LINE_ITEM' AND line_item_id IS NOT NULL`,
-            [quote_id]
-        );
-        const documentedItemIds = new Set(documentedRes.rows.map((r) => r.line_item_id));
-
-        let genericInvoice = null;
-        const otherItemsTotal = otherItems
-            .filter((li) => !documentedItemIds.has(li.line_item_id))
-            .reduce((sum, li) => sum + parseFloat(li.amount), 0);
-        if (otherItemsTotal > 0) {
-            const invoiceResult = await pgClient.query(
-                `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, amount, created_by)
-                 VALUES ('PRODUCT', $1, $2, $3, $4, $5)
-                 RETURNING *`,
-                [quote.client_id, quote.walk_in_customer_id, quote_id, otherItemsTotal, actorUserId]
-            );
-            genericInvoice = invoiceResult.rows[0];
-            // Puts the invoice on the client's ledger (Total Invoiced, statements).
-            await ensureInvoiceCharge(pgClient, genericInvoice.invoice_id);
-        }
-
-        // Vendor-sourced non-rental line items (plain product sales): record
-        // what's owed to the vendor, and immediately pay it off if the admin
-        // chose to pay now (see AskUserQuestion decision — the prompt happens
-        // inline at time of sale). Rental items are handled inside
-        // createRentalAgreementCore above via the same vendor_payments map.
-        // vendor_payments is keyed by line_item_id: { pay_now, amount,
-        // payment_method, bank_account_id, cheque_number, cheque_date, reference_number, notes }.
-        for (const item of otherItems) {
-            if (!item.vendor_id) continue;
-
-            const decision = vendorPayments[item.line_item_id] || {};
-            const defaultAmount = parseFloat(item.cost_price_snapshot ?? item.product_cost_price ?? 0) * parseFloat(item.quantity || 1);
-            const billAmount = decision.amount !== undefined && decision.amount !== null && decision.amount !== ''
-                ? parseFloat(decision.amount)
-                : defaultAmount;
-            if (!billAmount || billAmount <= 0) continue;
-
-            const bill = await createVendorBillCore(pgClient, {
-                vendor_id: item.vendor_id,
-                source_type: 'PRODUCT_SALE',
-                product_id: item.product_id,
-                reference_id: quote_id,
-                amount: billAmount,
-                description: item.description,
-                createdBy: actorUserId,
-            });
-
-            if (decision.pay_now) {
-                const vendorResult = await pgClient.query('SELECT * FROM vendors WHERE vendor_id = $1', [item.vendor_id]);
-                const vendor = vendorResult.rows[0];
-                await applyVendorBillPayment(pgClient, {
-                    bill,
-                    vendor,
-                    amount: billAmount,
-                    payment_method: decision.payment_method,
-                    bank_account_id: decision.bank_account_id,
-                    cheque_number: decision.cheque_number,
-                    cheque_date: decision.cheque_date,
-                    reference_number: decision.reference_number,
-                    notes: decision.notes,
-                    actorUserId,
+        const hasAgreement = (await pgClient.query(`SELECT 1 FROM rental_agreements WHERE quote_id = $1 LIMIT 1`, [quote_id])).rows.length > 0;
+        if (!hasAgreement) {
+            for (const item of lines.filter((li) => li.product_type === 'RENTAL')) {
+                const { agreement, invoice, vendor_bill } = await createRentalAgreementCore(pgClient, {
+                    product_id: item.product_id,
+                    unit_id: item.unit_id,
+                    client_id: quote.client_id,
+                    walk_in_customer_id: quote.walk_in_customer_id,
+                    quote_id,
+                    billing_type: item.rental_billing_type,
+                    rate: item.amount,
+                    start_date: item.rental_start_date,
+                    end_date: item.rental_end_date,
+                    deposit_amount: item.deposit_amount,
+                    vendor_payment: vendorPayments[item.line_item_id],
+                    createdBy: actorUserId,
                 });
+                createdAgreements.push({ ...agreement, invoice });
+                if (vendor_bill) createdVendorBills.push(vendor_bill);
             }
+        }
 
-            createdVendorBills.push(bill);
+        // One invoice per remaining non-rental line (a line already invoiced on its own is skipped).
+        const invoices = [];
+        for (const line of lines.filter((li) => li.product_type !== 'RENTAL' && ['PRODUCT', 'DEPOSIT'].includes(li.item_type) && parseFloat(li.amount) > 0)) {
+            const billed = await billProductLine(pgClient, { quote, line, vendorDecision: vendorPayments[line.line_item_id], actorUserId, dueDate });
+            if (!billed) continue;
+            invoices.push(billed.invoice);
+            if (billed.vendorBill) createdVendorBills.push(billed.vendorBill);
         }
 
         await pgClient.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
 
-        // Already booked → the invoice belongs to that booking's account.
-        let bookingId = quote.booking_id;
-        if (!bookingId && quote.linked_quote_id) {
-            const sq = await pgClient.query(`SELECT booking_id FROM quotations WHERE quote_id = $1`, [quote.linked_quote_id]);
-            bookingId = sq.rows[0]?.booking_id || null;
-        }
+        // Already booked → the invoices belong to that booking's account.
+        const bookingId = await bookingOfProductQuote(pgClient, quote);
         if (bookingId) await linkProductQuoteToBooking(pgClient, { productQuoteId: quote_id, bookingId });
 
-        return { quote, createdAgreements, genericInvoice, createdVendorBills, bootstrap };
+        // genericInvoice is the first new invoice, kept so older callers keep working.
+        return { quote, createdAgreements, invoices, genericInvoice: invoices[0] || null, createdVendorBills, bootstrap };
 }
 
 // Transport lines typed in as free-form "custom charges" (the practice that was removed) are
@@ -2169,6 +2189,11 @@ async function attachLinkedProductsToBooking(pgClient, { serviceQuoteId, booking
 exports.attachLinkedProductsToBooking = attachLinkedProductsToBooking;
 exports.convertLegacyTransportLines = convertLegacyTransportLines;
 exports.acceptProductQuoteCore = acceptProductQuoteCore;
+exports.AcceptQuoteError = AcceptQuoteError;
+exports.billProductLine = billProductLine;
+exports.loadBillableLines = loadBillableLines;
+exports.bookingOfProductQuote = bookingOfProductQuote;
+exports.unbilledLineIds = unbilledLineIds;
 exports.isProductQuoteAccepted = isProductQuoteAccepted;
 
 exports.acceptProductQuote = async (req, res) => {
@@ -2177,9 +2202,10 @@ exports.acceptProductQuote = async (req, res) => {
 
     try {
         await pgClient.query('BEGIN');
-        const { createdAgreements, genericInvoice, createdVendorBills, bootstrap } = await acceptProductQuoteCore(pgClient, quote_id, {
+        const { createdAgreements, invoices, genericInvoice, createdVendorBills, bootstrap } = await acceptProductQuoteCore(pgClient, quote_id, {
             vendorPayments: (req.body || {}).vendor_payments || {},
             actorUserId: req.user?.user_id || null,
+            dueDate: (req.body || {}).due_date || null,
         });
         await pgClient.query('COMMIT');
 
@@ -2197,13 +2223,14 @@ exports.acceptProductQuote = async (req, res) => {
                 quote_id,
                 rental_agreement_ids: createdAgreements.map(a => a.rental_agreement_id),
                 generic_invoice_id: genericInvoice?.invoice_id || null,
+                invoice_ids: invoices.map(i => i.invoice_id),
                 vendor_bill_ids: createdVendorBills.map(b => b.vendor_bill_id),
             },
         });
 
         res.status(201).json({
             status: 'success',
-            data: { rental_agreements: createdAgreements, invoice: genericInvoice, vendor_bills: createdVendorBills },
+            data: { rental_agreements: createdAgreements, invoice: genericInvoice, invoices, vendor_bills: createdVendorBills },
         });
     } catch (error) {
         await pgClient.query('ROLLBACK');

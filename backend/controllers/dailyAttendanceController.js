@@ -2,6 +2,7 @@
 const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const { creditStaffSalary, reverseStaffSalary, reverseServiceInvoice } = require('../services/billingService');
+const { reconcileBookingDays, releaseDay } = require('../services/dayAllocation');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { correctInvoiceAmount, correctSalaryAmount, getCorrectionsForBooking } = require('../services/amountCorrections');
 const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
@@ -1272,6 +1273,8 @@ exports.revokeDays = async (req, res) => {
         const skipped = [];
         const salaryReversed = [];
         const invoiceReversed = [];
+        let walletRefunded = 0;
+        let appliedToUnpaid = 0;
         const extendedDates = new Set();
 
         for (const { service_date: serviceDate, shift_slot_id: shiftSlotId = null } of targets) {
@@ -1321,7 +1324,9 @@ exports.revokeDays = async (req, res) => {
             for (const invoice of invoiceRes.rows) {
                 if (invoice.status !== 'INVOICED') continue;
 
+                const outcome = {};
                 const reversalTransactionId = await reverseServiceInvoice(client, {
+                    outcome,
                     booking_id,
                     client_id: booking.client_id,
                     amount: invoice.amount,
@@ -1343,6 +1348,9 @@ exports.revokeDays = async (req, res) => {
                     [reversalTransactionId, req.user?.user_id || null, decidedByName, reason, settlementAction, invoice.daily_invoice_id]
                 );
 
+                await releaseDay(client, invoice.daily_invoice_id, 'Day revoked');
+                walletRefunded += outcome.refundedToWallet || 0;
+                appliedToUnpaid += outcome.appliedToUnpaid || 0;
                 invoiceReversed.push(serviceDate);
                 touchedThisTarget = true;
                 if (settlementAction === 'WALLET_REFUND_EXTEND') extendedDates.add(serviceDate);
@@ -1351,6 +1359,8 @@ exports.revokeDays = async (req, res) => {
             if (touchedThisTarget) revoked.push(serviceDate);
             else skipped.push(serviceDate);
         }
+
+        if (invoiceReversed.length > 0) await reconcileBookingDays(client, booking_id);
 
         if (revoked.length === 0) {
             await client.query('ROLLBACK');
@@ -1377,10 +1387,10 @@ exports.revokeDays = async (req, res) => {
             actionType: 'DAY_REVOKED',
             entityType: 'BOOKING',
             entityId: String(booking_id),
-            details: { service_dates: targets.map(t => t.service_date), targets, reason, settlement_action: settlementAction, salary_reversed: salaryReversed, invoice_reversed: invoiceReversed, skipped, extended_days: extendedDates.size },
+            details: { service_dates: targets.map(t => t.service_date), targets, reason, settlement_action: settlementAction, salary_reversed: salaryReversed, invoice_reversed: invoiceReversed, skipped, extended_days: extendedDates.size, wallet_refunded: walletRefunded, applied_to_unpaid_invoices: appliedToUnpaid },
         }).catch(err => console.error('Activity log failed:', err));
 
-        res.status(200).json({ status: 'success', data: { revoked, skipped, extended_days: extendedDates.size } });
+        res.status(200).json({ status: 'success', data: { revoked, skipped, extended_days: extendedDates.size, wallet_refunded: walletRefunded, applied_to_unpaid_invoices: appliedToUnpaid } });
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Revoke days error:', error);

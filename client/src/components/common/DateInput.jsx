@@ -42,6 +42,17 @@ export const todayISO = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+// ISO date `n` days before today (local). Used as a `min` that allows a short backdate.
+export const daysAgoISO = (n) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const pad = (v) => String(v).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+// How far back staff may set a start date; keep in step with the backend limit.
+export const MAX_BACKDATE_DAYS = 14;
+
 /**
  * Drop-in replacement for <input type="date">. Displays/accepts DD/MM/YYYY,
  * but value/onChange still speak ISO (YYYY-MM-DD) so existing state and

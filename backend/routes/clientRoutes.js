@@ -3,6 +3,7 @@ const router = express.Router();
 const { normalizeHonorificBody } = require('../utils/honorific');
 const clientController = require('../controllers/clientController');
 const bookingNotesController = require('../controllers/bookingNotesController');
+const walletPaymentController = require('../controllers/walletPaymentController');
 const { protect, restrictTo, requirePermission, requireOwnSalesRecord, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware');
 const { uploadPaymentReceipt } = require('../middleware/uploadMiddleware');
 
@@ -40,6 +41,10 @@ router.post('/:client_id/verify-reg-fee-payment', protect, requirePermission('CL
 router.post('/:client_id/backdate-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAST_REG_FEE'), clientController.backdateRegFeePayment);
 router.post('/:client_id/admin-upload-reg-fee-receipt', protect, requirePermission('CLIENT_RECORD_PAYMENT'), uploadPaymentReceipt, clientController.adminUploadRegFeeReceipt);
 router.get('/:client_id/invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientInvoices);
+// Pay unpaid invoices from the client's wallet (care days, products/rentals, registration fee)
+router.get('/:client_id/wallet-pay/info', protect, requirePermission('INVOICE_PAY_FROM_WALLET'), walletPaymentController.getWalletPayInfo);
+router.post('/:client_id/wallet-pay/preview', protect, requirePermission('INVOICE_PAY_FROM_WALLET'), walletPaymentController.previewWalletPay);
+router.post('/:client_id/wallet-pay', protect, requirePermission('INVOICE_PAY_FROM_WALLET'), walletPaymentController.walletPay);
 router.get('/:client_id/financial-breakdown/:metric', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientFinancialBreakdown);
 // Registration fee invoices — must stay above the generic '/:client_id' catch-all route below.
 router.get('/reg-fee-integrity', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getRegFeeIntegrity);

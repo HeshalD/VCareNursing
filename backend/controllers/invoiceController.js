@@ -11,12 +11,12 @@ const { withTermsUrl } = require('../services/managedDocuments');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
-const { ensureCombinedInvoice } = require('./quoteController');
+const { ensureCombinedInvoice, billProductLine, bookingOfProductQuote, unbilledLineIds, acceptProductQuoteCore, AcceptQuoteError } = require('./quoteController');
 const { sendClientInvoice } = require('../utils/metaWhatsapp');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { parsePaymentDate } = require('../utils/paymentDate');
 const { editInvoiceAmount: editInvoiceAmountCore, editQuoteLineAmounts, getQuoteLinesForEdit } = require('../services/invoiceAmountEdits');
-const { ensureInvoiceCharge } = require('../services/invoiceCharges');
+const { ensureInvoiceCharge, linkProductQuoteToBooking } = require('../services/invoiceCharges');
 const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -34,89 +34,41 @@ async function safeLog(params) {
   }
 }
 
-// POST /api/product-invoices/from-quote/:quote_id
-// Snapshots an accepted PRODUCT quotation's total into a new PENDING invoice.
-// Locks the quotations row for the duration of the check+insert so two
-// concurrent calls (e.g. PaymentAllocationModal's auto-invoice effect firing
-// twice) can't both pass the "no existing invoice" check and create
-// duplicate invoices for the same quote — the second caller blocks on the
-// row lock and then sees the first caller's insert.
+// POST /api/product-invoices/from-quote/:quote_id   body: { due_date? }
+// Invoices a PRODUCT quotation now: the same acceptance the Products page's "Accept and invoice" and
+// booking creation use (quoteController.acceptProductQuoteCore), with an optional due date. Every
+// product line gets its own invoice and ledger charge, rentals get their agreements, and a vendor
+// product's bill is recorded. It used to build one combined invoice by its own, separate rules.
 exports.createInvoiceFromQuote = async (req, res) => {
   const { quote_id } = req.params;
-  const { due_date } = req.body;
+  const { due_date } = req.body || {};
   const pgClient = await db.pool.connect();
 
   try {
     await pgClient.query('BEGIN');
+    const out = await acceptProductQuoteCore(pgClient, quote_id, { actorUserId: req.user?.user_id || null, dueDate: due_date || null });
+    await pgClient.query('COMMIT');
 
-    const quoteResult = await pgClient.query(
-      `SELECT quote_id, quote_type, client_id, walk_in_customer_id, total_amount, status
-       FROM quotations WHERE quote_id = $1 FOR UPDATE`,
-      [quote_id]
-    );
-
-    if (quoteResult.rows.length === 0) {
-      await pgClient.query('ROLLBACK');
-      return res.status(404).json({ message: 'Quote not found' });
-    }
-
-    const quote = quoteResult.rows[0];
-    if (quote.quote_type !== 'PRODUCT') {
-      await pgClient.query('ROLLBACK');
-      return res.status(400).json({ message: 'Only PRODUCT quotes can be invoiced through this endpoint' });
-    }
-
-    // This endpoint only knows how to fold a quote's total_amount into one
-    // flat invoice — it has no concept of RENTAL line items, which need their
-    // own rental_agreements row + unit marked RENTED (see
-    // quoteController.acceptProductQuote / createRentalAgreementCore). If we
-    // let a rental slip through here, the client gets charged the full
-    // amount but the rental is never actually recorded as out — see the
-    // EST-1368/BED-003 incident. Route those quotes through /accept instead.
-    const rentalCheck = await pgClient.query(
-      `SELECT 1 FROM quote_line_items li
-       JOIN products p ON li.product_id = p.product_id
-       WHERE li.quote_id = $1 AND p.product_type = 'RENTAL' LIMIT 1`,
-      [quote_id]
-    );
-    if (rentalCheck.rows.length > 0) {
-      await pgClient.query('ROLLBACK');
-      return res.status(400).json({
-        message: 'This quote contains rental items and must be accepted via POST /api/quotes/product/:quote_id/accept instead — that endpoint creates the rental agreement(s) and marks the unit(s) as rented.',
+    for (const inv of out.invoices) {
+      await safeLog({
+        actorUserId: req.user?.user_id,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'PRODUCT_INVOICE_CREATED',
+        entityType: 'INVOICE',
+        entityId: inv.invoice_id,
+        details: { quote_id, amount: inv.amount },
       });
     }
 
-    const existing = await pgClient.query('SELECT invoice_id FROM invoices WHERE quote_id = $1', [quote_id]);
-    if (existing.rows.length > 0) {
-      await pgClient.query('ROLLBACK');
-      return res.status(409).json({ message: 'An invoice already exists for this quote', invoice_id: existing.rows[0].invoice_id });
-    }
-
-    const result = await pgClient.query(
-      `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, amount, due_date, created_by)
-       VALUES ('PRODUCT', $1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [quote.client_id, quote.walk_in_customer_id, quote_id, quote.total_amount, due_date || null, req.user?.user_id || null]
-    );
-    // Puts the invoice on the client's ledger (Total Invoiced, statements).
-    await ensureInvoiceCharge(pgClient, result.rows[0].invoice_id);
-
-    await pgClient.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
-
-    await pgClient.query('COMMIT');
-
-    await safeLog({
-      actorUserId: req.user?.user_id,
-      actorRole: extractActorRole(req.user?.role),
-      actionType: 'PRODUCT_INVOICE_CREATED',
-      entityType: 'INVOICE',
-      entityId: result.rows[0].invoice_id,
-      details: { quote_id, amount: quote.total_amount },
+    res.status(201).json({
+      status: 'success',
+      data: out.genericInvoice || out.createdAgreements[0]?.invoice || null,
+      invoices: out.invoices,
+      rental_agreements: out.createdAgreements,
     });
-
-    res.status(201).json({ status: 'success', data: result.rows[0] });
   } catch (error) {
-    await pgClient.query('ROLLBACK');
+    await pgClient.query('ROLLBACK').catch(() => {});
+    if (error instanceof AcceptQuoteError || error.status) return res.status(error.status || 400).json({ message: error.message });
     console.error('Create Invoice From Quote Error:', error);
     res.status(500).json({ message: 'Failed to create invoice' });
   } finally {
@@ -124,17 +76,20 @@ exports.createInvoiceFromQuote = async (req, res) => {
   }
 };
 
-// Generates (once) a standalone invoice for a single quote line item —
-// independent of quoteController.ensureCombinedInvoice's all-or-nothing
-// combined invoice, and independent of payment allocation (this is a
-// documentation action an admin triggers manually, not a ledger entry tied
-// to how much of the line item has actually been paid). One invoice per
-// line item — idx_invoices_line_item_unique (migrate.js) enforces this at
-// the DB level, so a concurrent duplicate call is caught below.
+// Invoices ONE product line of a product quotation, on its own. This is the same real invoice that
+// accepting the quotation creates for that line (billProductLine): its own invoice number, its charge
+// on the client's ledger, the booking tie and, for a vendor product, the vendor bill. It used to make a
+// document-only invoice with no ledger charge, which let money be paid without ever being invoiced.
+//  - A document-only invoice raised earlier for the line is converted in place.
+//  - A rental line is billed by its rental agreement, and a line already invoiced is left as it is
+//    (null is returned for both).
+//  - Only product lines can be invoiced this way. Custom charges on a service quotation can no
+//    longer be created, and nothing invoices the old ones this way.
+// One invoice per line: idx_invoices_line_item_unique (migrate.js) enforces it at the database.
 async function generateLineItemInvoice(lineItemId, { actorUserId } = {}) {
-  const existing = await db.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId]);
-  if (existing.rows.length > 0) {
-    return ensureInvoicePdf(existing.rows[0].invoice_id);
+  const existing = (await db.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId])).rows[0];
+  if (existing && existing.category !== 'LINE_ITEM') {
+    return ensureInvoicePdf(existing.invoice_id);
   }
 
   const pg = await db.pool.connect();
@@ -142,14 +97,13 @@ async function generateLineItemInvoice(lineItemId, { actorUserId } = {}) {
   try {
     await pg.query('BEGIN');
 
-    // Lock the quotation row: acceptProductQuote takes the same lock, so an item can't be
-    // invoiced here and by the quote's own product invoice at the same moment.
+    // Lock the quotation row: accepting the quotation takes the same lock, so a line can't be
+    // invoiced here and by the quotation's acceptance at the same moment.
     const liRes = await pg.query(
-      `SELECT li.line_item_id, li.amount, li.quote_id,
-              q.client_id AS quote_client_id, q.walk_in_customer_id, q.request_id,
-              q.quote_type, q.status AS quote_status
+      `SELECT li.*, p.product_type, p.vendor_id, p.cost_price AS product_cost_price, q.quote_type
        FROM quote_line_items li
        JOIN quotations q ON li.quote_id = q.quote_id
+       LEFT JOIN products p ON p.product_id = li.product_id
        WHERE li.line_item_id = $1
        FOR UPDATE OF q`,
       [lineItemId]
@@ -160,48 +114,47 @@ async function generateLineItemInvoice(lineItemId, { actorUserId } = {}) {
     }
     const li = liRes.rows[0];
 
-    // Once a product quote has been accepted, every one of its items is already billed (by the
-    // quote's product invoice or a rental agreement's invoice). A second, individual invoice for
-    // the same item would just be a duplicate, so none is created. To invoice an item on its own,
-    // do it before the quote is accepted.
-    if (li.quote_type === 'PRODUCT' && li.quote_status === 'ACCEPTED') {
+    if (li.quote_type !== 'PRODUCT') {
+      throw Object.assign(
+        new Error('Only product lines can be invoiced one by one. Custom charges on a quotation are no longer invoiced this way.'),
+        { statusCode: 400 }
+      );
+    }
+    if (li.product_type === 'RENTAL' || li.rental_billing_type || !['PRODUCT', 'DEPOSIT'].includes(li.item_type) || !(parseFloat(li.amount) > 0)) {
       await pg.query('ROLLBACK');
       return null;
     }
 
-    // SERVICE-type quotes carry the client on service_requests, not on the
-    // quotations row itself (see migrate.js:1389 — client_id there is only
-    // populated for PRODUCT-type quotes).
-    let client_id = li.quote_client_id;
-    if (!client_id && li.request_id) {
-      const reqRes = await pg.query(`SELECT client_id FROM service_requests WHERE request_id = $1`, [li.request_id]);
-      client_id = reqRes.rows[0]?.client_id || null;
+    const quote = (await pg.query(`SELECT * FROM quotations WHERE quote_id = $1`, [li.quote_id])).rows[0];
+    // A companion quote built for a lead has no client until the lead's account exists; if the
+    // lead already has one, bill it. Otherwise the invoice is raised now and its ledger charge is
+    // posted when the account is created (see clientBootstrapService).
+    if (!quote.client_id && !quote.walk_in_customer_id && quote.linked_quote_id) {
+      const reqClient = await pg.query(
+        `SELECT sr.client_id FROM quotations sq JOIN service_requests sr ON sr.request_id = sq.request_id WHERE sq.quote_id = $1`,
+        [quote.linked_quote_id]
+      );
+      if (reqClient.rows[0]?.client_id) quote.client_id = reqClient.rows[0].client_id;
     }
 
-    try {
-      await pg.query('SAVEPOINT create_line_item_invoice');
-      const insertRes = await pg.query(
-        `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, status, created_by)
-         VALUES ('LINE_ITEM', $1, $2, $3, $4, $5, 'PENDING', $6)
-         RETURNING *`,
-        [client_id, li.walk_in_customer_id, li.quote_id, lineItemId, li.amount, actorUserId || null]
-      );
-      invoice = insertRes.rows[0];
-    } catch (err) {
-      // Unique violation on idx_invoices_line_item_unique — another request
-      // won the race, use its invoice instead.
-      if (err.code === '23505') {
-        await pg.query('ROLLBACK TO SAVEPOINT create_line_item_invoice');
-        const raceRes = await pg.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId]);
-        invoice = raceRes.rows[0];
-      } else {
-        throw err;
-      }
+    const billed = await billProductLine(pg, { quote, line: li, actorUserId: actorUserId || null });
+    if (!billed) {
+      await pg.query('ROLLBACK');
+      return null;
+    }
+    invoice = billed.invoice;
+
+    // Booked already: the invoice (and its charge) belongs to that booking's account.
+    const bookingId = await bookingOfProductQuote(pg, quote);
+    if (bookingId) await linkProductQuoteToBooking(pg, { productQuoteId: quote.quote_id, bookingId });
+
+    // Once every line is billed the quotation counts as accepted.
+    if ((await unbilledLineIds(pg, quote.quote_id)).length === 0) {
+      await pg.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote.quote_id]);
     }
     await pg.query('COMMIT');
   } catch (err) {
     await pg.query('ROLLBACK').catch(() => {});
-    // The database guard (migrate.js) refused it: the item is already billed by its accepted quote.
     if (err.message === 'line_item_already_invoiced') return null;
     throw err;
   } finally {
@@ -249,6 +202,7 @@ exports.createLineItemInvoices = async (req, res) => {
 
     res.status(201).json({ status: 'success', data: invoices, skipped_line_item_ids: skipped });
   } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
     console.error('Create Line Item Invoices Error:', error);
     res.status(500).json({ message: 'Failed to create line item invoices' });
   }
@@ -262,13 +216,13 @@ exports.createLineItemInvoices = async (req, res) => {
 // only mirror what was paid on the real invoice and must never count towards balances or payments.
 // `a` is the SQL alias of the invoices row being tested.
 const lineItemDuplicateSql = (a) => `(
-  ${a}.line_item_id IS NOT NULL
+  ${a}.line_item_id IS NOT NULL AND ${a}.category = 'LINE_ITEM'
   AND EXISTS (SELECT 1 FROM quotations dq WHERE dq.quote_id = ${a}.quote_id AND dq.quote_type = 'PRODUCT')
   AND (
     EXISTS (SELECT 1 FROM quote_line_items dl WHERE dl.line_item_id = ${a}.line_item_id AND dl.rental_billing_type IS NOT NULL)
     OR EXISTS (
       SELECT 1 FROM invoices dg
-      WHERE dg.quote_id = ${a}.quote_id AND dg.category = 'PRODUCT'
+      WHERE dg.quote_id = ${a}.quote_id AND dg.category = 'PRODUCT' AND dg.line_item_id IS NULL
         -- As first invoiced: an edited-down product invoice still covered every item.
         AND COALESCE(dg.original_amount, dg.amount) >= (
           SELECT COALESCE(SUM(dn.amount), 0) FROM quote_line_items dn
@@ -521,7 +475,7 @@ async function ensureInvoicePdf(invoiceId) {
   }
   if (line_items.length === 0) {
     line_items = [{ description: `${invoice.category} Invoice`, quantity: 1, unit_price: invoice.amount, amount: invoice.amount }];
-  } else if (!invoice.line_item_id && invoice.edited_at && invoice.original_amount != null) {
+  } else if (invoice.category !== 'LINE_ITEM' && invoice.edited_at && invoice.original_amount != null) {
     // An edited product/rental invoice keeps listing the quotation's items, so
     // show the edit itself as a line (services/invoiceAmountEdits.js). A
     // line-item invoice needs none — its line item carries the new amount.
@@ -748,14 +702,15 @@ async function applyInvoicePayment(pgClient, {
   }
 
   // Standalone deposits — 'DEPOSIT'-type line items on the underlying
-  // quote, held by the company independent of any rental item. Each such
-  // line item becomes its own deposits row once this invoice (which
-  // bundles the deposit amount in with whatever else was quoted) is paid.
-  if (invoice.quote_id) {
+  // quote, held by the company independent of any rental item. A deposit line has its own invoice,
+  // and becomes its own deposits row once THAT invoice is paid, never because some other line's
+  // invoice was. An older combined product invoice covers every deposit line on its quotation.
+  // (A rental agreement's own deposit is created above; a rental invoice creates none here.)
+  if (invoice.quote_id && invoice.category === 'PRODUCT') {
     const depositLineItems = await pgClient.query(
       `SELECT line_item_id, description, amount FROM quote_line_items
-       WHERE quote_id = $1 AND item_type = 'DEPOSIT'`,
-      [invoice.quote_id]
+       WHERE quote_id = $1 AND item_type = 'DEPOSIT' AND ($2::uuid IS NULL OR line_item_id = $2::uuid)`,
+      [invoice.quote_id, invoice.line_item_id || null]
     );
     for (const li of depositLineItems.rows) {
       const existing = await pgClient.query(

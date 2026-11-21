@@ -36,6 +36,18 @@ const TAB_TO_STATUS = {
   Expired:            'EXPIRED',
 };
 
+// Registration tier (computed on the server — see services/registrationTier.js)
+const TIER_OPTIONS = [
+  { key: 'ACTIVE_PAID',   label: 'Active · Paid' },
+  { key: 'ACTIVE_UNPAID', label: 'Active · Unpaid' },
+  { key: 'INACTIVE',      label: 'Inactive' },
+];
+const TIER_STYLE = {
+  ACTIVE_PAID:   'bg-emerald-50 text-emerald-700 border-emerald-200',
+  ACTIVE_UNPAID: 'bg-amber-50 text-amber-800 border-amber-200',
+  INACTIVE:      'bg-slate-100 text-slate-600 border-slate-200',
+};
+
 const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
@@ -77,6 +89,16 @@ const StatusBadge = ({ status }) => {
   );
 };
 
+const TierBadge = ({ tier, reason }) => {
+  const opt = TIER_OPTIONS.find(o => o.key === tier);
+  if (!opt) return <span className="text-slate-300">—</span>;
+  return (
+    <span title={reason || ''} className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] font-semibold whitespace-nowrap ${TIER_STYLE[tier]}`}>
+      {opt.label}
+    </span>
+  );
+};
+
 const ClientManagement = () => {
   const navigate = useNavigate();
   // The frontdesk Cash Register sends new walk-ins here (?add=1&returnTo=/admin/cash-register)
@@ -89,6 +111,7 @@ const ClientManagement = () => {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
+  const [tierFilter, setTierFilter] = useState('');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
@@ -113,24 +136,27 @@ const ClientManagement = () => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
   // SUPER_ADMIN override of the "has bookings/invoices" block
-  const { isSuperAdmin } = useAdminAuth();
+  const { isSuperAdmin, hasPermission } = useAdminAuth();
+  // UI-only gate (not enforced server-side): super admins always pass hasPermission.
+  const canAddClient = hasPermission('CLIENT_CREATE');
   const [blockedClients, setBlockedClients] = useState([]);
   const [overrideImpact, setOverrideImpact] = useState(null);
   const [overridePassword, setOverridePassword] = useState('');
   const [overrideLoading, setOverrideLoading] = useState(false);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
-  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly]);
+  useEffect(() => { setPage(1); }, [activeTab, tierFilter, debouncedSearch, pendingMigrationOnly, contactPendingOnly]);
 
-  useEffect(() => { fetchClients(); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
+  useEffect(() => { fetchClients(); }, [activeTab, tierFilter, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
 
   // Clear selection whenever the underlying list changes to avoid acting on stale rows.
-  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
+  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, tierFilter, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
 
   const buildFilters = () => ({
     page,
     limit: PAGE_SIZE,
     ...(activeTab !== 'All' ? { status: TAB_TO_STATUS[activeTab] } : {}),
+    ...(tierFilter ? { tier: tierFilter } : {}),
     ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
     ...(contactPendingOnly ? { contact_pending: 'true' } : {}),
@@ -175,7 +201,7 @@ const ClientManagement = () => {
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
-      openAdd();
+      if (canAddClient) openAdd();
       const next = new URLSearchParams(searchParams);
       next.delete('add');
       setSearchParams(next, { replace: true });
@@ -433,7 +459,9 @@ const ClientManagement = () => {
           </button>
           <button
             onClick={openAdd}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
+            disabled={!canAddClient}
+            title={canAddClient ? undefined : 'You do not have permission to add clients'}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
           >
             <Plus className="w-4 h-4" />
             Add Client
@@ -456,6 +484,21 @@ const ClientManagement = () => {
             >
               {tab}
               <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+          {TIER_OPTIONS.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTierFilter(v => (v === t.key ? '' : t.key))}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                tierFilter === t.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {t.label}
+              <span className="ml-1.5 tabular-nums text-slate-400">{counts.tiers?.[t.key] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -530,13 +573,14 @@ const ClientManagement = () => {
                   onChange={setActiveTab}
                   options={REG_TABS.map(tab => ({ key: tab, label: tab, count: counts[tab] ?? 0 }))}
                 />
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Tier</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {clients.length === 0 ? (
                 <tr>
-                  <td colSpan={selectMode ? 6 : 5} className="text-center py-16 text-slate-400 text-sm">
+                  <td colSpan={selectMode ? 7 : 6} className="text-center py-16 text-slate-400 text-sm">
                     No clients match your filters.
                   </td>
                 </tr>
@@ -606,6 +650,11 @@ const ClientManagement = () => {
                   {/* Reg Status */}
                   <td className="px-4 py-3 whitespace-nowrap">
                     <StatusBadge status={client.reg_fee_status || 'PENDING'} />
+                  </td>
+
+                  {/* Tier */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <TierBadge tier={client.registration_tier} reason={client.registration_tier_reason} />
                   </td>
 
                   {/* Arrow */}

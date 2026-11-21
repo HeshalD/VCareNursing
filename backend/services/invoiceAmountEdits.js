@@ -85,7 +85,9 @@ const editInvoiceAmount = async (client, { invoice_id, new_amount, reason, actor
   if (invRes.rows.length === 0) throw badRequest('Invoice not found', 404);
   const invoice = invRes.rows[0];
 
-  if (invoice.line_item_id) {
+  // Only a document-only extra-charge invoice follows its quotation line. A product line's invoice
+  // (category PRODUCT, line_item_id set) is edited like any product invoice, by its own amount.
+  if (invoice.line_item_id && invoice.category === 'LINE_ITEM') {
     const result = await editQuoteLineAmounts(client, {
       quote_id: invoice.quote_id,
       items: [{ line_item_id: invoice.line_item_id, new_amount: newAmount }],

@@ -16,6 +16,7 @@ const db = require('../config/db');
 const { getClientFinancialBreakdown, BREAKDOWN_METRICS } = require('./clientFinancialBreakdown');
 const { CHECKS: REG_FEE_CHECKS, TEST_CLIENTS_SQL } = require('./registrationFeeIntegrity');
 const { bookingChargeSql, bookingSettledSql, unbookedDueInvoiceSql, invoiceUnpaidSql } = require('./clientFinancials');
+const { unbilledLinesSql } = require('./productBilling');
 
 // Free-form custom charges were removed from the quotation builders on this date. A custom charge
 // line created on or after it means something bypassed the screens.
@@ -115,7 +116,7 @@ const CHECKS = [
   {
     key: 'products_not_invoiced', group: 'Quotation charges', severity: 'ERROR',
     title: 'Products on a quotation were never invoiced',
-    help: 'The client has a booking or has paid on the quotation, but its products (for example transport) were never accepted and invoiced.',
+    help: 'The client has a booking or has paid on the quotation, but one or more of its product lines (for example transport) have no invoice.',
     run: async () => (await q(`
       SELECT pq.quote_id AS id, pq.estimate_number AS label, sq.quote_id AS service_quote_id, sq.estimate_number AS service_est, pq.total_amount AS amount,
              COALESCE(pq.client_id, sr.client_id) AS client_id,
@@ -127,10 +128,27 @@ const CHECKS = [
         AND EXISTS (SELECT 1 FROM quote_line_items li WHERE li.quote_id = pq.quote_id)
         AND (EXISTS (SELECT 1 FROM bookings b WHERE b.booking_id = sq.booking_id OR b.request_id = sq.request_id)
              OR EXISTS (SELECT 1 FROM payment_tracking p WHERE p.quote_id = sq.quote_id AND p.status = 'VERIFIED'))
-        AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.quote_id = pq.quote_id AND i.category <> 'LINE_ITEM')
-        AND NOT EXISTS (SELECT 1 FROM rental_agreements ra WHERE ra.quote_id = pq.quote_id)`))
+        AND EXISTS (${unbilledLinesSql('pq.quote_id')})`))
       .map((r) => ({ entity_type: 'QUOTATION', entity_id: r.id, entity_label: `${r.label} (for ${r.service_est})`, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount, link_path: quotePath(r.service_quote_id),
         detail: `Products worth ${rs(r.amount)} on ${r.label}, quoted with ${r.service_est}, have no invoice although the client is booked or has paid.` })),
+  },
+  {
+    key: 'document_only_product_invoice', group: 'Quotation charges', severity: 'ERROR',
+    title: 'Product line has only a document invoice',
+    help: 'A product line was given a document-only invoice with no charge on the client’s ledger. Any money paid on it is recorded, but Total Invoiced never saw the charge. Invoicing the line from the quotation, or accepting the quotation, turns it into a real invoice.',
+    run: async () => (await q(`
+      SELECT i.invoice_id AS id, i.invoice_code AS label, i.amount, i.status, i.client_id,
+             pq.estimate_number AS est, li.description,
+             (SELECT b.booking_id FROM bookings b WHERE b.booking_id = pq.booking_id OR b.booking_id = sq.booking_id OR b.request_id = sq.request_id ORDER BY b.created_at DESC LIMIT 1) AS booking_id,
+             COALESCE(sq.quote_id, pq.quote_id) AS link_quote_id
+      FROM invoices i
+      JOIN quotations pq ON pq.quote_id = i.quote_id AND pq.quote_type = 'PRODUCT'
+      LEFT JOIN quotations sq ON sq.quote_id = pq.linked_quote_id
+      LEFT JOIN quote_line_items li ON li.line_item_id = i.line_item_id
+      WHERE i.category = 'LINE_ITEM'`))
+      .map((r) => ({ entity_type: 'INVOICE', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.booking_id, amount: r.amount,
+        link_path: quotePath(r.link_quote_id),
+        detail: `${r.label} (${rs(r.amount)}, ${r.status}) is only a document for "${r.description || 'a product line'}" on ${r.est}. It has no charge on the client's ledger.` })),
   },
   {
     key: 'custom_charge_line', group: 'Quotation charges', severity: 'WARNING',
@@ -212,6 +230,56 @@ const CHECKS = [
         detail: r.status === 'ACTIVE'
           ? `${r.label} is Active but owes ${rs(r.owed)}; it should be flagged overdue.`
           : `${r.label} is flagged Overdue but owes nothing (${rs(r.owed)}).` })),
+  },
+  {
+    key: 'earmark_while_owed', group: 'Care billing', severity: 'ERROR',
+    title: 'Wallet money reserved while the booking still owes',
+    help: 'Money is reserved in the wallet for this booking, yet the booking has unpaid charges. The reserved money should have paid them. Usually a revoked day refunded to the wallet while another invoice was unpaid, so the same money is counted twice.',
+    run: async () => (await q(`
+      SELECT b.booking_id AS id, b.booking_code AS label, b.client_id, b.wallet_earmarked AS earmark, ${bookingOwedSql('b')} AS owed
+      FROM bookings b
+      WHERE COALESCE(b.wallet_earmarked, 0) > 0.005 AND ${bookingOwedSql('b')} > 0.005`))
+      .map((r) => ({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id, amount: Math.min(Number(r.earmark), Number(r.owed)), link_path: bookingPath(r.id),
+        detail: `${r.label} has ${rs(r.earmark)} reserved in the wallet but owes ${rs(r.owed)}.` })),
+  },
+  {
+    key: 'day_payment_drift', group: 'Care billing', severity: 'WARNING',
+    title: 'Care days’ payment status out of step with the booking’s payments',
+    help: 'Each billed care day records how much of the booking’s payments settles it. Here the recorded amounts no longer match the booking’s payments (a payment path did not update them). The nightly job and the client Invoices tab correct this on their own; a finding that stays means something is wrong.',
+    run: async () => {
+      const { reconcileBookingDays } = require('./dayAllocation');
+      const ids = await q(`SELECT DISTINCT d.booking_id AS id, b.booking_code AS label, b.client_id
+                            FROM booking_daily_invoices d JOIN bookings b ON b.booking_id = d.booking_id
+                            WHERE d.status IN ('INVOICED', 'REVOKED')`);
+      const rows = [];
+      for (const r of ids) {
+        const c = await db.pool.connect();
+        try {
+          await c.query('BEGIN');
+          const res = await reconcileBookingDays(c, r.id);
+          if (res.added > 0.005 || res.released > 0.005) {
+            rows.push({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id,
+              amount: Math.max(res.added, res.released), link_path: bookingPath(r.id),
+              detail: `${r.label}: day payment tracking is off by ${rs(Math.max(res.added, res.released))} (would add ${rs(res.added)}, release ${rs(res.released)}).` });
+          }
+        } finally {
+          await c.query('ROLLBACK').catch(() => {});
+          c.release();
+        }
+      }
+      return rows;
+    },
+  },
+  {
+    key: 'earmark_on_finished_booking', group: 'Care billing', severity: 'WARNING',
+    title: 'Prepayment still reserved on a finished booking',
+    help: 'A completed, terminated or cancelled booking still holds reserved wallet money. It was never settled (released, refunded or written off), so it stays locked to that booking.',
+    run: async () => (await q(`
+      SELECT b.booking_id AS id, b.booking_code AS label, b.client_id, b.status, b.wallet_earmarked AS earmark
+      FROM bookings b
+      WHERE b.status IN ('COMPLETED', 'TERMINATED', 'CANCELLED') AND COALESCE(b.wallet_earmarked, 0) > 0.005`))
+      .map((r) => ({ entity_type: 'BOOKING', entity_id: r.id, entity_label: r.label, client_id: r.client_id, booking_id: r.id, amount: Number(r.earmark), link_path: bookingPath(r.id),
+        detail: `${r.label} is ${String(r.status).toLowerCase()} but still has ${rs(r.earmark)} reserved in the wallet.` })),
   },
 ];
 

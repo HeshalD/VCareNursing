@@ -135,24 +135,14 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
       });
       const quoteId = quoteRes.data.quote_id;
 
-      // Rental items need a real rental_agreement (unit reservation, billing
-      // schedule) — acceptProductQuote creates one per rental line plus a
-      // single combined invoice for everything else (incl. standalone
-      // deposits), all in one call. Non-rental quotes skip straight to a
-      // plain invoice via createInvoiceFromQuote (which also supports a due
-      // date — accept-product-quote doesn't).
-      let invoices;
-      if (hasRentalItems) {
-        const acceptRes = await apiClient.acceptProductQuote(quoteId);
-        const { rental_agreements: agreements, invoice: genericInvoice } = acceptRes.data;
-        invoices = [
-          ...agreements.map((a) => a.invoice),
-          ...(genericInvoice ? [genericInvoice] : []),
-        ];
-      } else {
-        const invoiceRes = await apiClient.createInvoiceFromQuote(quoteId, markPaid ? null : (dueDate || null));
-        invoices = [invoiceRes.data];
-      }
+      // Accepting the quotation invoices it: a rental line gets its rental agreement and invoice, and
+      // every other line (and standalone deposit) gets its own invoice, each with its charge on the
+      // client's account. The same acceptance the Products page and booking creation use.
+      const invoiceRes = await apiClient.createInvoiceFromQuote(quoteId, markPaid ? null : (dueDate || null));
+      const invoices = [
+        ...(invoiceRes.rental_agreements || []).map((a) => a.invoice),
+        ...(invoiceRes.invoices || []),
+      ].filter(Boolean);
 
       if (markPaid) {
         const paymentPayload = {

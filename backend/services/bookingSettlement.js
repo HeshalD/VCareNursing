@@ -4,6 +4,7 @@
 // Kept in their own module so neither side has to require the other (avoids a cycle).
 
 const { bookingChargeSql } = require('./clientFinancials');
+const { drawWalletForBooking } = require('./walletService');
 
 const getBookingFinancialTotals = async (client, booking_id) => {
     const result = await client.query(
@@ -81,7 +82,12 @@ const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput 
     // No forward projection is needed now: a future-dated termination settles when
     // its scheduled action fires, by which point the days in between have drawn
     // themselves out of the earmark.
-    const settlementBalance = parseFloat(booking.wallet_earmarked || 0);
+    // The reservation first covers anything the booking still owes (the netted figure above).
+    // Without this a stray or not-yet-applied reservation would be refunded or released as
+    // "unused prepayment" while the booking is still unpaid.
+    const earmarked = parseFloat(booking.wallet_earmarked || 0);
+    const owedNow = Math.max(totalInvoiced - totalPaid, 0);
+    const settlementBalance = Math.max(earmarked - owedNow, 0);
 
     return {
         ...booking,
@@ -89,7 +95,8 @@ const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput 
         total_invoiced: totalInvoiced,
         remaining_balance: Math.max(totalPaid - totalInvoiced, 0),
         amount_owed: Math.max(totalInvoiced - totalPaid, 0),
-        settlement_balance: settlementBalance
+        settlement_balance: settlementBalance,
+        earmark_applied_to_owed: Math.min(earmarked, owedNow)
     };
 };
 
@@ -115,6 +122,12 @@ const applyBookingSettlement = async (client, booking, settlementAction, settlem
     // What the client prepaid for this booking and never consumed. Under the lazy
     // wallet model this is exactly bookings.wallet_earmarked — the money is sitting
     // in the shared wallet reserved for this booking (see services/walletService.js).
+    // Reserved money that the booking still owes is applied to those charges first (see the
+    // snapshot above); only what is left over is unused prepayment.
+    const toApplyToOwed = parseFloat(booking.earmark_applied_to_owed || 0);
+    if (toApplyToOwed > 0.005) {
+        await drawWalletForBooking(client, { booking_id: booking.booking_id, client_id: booking.client_id, maxAmount: toApplyToOwed });
+    }
     const settlementBalance = parseFloat(booking.settlement_balance ?? booking.remaining_balance ?? 0);
 
     // Nothing was left reserved for this booking, so there's no surplus to release,

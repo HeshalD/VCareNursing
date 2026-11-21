@@ -6,17 +6,32 @@ const { creditSalespersonForRegistration } = require('./clientSalespersonService
 const { sendSms } = require('../utils/sms');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 const { logRegFee } = require('./regFeeLog');
+const { recordRegFeeInvoiceDebit } = require('./registrationFeeService');
 
 // Product quotations built alongside a lead's service quotation (e.g. its transport)
 // are created before the lead has a client account. Once the account exists, they
 // belong to it, so their invoices bill the client.
-const attachClientToCompanionProductQuotes = (client, requestId, clientId) => client.query(
-  `UPDATE quotations pq SET client_id = $2
-   FROM quotations sq
-   WHERE sq.request_id = $1 AND pq.linked_quote_id = sq.quote_id AND pq.quote_type = 'PRODUCT'
-     AND pq.client_id IS NULL AND pq.walk_in_customer_id IS NULL`,
-  [requestId, clientId]
-);
+// Any product line already invoiced on its own for the lead (before the account existed) is
+// billed to the client now, and its charge posts to the client's ledger.
+const attachClientToCompanionProductQuotes = async (client, requestId, clientId) => {
+  const attached = await client.query(
+    `UPDATE quotations pq SET client_id = $2
+     FROM quotations sq
+     WHERE sq.request_id = $1 AND pq.linked_quote_id = sq.quote_id AND pq.quote_type = 'PRODUCT'
+       AND pq.client_id IS NULL AND pq.walk_in_customer_id IS NULL
+     RETURNING pq.quote_id`,
+    [requestId, clientId]
+  );
+  if (attached.rows.length === 0) return;
+  const invoices = await client.query(
+    `UPDATE invoices SET client_id = $2
+     WHERE quote_id = ANY($1::uuid[]) AND client_id IS NULL AND walk_in_customer_id IS NULL AND category = 'PRODUCT'
+     RETURNING invoice_id`,
+    [attached.rows.map((r) => r.quote_id), clientId]
+  );
+  const { ensureInvoiceCharge } = require('./invoiceCharges'); // lazy: invoiceCharges pulls in the wallet service
+  for (const { invoice_id } of invoices.rows) await ensureInvoiceCharge(client, invoice_id);
+};
 
 const getOrCreateClientProfileForQuotation = async (client, quotation) => {
   const requestResult = await client.query(
@@ -221,6 +236,18 @@ const markRegFeeInvoicedFromQuote = async ({ quoteId, clientId, pdfUrl, sentBy }
       invoice_code: invoiceCode,
       amount,
     });
+  }
+
+  // Ledger charge for the invoice (skipped if the client already has one), so it is a real
+  // transaction and not only an overdue-invoice row. Linked to the quotation so the booking
+  // conversion adopts it instead of charging again.
+  try {
+    await recordRegFeeInvoiceDebit(db, {
+      client_id: clientId, amount, quote_id: quoteId || null,
+      notes: `Registration fee invoiced (${invoiceCode})`, ignoreOverdueInvoice: true,
+    });
+  } catch (debitErr) {
+    console.error('Failed to record registration fee ledger charge:', debitErr.message);
   }
 
   // Credit the salesperson the moment the invoice goes out, same as the standalone flow.

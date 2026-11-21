@@ -102,6 +102,9 @@ const PERMISSIONS = {
 
   // ── Client Management ─────────────────────────────────────────────────────
   CLIENT_EDIT:                 { label: 'Edit Client Profile',              module: 'User Management', entity: 'Client Account', verb: 'Edit Profile',        category: 'action' },
+  // UI-only gate for the "Add Client" button on the Client Management page. Not
+  // enforced by any backend route, so other flows that create clients are unaffected.
+  CLIENT_CREATE:               { label: 'Add Client (Client Management button)', module: 'User Management', entity: 'Client Account', verb: 'Add Client',       category: 'action' },
   CLIENT_DEACTIVATE:           { label: 'Deactivate / Activate Client',     module: 'User Management', entity: 'Client Account', verb: 'Deactivate/Activate',  category: 'action' },
   CLIENT_DELETE:               { label: 'Delete Client Profile',            module: 'User Management', entity: 'Client Account', verb: 'Delete',              category: 'action' },
   CLIENT_RECORD_PAYMENT:       { label: 'Record Client Payment',            module: 'User Management', entity: 'Client Billing', verb: 'Record Payment',      category: 'action' },
@@ -175,7 +178,10 @@ const PERMISSIONS = {
   // ── Invoices ──────────────────────────────────────────────────────────────
   INVOICE_CREATE_FROM_QUOTE:   { label: 'Create Invoice from Quote',        module: 'Invoices', entity: 'Invoice', verb: 'Create from Quote', category: 'action' },
   INVOICE_RESEND:              { label: 'Resend Invoice',                   module: 'Invoices', entity: 'Invoice', verb: 'Resend',             category: 'action' },
-  INVOICE_RECORD_PAYMENT:      { label: 'Record Invoice Payment',           module: 'Invoices', entity: 'Invoice', verb: 'Record Payment',     category: 'action' },
+  // Pay unpaid care-day, product/rental and registration-fee invoices out of the client's wallet
+  // (client page → Invoices). Spending money reserved for OTHER bookings needs a reason and is logged.
+  INVOICE_PAY_FROM_WALLET:     { label: 'Pay Invoices from Wallet',         module: 'Invoices', entity: 'Invoice', verb: 'Pay from Wallet',    category: 'action' },
+  INVOICE_RECORD_PAYMENT:      { label: 'Record Invoice Payment',          module: 'Invoices', entity: 'Invoice', verb: 'Record Payment',     category: 'action' },
   // Restating the amount on a product/rental, extra-charge or combined quotation
   // invoice. Care-day invoices use BOOKING_CORRECT_AMOUNT; registration fees CLIENT_EDIT.
   INVOICE_EDIT_AMOUNT:         { label: 'Edit Invoice Amount',              module: 'Invoices', entity: 'Invoice', verb: 'Edit Amount',        category: 'action' },
@@ -301,6 +307,9 @@ const PERMISSIONS = {
   // than ATTENDANCE_REVOKE, which cancels the day and returns the money.
   BOOKING_CORRECT_AMOUNT:      { label: 'Correct Invoiced/Paid Amount',     module: 'Bookings', entity: 'Attendance', verb: 'Correct Amount',      category: 'action' },
   ATTENDANCE_CONFIRM_DAY:      { label: 'Confirm Day (Attendance + Salary + Invoice)', module: 'Bookings', entity: 'Attendance', verb: 'Confirm Day', category: 'action' },
+  // Moving a shift-based booking's start date earlier so the missed days can be confirmed.
+  // Moves no money itself; super admin only until it is granted to other roles.
+  BOOKING_CHANGE_START_DATE:   { label: 'Correct Booking Start Date',       module: 'Bookings', entity: 'Booking', verb: 'Correct Start Date',    category: 'action' },
   LEDGER_HEALTH_MANAGE:        { label: 'Run Ledger Health Check & Acknowledge Findings', module: 'Ledger Health', entity: 'Ledger Health', verb: 'Run / Acknowledge', category: 'action' },
 };
 
@@ -317,7 +326,7 @@ const ROLE_TEMPLATES = {
     'VIEW_RECRUITERS', 'VIEW_SALESPERSONS', 'VIEW_STAFF_LEAVES',
     'VIEW_BULK_IMPORT', 'VIEW_UPCOMING_EVENTS', 'VIEW_TRANSACTIONS',
     'BOOKING_RECORD_PAYMENT', 'BOOKING_VERIFY_PAYMENT', 'BOOKING_REJECT_PAYMENT',
-    'BOOKING_WALLET_PAYOFF', 'BOOKING_SWAP_STAFF', 'BOOKING_APPROVE_TERMINATION',
+    'BOOKING_WALLET_PAYOFF', 'INVOICE_PAY_FROM_WALLET', 'BOOKING_SWAP_STAFF', 'BOOKING_APPROVE_TERMINATION',
     'BOOKING_ADD_NOTE', 'BOOKING_EDIT_NOTE', 'BOOKING_DELETE_NOTE',
     'BOOKING_SEND_STATEMENT', 'BOOKING_SEND_STAFF_PROFILE', 'BOOKING_EXTEND', 'BOOKING_COMPLETE', 'BOOKING_TERMINATE',
     'BOOKING_CONVERT_FROM_LEAD', 'BOOKING_PAUSE', 'BOOKING_RESUME',
@@ -363,7 +372,7 @@ const ROLE_TEMPLATES = {
     'VIEW_INVOICES', 'VIEW_RECEIPTS', 'VIEW_PRODUCTS', 'VIEW_RENTALS', 'VIEW_UPCOMING_EVENTS',
     'VIEW_PATIENTS', 'PATIENT_DELETE',
     'BOOKING_RECORD_PAYMENT', 'BOOKING_VERIFY_PAYMENT', 'BOOKING_REJECT_PAYMENT',
-    'BOOKING_WALLET_PAYOFF', 'BOOKING_ADD_NOTE', 'BOOKING_EDIT_NOTE',
+    'BOOKING_WALLET_PAYOFF', 'INVOICE_PAY_FROM_WALLET', 'BOOKING_ADD_NOTE', 'BOOKING_EDIT_NOTE',
     'BOOKING_UPDATE_HOSPITALIZATION', 'BOOKING_EXTEND', 'BOOKING_UPDATE_RATE',
     'QUOTATION_EDIT', 'QUOTATION_SEND',
     'QUOTATION_RECORD_PAYMENT', 'QUOTATION_VERIFY_PAYMENT', 'QUOTATION_REJECT_PAYMENT',

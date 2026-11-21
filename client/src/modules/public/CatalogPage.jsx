@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Package, ImageOff, ArrowRight, Search } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
+import PageBackdrop from '../../components/common/PageBackdrop';
 import apiClient from '../../api/api';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -97,12 +98,13 @@ const CatalogPage = () => {
   }, [products, search, typeFilter]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
+    <div className="relative isolate min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
+      <PageBackdrop />
       <Navbar />
 
       {/* Hero */}
-      <section className="relative pt-40 pb-20 bg-white overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-blue-50/60 via-white to-white" />
+      <section className="relative pt-40 pb-20 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-b from-blue-50/60 via-transparent to-transparent" />
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}

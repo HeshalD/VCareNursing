@@ -22,7 +22,7 @@
 //
 // Every function here must run inside the caller's open transaction.
 
-const { getEarmarkedTotal } = require('./walletService');
+const { getEarmarkedTotal, takeFromWallet } = require('./walletService');
 
 const CHARGE_CATEGORY = 'PRODUCT_INVOICE';
 // Invoice categories that bill the client. LINE_ITEM invoices are documents for
@@ -46,6 +46,11 @@ async function describeInvoice(client, invoice) {
     const r = res.rows[0];
     if (r) return r.unit_code ? `${r.name} (Unit ${r.unit_code}) rental` : `${r.name} rental`;
     return 'Rental';
+  }
+  // An invoice for one product line is described by that line alone.
+  if (invoice.line_item_id) {
+    const own = await client.query(`SELECT description FROM quote_line_items WHERE line_item_id = $1`, [invoice.line_item_id]);
+    if (own.rows[0]?.description) return own.rows[0].description;
   }
   if (invoice.quote_id) {
     const res = await client.query(
@@ -148,7 +153,7 @@ async function restateInvoiceCharge(client, invoiceId, { reason = null, actorUse
  * already excludes WALLET), records it against the invoice and marks the invoice
  * PAID once covered. Returns the amount drawn (0 when the wallet has nothing free).
  */
-async function payInvoiceFromWallet(client, { invoiceId, maxAmount = null, verified_by = null, notes = null, ledgerTimestamp = null }) {
+async function payInvoiceFromWallet(client, { invoiceId, maxAmount = null, verified_by = null, notes = null, ledgerTimestamp = null, allowOtherEarmarks = false, outcome = null }) {
   const invRes = await client.query(`SELECT * FROM invoices WHERE invoice_id = $1 FOR UPDATE`, [invoiceId]);
   const invoice = invRes.rows[0];
   if (!invoice || !invoice.client_id || invoice.status === 'PAID') return 0;
@@ -160,36 +165,15 @@ async function payInvoiceFromWallet(client, { invoiceId, maxAmount = null, verif
   const wanted = round2(Math.min(due, maxAmount == null ? due : maxAmount));
   if (wanted <= 0.005) return 0;
 
-  const walletRes = await client.query(
-    `SELECT COALESCE(wallet_balance, 0) AS wallet_balance FROM client_profiles WHERE client_profile_id = $1 FOR UPDATE`,
-    [invoice.client_id]
-  );
-  const walletBalance = parseFloat(walletRes.rows[0]?.wallet_balance || 0);
-
-  let ownEarmark = 0;
-  if (invoice.booking_id) {
-    const ownRes = await client.query(
-      `SELECT COALESCE(wallet_earmarked, 0) AS own FROM bookings WHERE booking_id = $1 FOR UPDATE`,
-      [invoice.booking_id]
-    );
-    ownEarmark = parseFloat(ownRes.rows[0]?.own || 0);
-  }
-  const unearmarked = Math.max(0, walletBalance - await getEarmarkedTotal(client, invoice.client_id));
-  const available = Math.min(walletBalance, ownEarmark + unearmarked);
-  const draw = round2(Math.min(wanted, available));
+  // Which money is spent (own reservation, unreserved, and only with the override other bookings')
+  // is decided in one place — see walletService.takeFromWallet.
+  const taken = await takeFromWallet(client, {
+    client_id: invoice.client_id, booking_id: invoice.booking_id || null, amount: wanted, allowOtherEarmarks,
+  });
+  if (outcome) Object.assign(outcome, taken);
+  const draw = taken.drawn;
   if (draw <= 0.005) return 0;
 
-  const fromEarmark = Math.min(draw, ownEarmark);
-  await client.query(
-    `UPDATE client_profiles SET wallet_balance = wallet_balance - $1 WHERE client_profile_id = $2`,
-    [draw, invoice.client_id]
-  );
-  if (fromEarmark > 0) {
-    await client.query(
-      `UPDATE bookings SET wallet_earmarked = GREATEST(COALESCE(wallet_earmarked, 0) - $1, 0) WHERE booking_id = $2`,
-      [fromEarmark, invoice.booking_id]
-    );
-  }
 
   const finalNotes = notes || `${invoice.invoice_code} — paid from client wallet balance`;
   const txRes = await client.query(
@@ -201,6 +185,7 @@ async function payInvoiceFromWallet(client, { invoiceId, maxAmount = null, verif
     [invoice.client_id, invoice.booking_id || null, invoice.quote_id || null, draw, finalNotes, verified_by, ledgerTimestamp]
   );
   const transaction_id = txRes.rows[0].transaction_id;
+  if (outcome) outcome.transaction_id = transaction_id;
 
   await client.query(
     `INSERT INTO invoice_payments (invoice_id, transaction_id, amount, payment_method, notes, verified_by)

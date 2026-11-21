@@ -9,6 +9,7 @@ const {
 } = require('../services/billingService');
 const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
 const { drawWalletForBooking } = require('../services/walletService');
+const { reconcileBookingDays, reconcileAllBookingDays } = require('../services/dayAllocation');
 const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 const { isServiceDay } = require('../services/repeatDays');
 
@@ -370,6 +371,9 @@ const startDailyInvoicing = () => {
             [bookingId, today, amount, transactionId]
           );
 
+          // Record which payments settle which day (the draw above already paid it if the wallet could).
+          await reconcileBookingDays(client, bookingId);
+
           await client.query('RELEASE SAVEPOINT cron_item');
           clientInvoiceCount++;
           console.log(`✅ Client Invoice: ${bookingData.client_name} charged Rs.${amount} for ${today}`);
@@ -438,6 +442,12 @@ const startDailyInvoicing = () => {
       if (postScheduled.executed > 0 || postScheduled.failed > 0) {
         console.log(`✅ Scheduled actions (post-billing): ${postScheduled.executed} executed, ${postScheduled.failed} failed.`);
       }
+
+      // Step 3.9 — Safety net: bring every booking's per-day payment tracking in line with its payments.
+      await client.query('BEGIN');
+      const dayRecon = await reconcileAllBookingDays(client);
+      await client.query('COMMIT');
+      console.log(`✅ Day payment tracking reconciled: ${dayRecon.changed} of ${dayRecon.bookings} booking(s) adjusted.`);
 
       // Step 4 — Run credit monitor in its own transaction
       await client.query('BEGIN');

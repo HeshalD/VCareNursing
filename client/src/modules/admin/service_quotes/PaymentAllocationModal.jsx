@@ -147,42 +147,27 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const loadLineItemsForInvoicing = async (serviceLineItems, pQuoteId) => {
     try {
       let productItems = [];
-      let productAccepted = false;
       if (pQuoteId) {
         const productDetail = await apiClient.getProductQuote(pQuoteId);
-        productAccepted = productDetail?.data?.status === 'ACCEPTED';
         productItems = (productDetail?.data?.line_items || []).map((li) => ({ ...li, quote_id: pQuoteId }));
       }
-      const allItems = [
-        ...(serviceLineItems || []).map((li) => ({ ...li, quote_id: quoteId })),
-        ...productItems,
-      ].filter((li) => li.item_type !== 'DISCOUNT'
-        // Rentals get their own rental-agreement invoice when the product quote is accepted, so a
-        // manual invoice would just duplicate it.
-        && !li.rental_billing_type
-        // Care-rate/shift-rate lines are invoiced strictly through the booking's
-        // own day-by-day invoice-decision flow, never here.
-        && li.item_subtype !== 'RATE_DAILY'
-        && li.item_subtype !== 'RATE_SHIFT'
-        // The registration fee gets its own dedicated invoice as soon as it's
-        // settled (see quoteController.ensureRegFeeInvoiceRecord) — offering it
-        // here too would just let an admin create a duplicate document for it.
-        && !li.is_registration_fee);
+      // Only product lines (and standalone deposits) are invoiced one by one. Rentals are billed by
+      // their rental agreement, care and shift rates through the booking's day-by-day invoicing, the
+      // registration fee by its own invoice, and custom charges on a service quotation no longer exist.
+      const allItems = productItems.filter((li) => ['PRODUCT', 'DEPOSIT'].includes(li.item_type)
+        && !li.rental_billing_type && (parseFloat(li.amount) || 0) > 0);
 
-      const quoteIds = [quoteId, ...(pQuoteId ? [pQuoteId] : [])];
-      const invoiceLists = await Promise.all(quoteIds.map((id) => apiClient.getLineItemInvoices(id)));
+      const invoiceRes = pQuoteId ? await apiClient.getLineItemInvoices(pQuoteId) : { data: [] };
       const invoiceMap = Object.fromEntries(
-        invoiceLists
-          .flatMap((res) => (Array.isArray(res?.data) ? res.data : []))
-          .map((inv) => [inv.line_item_id, inv])
+        (Array.isArray(invoiceRes?.data) ? invoiceRes.data : []).map((inv) => [inv.line_item_id, inv])
       );
 
       setLineItems(
-        allItems
-          // Once the product quote is accepted its items are already invoiced (by the quote's own
-          // invoice), so only items that already have an individual invoice stay listed.
-          .filter((li) => li.quote_id === quoteId || !productAccepted || invoiceMap[li.line_item_id])
-          .map((li) => ({ ...li, invoice: invoiceMap[li.line_item_id] || null }))
+        allItems.map((li) => ({
+          ...li,
+          // A line billed by an older combined invoice shows as invoiced too, without its own number.
+          invoice: invoiceMap[li.line_item_id] || (li.billed ? { invoice_code: li.invoice_code || 'Invoiced', pdf_url: null } : null),
+        }))
       );
     } catch {
       setLineItems([]);
@@ -198,8 +183,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       if (created) {
         setLineItems((prev) => prev.map((li) => (li.line_item_id === lineItemId ? { ...li, invoice: created } : li)));
       } else if ((res?.skipped_line_item_ids || []).includes(lineItemId)) {
-        setLineItems((prev) => prev.filter((li) => li.line_item_id !== lineItemId));
-        setError('That item is already invoiced on the quotation\'s product invoice, so no separate invoice was created.');
+        setError('That line is already invoiced, so no new invoice was created.');
       }
     } catch (err) {
       setError(err.message || 'Failed to create invoice');
@@ -222,11 +206,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       const created = Array.isArray(res?.data) ? res.data : [];
       const createdMap = Object.fromEntries(created.map((inv) => [inv.line_item_id, inv]));
       const skippedIds = new Set(res?.skipped_line_item_ids || []);
-      setLineItems((prev) => prev
-        .filter((li) => !skippedIds.has(li.line_item_id))
-        .map((li) => (createdMap[li.line_item_id] ? { ...li, invoice: createdMap[li.line_item_id] } : li)));
+      setLineItems((prev) => prev.map((li) => (createdMap[li.line_item_id] ? { ...li, invoice: createdMap[li.line_item_id] } : li)));
       if (skippedIds.size > 0) {
-        setError('Some items are already invoiced on the quotation\'s product invoice, so no separate invoice was created for them.');
+        setError('Some lines were already invoiced, so no new invoice was created for them.');
       }
     } catch (err) {
       setError(err.message || 'Failed to create invoices');
@@ -282,14 +264,16 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       const productLineItems = productDetail?.data?.line_items || [];
       const productsTotal = productLineItemsTotal(productLineItems);
 
-      // Standalone per-line-item invoices (category LINE_ITEM) are documents only — they say
-      // nothing about whether the quote was accepted or how much has been paid.
-      const realInvoices = (res) => (Array.isArray(res?.data) ? res.data : []).filter((i) => i.category !== 'LINE_ITEM');
       // Invoices that actually carry money for this quote: everything except leftover duplicate
       // line-item invoices (an individually-invoiced item IS its own ledger once accepted).
       const ledgerInvoices = (res) => (Array.isArray(res?.data) ? res.data : []).filter((i) => !i.is_duplicate);
-      let invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
-      let invoices = realInvoices(invRes);
+      const invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
+      // What has been paid so far across the quotation's product invoices. A fully-PAID invoice counts
+      // as fully paid even if it predates the invoice_payments ledger.
+      const productsPaid = ledgerInvoices(invRes).reduce(
+        (s, i) => s + (i.status === 'PAID' ? (parseFloat(i.amount) || 0) : (parseFloat(i.amount_paid) || 0)),
+        0
+      );
 
       // A linked PRODUCT quote only gets its own `invoices` row(s) once
       // someone explicitly accepts it — accept it here (via
@@ -297,12 +281,12 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       // knows how to create rental_agreements and mark units RENTED —
       // see the EST-1368/BED-003 incident) so the Products & Rentals
       // bucket doesn't silently disappear from this modal.
-      if (invoices.length === 0 && productLineItems.length > 0) {
-        // Not accepted yet. Accepting is what creates the quote's payable invoices, so it is
-        // deferred to submit time (see handleSubmit) instead of happening as soon as this form
-        // opens. That leaves the admin the chance to invoice individual items first — an item
-        // invoiced here is then left out of the quote's own invoice rather than billed twice.
-        const vItems = productLineItems.filter((li) => li.vendor_id);
+      if (productLineItems.some((li) => li.billed === false)) {
+        // One or more lines have no invoice yet. Accepting creates one invoice per remaining line, so
+        // it is deferred to submit time (see handleSubmit) instead of happening as soon as this form
+        // opens. That leaves the admin the chance to invoice individual lines first; a line invoiced
+        // here is simply left as it is when the rest are accepted.
+        const vItems = productLineItems.filter((li) => li.vendor_id && li.billed === false);
         const initialDecisions = {};
         for (const li of vItems) {
           const defaultAmount = parseFloat(li.cost_price_snapshot ?? li.product_cost_price ?? 0) * parseFloat(li.quantity || 1);
@@ -318,20 +302,14 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         setVendorItems(vItems);
         setVendorDecisions(initialDecisions);
         setProductNeedsAccept(true);
-        // Nothing paid or accepted yet — the full quoted total is due.
-        setProductsRemaining(productsTotal);
-        setCombinedRemaining(regRemaining + svcOnlyRemaining + productsTotal);
+        // The full quoted total is due, less anything already paid on lines that are invoiced.
+        const dueNow = Math.max(productsTotal - productsPaid, 0);
+        setProductsRemaining(dueNow);
+        setCombinedRemaining(regRemaining + svcOnlyRemaining + dueNow);
         setLoading(false);
         return;
       }
 
-      // A fully-PAID invoice counts as fully paid even if it predates
-      // the invoice_payments ledger (no rows there yet for it) —
-      // amount_paid alone would understate it in that case.
-      const productsPaid = ledgerInvoices(invRes).reduce(
-        (s, i) => s + (i.status === 'PAID' ? (parseFloat(i.amount) || 0) : (parseFloat(i.amount_paid) || 0)),
-        0
-      );
       productsDue = Math.max(productsTotal - productsPaid, 0);
     } catch (productErr) {
       // Surfaced instead of silently showing 0 — a failed fetch here
@@ -878,7 +856,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                 {visibleLineItems.length > 0 && (
                   <div>
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Line Item Invoices (optional)</p>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Product Invoices</p>
                       {visibleLineItems.some((li) => !li.invoice) && (
                         <button
                           type="button"
@@ -892,7 +870,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       )}
                     </div>
                     <p className="mb-2 text-[11px] text-slate-500">
-                      Optional. Raise an individual invoice for an item below only if you want one — otherwise it is simply included in the combined invoice. An item you invoice here is not invoiced a second time. Care-rate/shift-rate charges are invoiced through the booking, and rentals get their own invoice when the product quote is accepted, so neither appears here.
+                      Every product line has its own invoice, which is also its charge on the client's account. Raise one here now, or leave it and the remaining lines are invoiced when this payment is recorded or the booking is created. Care and shift rates are invoiced through the booking, and rentals get their own invoice when accepted, so neither appears here.
                     </p>
                     <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
                       {visibleLineItems.map((li) => (
@@ -903,7 +881,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                           </div>
                           {li.invoice ? (
                             <a
-                              href={li.invoice.pdf_url}
+                              href={li.invoice.pdf_url || undefined}
                               target="_blank"
                               rel="noreferrer"
                               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100"

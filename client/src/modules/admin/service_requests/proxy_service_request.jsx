@@ -9,7 +9,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { patientDisplayName } from '../../../utils/clientName';
-import DateInput, { todayISO } from '../../../components/common/DateInput';
+import DateInput, { todayISO, daysAgoISO, MAX_BACKDATE_DAYS } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
@@ -1016,7 +1016,10 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                     </div>
                     <div>
                       <label className={labelCls}>Preferred Start Date</label>
-                      <DateInput name="start_date" value={formData.start_date} onChange={handleInputChange} min={todayISO()} calendar className={inputCls} />
+                      <DateInput name="start_date" value={formData.start_date} onChange={handleInputChange} min={daysAgoISO(MAX_BACKDATE_DAYS)} calendar className={inputCls} />
+                      {formData.start_date && formData.start_date < todayISO() && (
+                        <p className="mt-1 text-xs text-amber-700">This date is in the past. Care already given will need its invoice and salary confirmed day by day once the booking exists.</p>
+                      )}
                     </div>
                     <div>
                       <label className={labelCls}>Additional Remarks</label>

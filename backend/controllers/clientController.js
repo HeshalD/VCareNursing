@@ -23,6 +23,8 @@ const { billingName } = require('../utils/clientName');
 const { userHasPermission } = require('../middleware/authMiddleware');
 const { getClientFinancialTotals, getClientOverdueBreakdown, bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 const { getClientFinancialBreakdown } = require('../services/clientFinancialBreakdown');
+const { TIER_SQL, TIERS, describeTier } = require('../services/registrationTier');
+const { dayPaidSql, dayPaymentState, reconcileClientBookingDays } = require('../services/dayAllocation');
 
 async function getActorName(userId) {
   const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -1512,6 +1514,7 @@ exports.getAllClients = async (req, res) => {
       status = '',
       pending_migration = '',
       contact_pending = '',
+      tier = '',
     } = req.query;
 
     const scopeClause = salespersonId
@@ -1531,7 +1534,10 @@ exports.getAllClients = async (req, res) => {
          COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'WAIVED') AS waived_count,
          COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'EXPIRED') AS expired_count,
          COUNT(*) FILTER (WHERE cp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count,
-         COUNT(*) FILTER (WHERE cp.onboarding_status = 'CONTACT_PENDING') AS contact_pending_count
+         COUNT(*) FILTER (WHERE cp.onboarding_status = 'CONTACT_PENDING') AS contact_pending_count,
+         COUNT(*) FILTER (WHERE ${TIER_SQL} = 'ACTIVE_PAID') AS tier_active_paid_count,
+         COUNT(*) FILTER (WHERE ${TIER_SQL} = 'ACTIVE_UNPAID') AS tier_active_unpaid_count,
+         COUNT(*) FILTER (WHERE ${TIER_SQL} = 'INACTIVE') AS tier_inactive_count
        FROM client_profiles cp
        JOIN users u ON cp.user_id = u.user_id
        ${scopeClause ? `WHERE ${scopeClause}` : ''}`,
@@ -1544,6 +1550,10 @@ exports.getAllClients = async (req, res) => {
     if (status) {
       params.push(status);
       filters.push(`COALESCE(cp.reg_fee_status, 'PENDING') = $${params.length}`);
+    }
+    if (tier && Object.values(TIERS).includes(tier)) {
+      params.push(tier);
+      filters.push(`${TIER_SQL} = $${params.length}`);
     }
     if (pending_migration === 'true') filters.push(`cp.onboarding_status = 'PENDING_MIGRATION'`);
     if (contact_pending === 'true') filters.push(`cp.onboarding_status = 'CONTACT_PENDING'`);
@@ -1611,7 +1621,8 @@ exports.getAllClients = async (req, res) => {
     const dataParams = [...params, perPage, offset];
     const dataRes = await db.query(
       `SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at,
-              coord.full_name AS coordinator_name
+              coord.full_name AS coordinator_name,
+              ${TIER_SQL} AS registration_tier
        FROM client_profiles cp
        JOIN users u ON cp.user_id = u.user_id
        LEFT JOIN internal_staff coord ON coord.id = cp.coordinator_staff_id
@@ -1622,9 +1633,13 @@ exports.getAllClients = async (req, res) => {
     );
 
     const c = countsRes.rows[0];
+    const rowsWithTier = dataRes.rows.map((r) => ({
+      ...r,
+      registration_tier_reason: describeTier({ tier: r.registration_tier, reg_fee_status: r.reg_fee_status, reg_fee_expires_at: r.reg_fee_expires_at }),
+    }));
     res.status(200).json({
       status: 'success',
-      data: dataRes.rows,
+      data: rowsWithTier,
       pagination: {
         current_page: currentPage,
         total_pages: totalPages,
@@ -1643,6 +1658,11 @@ exports.getAllClients = async (req, res) => {
         Expired: parseInt(c.expired_count, 10),
         pending_migration: parseInt(c.pending_migration_count, 10),
         contact_pending: parseInt(c.contact_pending_count, 10),
+        tiers: {
+          ACTIVE_PAID: parseInt(c.tier_active_paid_count, 10),
+          ACTIVE_UNPAID: parseInt(c.tier_active_unpaid_count, 10),
+          INACTIVE: parseInt(c.tier_inactive_count, 10),
+        },
       },
     });
   } catch (error) {
@@ -1936,6 +1956,17 @@ exports.sendRegFeeInvoice = async (req, res) => {
       }
     } catch (saveErr) {
       console.error('Failed to save registration fee invoice record:', saveErr.message);
+    }
+
+    // Record the invoice on the ledger too (a REGISTRATION_FEE DEBIT), so it shows in the client's
+    // transactions and Total Invoiced the moment it is sent. Non-fatal: the overdue invoice above
+    // already counts it if this write fails, and the integrity check will flag the missing debit.
+    try {
+      await recordRegFeeInvoiceDebit(db, {
+        client_id, amount: feeAmount, notes: `Registration fee invoiced (${invoiceCode})`, ignoreOverdueInvoice: true,
+      });
+    } catch (debitErr) {
+      console.error('Failed to record registration fee ledger charge:', debitErr.message);
     }
 
     // Crediting now happens the moment the invoice goes out, not when it's later
@@ -2742,9 +2773,12 @@ exports.getClientInvoices = async (req, res) => {
   const where = conditions.join(' AND ');
 
   try {
+    // Make sure each day's paid amount reflects the booking's latest payments before it is shown.
+    await reconcileClientBookingDays(client_id);
     const [rows, countResult] = await Promise.all([
       db.query(
         `SELECT
+            ${dayPaidSql('bdi')} AS allocated_paid,
             bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount,
             bdi.entry_mode, bdi.decided_by_name, bdi.decided_at, bdi.notes,
             bdi.shift_slot_id, bdi.whatsapp_sent_at,
@@ -2772,9 +2806,10 @@ exports.getClientInvoices = async (req, res) => {
     ]);
 
     const total = parseInt(countResult.rows[0].count, 10);
+    const data = rows.rows.map(({ allocated_paid, ...r }) => ({ ...r, ...dayPaymentState(r.status, r.amount, allocated_paid) }));
     res.status(200).json({
       status: 'success',
-      data: rows.rows,
+      data,
       pagination: { total, page: parseInt(page, 10), limit: parseInt(limit, 10), total_pages: Math.ceil(total / parseInt(limit, 10)) },
     });
   } catch (err) {

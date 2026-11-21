@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { ImageOff, ArrowLeft, ShieldCheck, Truck, Package, Phone, Mail } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
+import PageBackdrop from '../../components/common/PageBackdrop';
 import apiClient from '../../api/api';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -32,7 +33,8 @@ const ProductDetailPage = () => {
   }, [productId]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
+    <div className="relative isolate min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
+      <PageBackdrop />
       <Navbar />
 
       <div className="pt-28 pb-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

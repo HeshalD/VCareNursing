@@ -1994,6 +1994,19 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     return this.request(qs ? `/client/${clientId}/invoices?${qs}` : `/client/${clientId}/invoices`);
   }
 
+  // Pay unpaid invoices (care days, products/rentals, registration fee) from the client's wallet.
+  async getWalletPayInfo(clientId) {
+    return this.request(`/client/${clientId}/wallet-pay/info`);
+  }
+
+  async previewWalletPay(clientId, payload) {
+    return this.request(`/client/${clientId}/wallet-pay/preview`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async walletPay(clientId, payload) {
+    return this.request(`/client/${clientId}/wallet-pay`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+
   async getAdminInvoices(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/client/all-invoices?${qs}` : '/client/all-invoices');
@@ -2208,6 +2221,19 @@ Add the registration fee to the quotation, or settle it from the client page.`);
   // Updates the CLIENT-facing billing rate(s) on a booking (daily_rate/shift_rate/ot_rate).
   async updateBookingRates(bookingId, payload) {
     return this.request(`/bookings/${bookingId}/rates`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Read-only: what moving a shift-based booking's start date earlier would change, and any blocks.
+  async previewBookingStartDate(bookingId, newStartDate) {
+    return this.request(`/bookings/${bookingId}/start-date/preview?new_start_date=${encodeURIComponent(newStartDate)}`);
+  }
+
+  // Moves a shift-based booking's start date earlier. Body: { new_start_date, expected_old_start_date, reason }.
+  async changeBookingStartDate(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/start-date`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
@@ -3133,8 +3159,11 @@ Add the registration fee to the quotation, or settle it from the client page.`);
 
   // Per-line-item invoices (category: 'LINE_ITEM') share the same generic
   // `invoices` table/listing endpoint as product invoices.
+  // The invoices raised for individual lines of a quotation: a product line's own invoice, or an old
+  // document-only invoice. The quotation's combined or rental invoices (no line) are left out.
   async getLineItemInvoices(quoteId) {
-    return this.getProductInvoices({ quote_id: quoteId, category: 'LINE_ITEM' });
+    const res = await this.getProductInvoices({ quote_id: quoteId });
+    return { ...res, data: (Array.isArray(res?.data) ? res.data : []).filter((inv) => inv.line_item_id) };
   }
 
   async getProductInvoice(invoiceId) {

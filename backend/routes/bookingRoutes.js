@@ -252,6 +252,9 @@ router.get('/:booking_id/daily-invoices', protect, requirePermission('VIEW_BOOKI
 router.post('/:booking_id/daily-invoices', protect, requirePermission('BOOKING_CONFIRM_DAILY_INVOICE'), bookingController.confirmDailyInvoice);
 router.patch('/:booking_id/invoicing-mode', protect, requirePermission('BOOKING_UPDATE_INVOICING_MODE'), bookingController.updateInvoicingMode);
 router.patch('/:booking_id/rates', protect, requirePermission('BOOKING_UPDATE_RATE'), coordinatorLock, bookingController.updateBookingRates);
+// Move a SHIFT_BASED booking's start date earlier (super admin by default). Moves no money.
+router.get('/:booking_id/start-date/preview', protect, requirePermission('BOOKING_CHANGE_START_DATE'), coordinatorLock, bookingController.previewStartDate);
+router.patch('/:booking_id/start-date', protect, requirePermission('BOOKING_CHANGE_START_DATE'), coordinatorLock, bookingController.changeStartDate);
 
 // Hospitalization status (any service model — patient may be admitted mid-booking)
 router.patch('/:booking_id/hospitalization', protect, requirePermission('BOOKING_UPDATE_HOSPITALIZATION'), bookingController.updateHospitalizationStatus);

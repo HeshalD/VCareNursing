@@ -1040,6 +1040,19 @@ exports.updateAssignment = async (req, res) => {
       });
     }
 
+    // An assignment's start date is anchored to the booking's start date (day 1 of the care
+    // timeline). Moving it here would leave the two out of step, so the only supported way
+    // to change it is the booking's "Correct start date" action.
+    if (service_start_date) {
+        const sameDay = String(service_start_date).slice(0, 10) === toDateStr(assignment.service_start_date);
+        if (!sameDay) {
+            return res.status(409).json({
+                status: 'error',
+                message: "An assignment's start date can't be changed here. Use \"Correct start date\" on the booking instead."
+            });
+        }
+    }
+
     // Build update query dynamically
     let updateFields = [];
     let updateValues = [];

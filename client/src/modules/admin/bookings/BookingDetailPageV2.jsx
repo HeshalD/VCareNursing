@@ -2556,6 +2556,83 @@ const BookingDetailPageV2 = () => {
     finally { setRateSubmitting(false); }
   };
 
+  // ── Correct start date (SHIFT_BASED and LIVE_IN, super admin by default) ─────
+  // Moves the booking's start date earlier so the missed days show up on the care
+  // timeline. It never creates a staff salary. SHIFT_BASED days are confirmed per day
+  // afterwards; for LIVE_IN the admin chooses, per added day, to invoice it now or leave
+  // it pending on the care timeline.
+  // { newDate, reason, preview, checking, submitting, error, done, choice: 'invoice'|'manual'|null,
+  //   dayInputs: { [dateISO]: { tick, amount } } }
+  const [startDateModal, setStartDateModal] = useState(null);
+  const canChangeStartDate = hasPermission('BOOKING_CHANGE_START_DATE') && (isShiftBased || isLiveIn)
+    && ['ACTIVE', 'OVERDUE'].includes(bookingSummary.status);
+  const canInvoiceAddedDays = hasPermission('BOOKING_CONFIRM_DAILY_INVOICE');
+  const shiftISO = (iso, days) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + days);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  };
+  const startDateISO = toLocalDateStr(bookingSummary.start_date);
+  const openStartDateModal = () => setStartDateModal({
+    newDate: '', reason: '', preview: null, checking: false, submitting: false, error: '', done: '',
+    choice: null, dayInputs: {},
+  });
+  const closeStartDateModal = () => setStartDateModal(null);
+  // The added LIVE_IN days that actually need an invoice decision (off days are skipped).
+  const startDateServiceDays = (m) => (m?.preview?.added_days_detail || []).filter(d => d.is_service_day);
+  const changeStartDateValue = async (newDate) => {
+    setStartDateModal(m => (m ? { ...m, newDate, preview: null, error: '', choice: null, dayInputs: {} } : m));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+    setStartDateModal(m => (m ? { ...m, checking: true } : m));
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.previewBookingStartDate(bookingId, newDate);
+      const preview = res?.data || null;
+      // Every added service day starts ticked, at the booking's daily rate; the admin can
+      // untick a day or type a different amount (e.g. a part-day on the new first day).
+      const dayInputs = {};
+      (preview?.added_days_detail || []).filter(d => d.is_service_day).forEach(d => {
+        dayInputs[d.service_date] = { tick: true, amount: d.default_amount ? String(d.default_amount) : '' };
+      });
+      // Ignore a slow answer for a date the admin has already changed.
+      setStartDateModal(m => (m && m.newDate === newDate ? { ...m, preview, dayInputs, checking: false } : m));
+    } catch (err) {
+      setStartDateModal(m => (m && m.newDate === newDate ? { ...m, checking: false, error: err?.message || 'Could not check this date' } : m));
+    }
+  };
+  const submitStartDateChange = async () => {
+    const m = startDateModal;
+    if (!m || !m.preview?.ok || m.reason.trim().length < 3) return;
+    const serviceDays = startDateServiceDays(m);
+    let addedDays;
+    if (isLiveIn && serviceDays.length > 0) {
+      if (!m.choice) { setStartDateModal(s => ({ ...s, error: 'Choose what to do with the added days first.' })); return; }
+      addedDays = serviceDays.map(d => {
+        const input = m.dayInputs[d.service_date] || {};
+        const invoice = m.choice === 'invoice' && Boolean(input.tick);
+        return invoice
+          ? { service_date: d.service_date, invoice: true, amount: Number(input.amount) }
+          : { service_date: d.service_date, invoice: false };
+      });
+      const bad = addedDays.find(d => d.invoice && !(d.amount > 0));
+      if (bad) { setStartDateModal(s => ({ ...s, error: `Enter an amount for ${formatDate(bad.service_date)}, or untick it.` })); return; }
+    }
+    setStartDateModal(s => ({ ...s, submitting: true, error: '' }));
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.changeBookingStartDate(bookingId, {
+        new_start_date: m.newDate,
+        expected_old_start_date: m.preview.booking.current_start_date,
+        reason: m.reason.trim(),
+        ...(addedDays ? { added_days: addedDays } : {}),
+      });
+      await Promise.all([fetchDetail(), isShiftBased ? fetchShiftData() : Promise.resolve(), fetchDailyRecords()]);
+      setStartDateModal(s => ({ ...s, submitting: false, done: res?.message || 'Start date updated.' }));
+    } catch (err) {
+      setStartDateModal(s => ({ ...s, submitting: false, error: err?.message || 'Failed to change the start date' }));
+    }
+  };
+
   const cascadeStartTimes = (slots, fromIdx = 0) => {
     const result = [...slots];
     for (let i = fromIdx; i < result.length - 1; i++) {
@@ -3475,21 +3552,22 @@ const BookingDetailPageV2 = () => {
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
                     marginBottom: 18, padding: '14px 18px', borderRadius: 10,
-                    background: '#f8fafc', border: '1px solid #e5e7eb',
+                    background: invoicingMode === 'AUTO' ? '#F0F9F4' : '#FDF2F2',
+                    border: `1px solid ${invoicingMode === 'AUTO' ? '#BCE0CC' : '#F5C9C5'}`,
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 34, height: 34, borderRadius: 8, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <Wallet style={{ width: 16, height: 16, color: '#374151' }} />
+                    <div style={{ width: 34, height: 34, borderRadius: 8, background: invoicingMode === 'AUTO' ? '#D3EEDF' : '#F8D7D4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Wallet style={{ width: 16, height: 16, color: invoicingMode === 'AUTO' ? '#1F8B4C' : '#BC4338' }} />
                     </div>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#111827' }}>Daily client invoicing</span>
-                        <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: '#e5e7eb', color: '#374151', letterSpacing: '.03em' }}>
+                        <span style={{ fontSize: 13.5, fontWeight: 700, color: invoicingMode === 'AUTO' ? '#14633A' : '#8E2B22' }}>Daily client invoicing</span>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: invoicingMode === 'AUTO' ? '#1F8B4C' : '#BC4338', color: '#fff', letterSpacing: '.03em' }}>
                           {invoicingMode}
                         </span>
                       </div>
-                      <div style={{ fontSize: 12.5, color: '#6b7280', marginTop: 2 }}>
+                      <div style={{ fontSize: 12.5, color: invoicingMode === 'AUTO' ? '#3F6B52' : '#8A4B45', marginTop: 2 }}>
                         {invoicingMode === 'AUTO'
                           ? 'Billed automatically every night at 23:59. Staff salary is always automatic for LIVE_IN bookings.'
                           : 'Confirm each day\'s client charge from the care timeline below. Staff salary stays automatic either way.'}
@@ -3503,7 +3581,7 @@ const BookingDetailPageV2 = () => {
                     onClick={toggleInvoicingMode}
                     disabled={invoicingModeSaving || autoBlockedByTwoStaff}
                     title={autoBlockedByTwoStaff ? AUTO_BLOCKED_REASON : undefined}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: invoicingModeSaving ? 'wait' : autoBlockedByTwoStaff ? 'not-allowed' : 'pointer', opacity: (invoicingModeSaving || autoBlockedByTwoStaff) ? 0.6 : 1, flexShrink: 0 }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: invoicingMode === 'AUTO' ? '#BC4338' : '#1F8B4C', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 700, color: '#fff', cursor: invoicingModeSaving ? 'wait' : autoBlockedByTwoStaff ? 'not-allowed' : 'pointer', opacity: (invoicingModeSaving || autoBlockedByTwoStaff) ? 0.6 : 1, flexShrink: 0 }}
                   >
                     {invoicingModeSaving ? 'Saving…' : invoicingMode === 'AUTO' ? 'Switch to Manual' : 'Switch to Auto'}
                   </button>
@@ -3712,12 +3790,166 @@ const BookingDetailPageV2 = () => {
                     <Field label="Status"        value={statusLabel} />
                     <Field label="Service type"  value={bookingSummary.service_type  || '-'} />
                     <Field label="Service model" value={bookingSummary.service_model || '-'} />
-                    <Field label="Start date"    value={formatDate(bookingSummary.start_date)} />
+                    <div>
+                      <Label>Start date</Label>
+                      <Value>{formatDate(bookingSummary.start_date)}</Value>
+                      {canChangeStartDate && (
+                        <button type="button" onClick={openStartDateModal}
+                          style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: '#137A6B', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>
+                          Correct start date
+                        </button>
+                      )}
+                    </div>
                     <Field label="Start time"    value={formatTime(bookingSummary.service_start_time)} />
                     {!isShiftBased && <Field label="Planned end" value={formatDate(bookingSummary.scheduled_end_time)} />}
                     {bookingSummary.actual_end_time && <Field label="Actual end" value={formatDT(bookingSummary.actual_end_time)} />}
                     <Field label="Created"       value={formatDT(bookingSummary.created_at)} />
                   </div>
+                  {startDateModal && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
+                      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col">
+                        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+                          <div>
+                            <h3 className="text-base font-bold text-slate-900">Correct start date</h3>
+                            <p className="text-xs text-slate-500 mt-0.5">Currently {formatDate(bookingSummary.start_date)}. Can only move earlier, by up to 14 days.</p>
+                          </div>
+                          <button onClick={closeStartDateModal} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
+                        </div>
+
+                        <div className="p-6 space-y-4 overflow-y-auto">
+                          {startDateModal.done ? (
+                            <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">{startDateModal.done}</p>
+                          ) : (
+                            <>
+                              <p className="text-xs text-slate-500">
+                                {isLiveIn
+                                  ? 'This moves the start date and shows the earlier day(s) on the care timeline. It never creates a staff salary — pay for those days is decided on the care timeline. You choose below what to do about the client invoices.'
+                                  : 'This only moves the start date. It does not create any invoice or staff salary. After the date moves, the earlier day(s) appear on the care timeline and you confirm each one there as usual.'}
+                              </p>
+                              <div>
+                                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New start date</label>
+                                <DateInput value={startDateModal.newDate}
+                                  min={startDateISO ? shiftISO(startDateISO, -14) : undefined}
+                                  max={startDateISO ? shiftISO(startDateISO, -1) : undefined}
+                                  onChange={e => changeStartDateValue(e.target.value)}
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                              </div>
+
+                              {startDateModal.checking && <p className="text-xs text-slate-500">Checking…</p>}
+
+                              {startDateModal.preview && startDateModal.preview.blocks.length > 0 && (
+                                <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-1">
+                                  <p className="text-xs font-bold text-red-800">This can't be done yet</p>
+                                  {startDateModal.preview.blocks.map((b, i) => <p key={i} className="text-xs text-red-700">• {b}</p>)}
+                                </div>
+                              )}
+
+                              {startDateModal.preview?.ok && (
+                                <div className="rounded-xl border border-slate-200 p-3 space-y-2 text-xs text-slate-700">
+                                  <p className="font-bold text-slate-900">What will change</p>
+                                  <p>• Booking start date: {formatDate(startDateModal.preview.changes.booking_start_date.from)} → <b>{formatDate(startDateModal.preview.changes.booking_start_date.to)}</b></p>
+                                  {startDateModal.preview.changes.patterns.length > 0 && (
+                                    <p>• Shift pattern now starts on the new date</p>
+                                  )}
+                                  {startDateModal.preview.changes.assignments.map(a => (
+                                    <p key={a.assignment_id}>• {a.staff_name}{a.staff_code ? ` (${a.staff_code})` : ''} now starts on the new date</p>
+                                  ))}
+                                  <p className="pt-1 font-semibold text-slate-900">
+                                    Days added to confirm: {startDateModal.preview.days_added.map(d => formatDate(d)).join(', ')}
+                                  </p>
+                                  {(startDateModal.preview.notices || []).map((n, i) => (
+                                    <p key={i} className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">{n}</p>
+                                  ))}
+                                </div>
+                              )}
+
+                              {isLiveIn && startDateModal.preview?.ok && (() => {
+                                const days = startDateServiceDays(startDateModal);
+                                const offDays = (startDateModal.preview.added_days_detail || []).filter(d => !d.is_service_day);
+                                if (days.length === 0) {
+                                  return <p className="text-xs text-slate-500">None of the added days are service days for this booking, so nothing needs invoicing.</p>;
+                                }
+                                const inputs = startDateModal.dayInputs || {};
+                                const ticked = days.filter(d => inputs[d.service_date]?.tick);
+                                const total = ticked.reduce((s, d) => s + (Number(inputs[d.service_date]?.amount) || 0), 0);
+                                const setChoice = (choice) => setStartDateModal(m => ({ ...m, choice, error: '' }));
+                                const setDay = (date, patch) => setStartDateModal(m => ({ ...m, error: '', dayInputs: { ...m.dayInputs, [date]: { ...m.dayInputs[date], ...patch } } }));
+                                return (
+                                  <div className="rounded-xl border border-slate-200 p-3 space-y-3 text-xs text-slate-700">
+                                    <p className="font-bold text-slate-900">What should happen to the client invoices for the added days?</p>
+                                    <label className={`flex items-start gap-2 rounded-lg border p-2.5 ${canInvoiceAddedDays ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'} ${startDateModal.choice === 'invoice' ? 'border-[#137A6B] bg-emerald-50/40' : 'border-slate-200'}`}>
+                                      <input type="radio" name="addedDaysChoice" disabled={!canInvoiceAddedDays} checked={startDateModal.choice === 'invoice'} onChange={() => setChoice('invoice')} className="mt-0.5" />
+                                      <span>
+                                        <b className="text-slate-900">Invoice them now</b>
+                                        <span className="block text-slate-500">Each ticked day is billed at the amount shown. The client's wallet is used first; whatever is unpaid can turn the booking Overdue.{!canInvoiceAddedDays && ' You need permission to confirm daily invoices.'}</span>
+                                      </span>
+                                    </label>
+                                    <label className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer ${startDateModal.choice === 'manual' ? 'border-[#137A6B] bg-emerald-50/40' : 'border-slate-200'}`}>
+                                      <input type="radio" name="addedDaysChoice" checked={startDateModal.choice === 'manual'} onChange={() => setChoice('manual')} className="mt-0.5" />
+                                      <span>
+                                        <b className="text-slate-900">I'll do them one by one on the care timeline</b>
+                                        <span className="block text-slate-500">Nothing is billed now. Each added day shows as "action needed" and you invoice it from the day view.</span>
+                                      </span>
+                                    </label>
+
+                                    {startDateModal.choice === 'invoice' && (
+                                      <div className="space-y-2">
+                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                          {days.map((d, idx) => {
+                                            const input = inputs[d.service_date] || { tick: false, amount: '' };
+                                            return (
+                                              <div key={d.service_date} className={`flex items-center gap-3 px-3 py-2 ${idx > 0 ? 'border-t border-slate-100' : ''} ${input.tick ? '' : 'bg-slate-50'}`}>
+                                                <input type="checkbox" checked={Boolean(input.tick)} onChange={e => setDay(d.service_date, { tick: e.target.checked })} />
+                                                <span className="flex-1 font-medium text-slate-900">{formatDate(d.service_date)}</span>
+                                                <span className="text-slate-500">Rs.</span>
+                                                <input type="number" min="0" step="0.01" value={input.amount} disabled={!input.tick}
+                                                  onChange={e => setDay(d.service_date, { amount: e.target.value })}
+                                                  onWheel={e => e.currentTarget.blur()}
+                                                  className="w-28 rounded border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-500 disabled:bg-slate-100" />
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                        <p className="text-slate-500">The first day may be a part-day if the staff member arrived late — adjust its amount if so. Unticked days stay pending on the care timeline.</p>
+                                        <p className="font-semibold text-slate-900">Invoiced now: Rs. {total.toLocaleString()} for {ticked.length} day{ticked.length === 1 ? '' : 's'}</p>
+                                      </div>
+                                    )}
+                                    {offDays.length > 0 && (
+                                      <p className="text-slate-500">Not a service day for this booking, so skipped: {offDays.map(d => formatDate(d.service_date)).join(', ')}.</p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+
+                              <div>
+                                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Reason</label>
+                                <textarea rows={2} value={startDateModal.reason}
+                                  onChange={e => setStartDateModal(m => ({ ...m, reason: e.target.value }))}
+                                  placeholder="Why was the start date wrong?"
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                              </div>
+
+                              {startDateModal.error && <p className="text-xs text-red-600">{startDateModal.error}</p>}
+                            </>
+                          )}
+                        </div>
+
+                        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+                          <button onClick={closeStartDateModal} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">
+                            {startDateModal.done ? 'Close' : 'Cancel'}
+                          </button>
+                          {!startDateModal.done && (
+                            <button onClick={submitStartDateChange}
+                              disabled={startDateModal.submitting || !startDateModal.preview?.ok || startDateModal.reason.trim().length < 3
+                                || (isLiveIn && startDateServiceDays(startDateModal).length > 0 && !startDateModal.choice)}
+                              className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-[#137A6B] disabled:opacity-40 disabled:cursor-not-allowed">
+                              {startDateModal.submitting ? 'Saving…' : 'Move start date'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </Card>
                 {/* Financial snapshot */}
                 <Card>
@@ -6619,7 +6851,11 @@ const BookingDetailPageV2 = () => {
         // staff member — that would charge the client twice. Revoke it to re-split.
         const dayAlreadyInvoicedWhole = Boolean(invoiceRecord && invoiceRecord.status === 'INVOICED');
         const splitInvoicePerStaff = isConcurrentDay && !dayAlreadyInvoicedWhole;
-        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
+        // A pending whole-day invoice row on an otherwise auto-billed LIVE_IN day means nothing
+        // billed it (a start-date correction added the day, or the old first day's pending row
+        // is no longer a boundary day) — so it has to be decided here, like any manual day.
+        const isUnbilledPendingDay = isLiveIn && invoicingMode !== 'MANUAL' && invoiceRecord?.status === 'PENDING';
+        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision || isUnbilledPendingDay;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
@@ -7370,6 +7606,9 @@ const BookingDetailPageV2 = () => {
                       <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400">Client Invoice</p>
                       {!manualInvoiceDay && isFirstDayInvoiceDecision && (
                         <p className="text-xs text-gray-400 mt-1">First day — this booking normally bills automatically, but decide whether to charge the client for today since the staff member only just started.</p>
+                      )}
+                      {!manualInvoiceDay && isUnbilledPendingDay && !isFirstDayInvoiceDecision && !isLastDayInvoiceDecision && (
+                        <p className="text-xs text-amber-700 mt-1">This day wasn't billed automatically. Decide it here.</p>
                       )}
                       {!manualInvoiceDay && isLastDayInvoiceDecision && (
                         <p className="text-xs text-gray-400 mt-1">Last day — this booking normally bills automatically, but decide whether to charge the client for today since the staff member's service ends today.</p>

@@ -29,6 +29,23 @@ const sendServiceRequestNotifications = async (mobileNumber, payerName, serviceT
     if (waRes.status === 'rejected')  console.error('[ServiceRequest] WhatsApp failed:', waRes.reason?.message);
 };
 
+// Staff may enter a request whose care already started, but not further back than this.
+const MAX_BACKDATE_DAYS = 14;
+
+// Returns an error message when `startDate` is more than MAX_BACKDATE_DAYS before today
+// (Colombo date), otherwise null. An empty or malformed date is left to the existing checks.
+async function startDateTooOldMessage(startDate) {
+    const value = String(startDate || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const r = await db.query(
+        `SELECT ($1::date < (NOW() AT TIME ZONE 'Asia/Colombo')::date - $2::int) AS too_old`,
+        [value, MAX_BACKDATE_DAYS]
+    );
+    return r.rows[0].too_old
+        ? `The start date can be at most ${MAX_BACKDATE_DAYS} days in the past.`
+        : null;
+}
+
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
     return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
@@ -472,6 +489,13 @@ exports.createServiceRequest = async (req, res) => {
             });
         }
 
+        // A backdated start is allowed (care that began before the request was entered),
+        // but only a short way back.
+        const startDateError = await startDateTooOldMessage(start_date);
+        if (startDateError) {
+            return res.status(400).json({ status: 'error', message: startDateError });
+        }
+
         // Validate preferred_gender
         const validGenders = ['MALE', 'FEMALE', 'ANY'];
         const finalPreferredGender = preferred_gender || 'ANY';
@@ -883,6 +907,12 @@ exports.updateServiceRequest = async (req, res) => {
                 ? [v.getFullYear(), String(v.getMonth() + 1).padStart(2, '0'), String(v.getDate()).padStart(2, '0')].join('-')
                 : String(v).slice(0, 10));
             if (newStart && newEnd && day(newEnd) <= day(newStart)) throw bad('The end date must be after the start date.');
+            // Only checked when the start date is actually being changed, so an older
+            // request can still be edited without touching its date.
+            if (has('start_date') && newStart && (!old.start_date || day(newStart) !== day(old.start_date))) {
+                const startDateError = await startDateTooOldMessage(newStart);
+                if (startDateError) throw bad(startDateError);
+            }
             identity = {
                 honorific: linkedClient ? old.honorific : clean('honorific'),
                 payer_gender: linkedClient ? old.payer_gender : enumOrNull('payer_gender'),

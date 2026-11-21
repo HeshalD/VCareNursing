@@ -800,6 +800,22 @@ const CareTimeline = ({
     return map;
   }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate, pauseWindows, serviceCalendar]);
 
+  // True when `dateISO` is the first or last day of the LIVE_IN assignment that owns this
+  // attendance record, including a last day that is only scheduled (a termination/completion
+  // that hasn't executed yet).
+  const isBoundaryDayOfAssignment = (assignmentId, dateISO) => {
+    const a = staffAssignments.find((x) => (x.assignment_id || x.id) === assignmentId);
+    if (!a || a.shift_slot_id) return false;
+    const startRaw = a.service_start_date || a.startDate;
+    const endRaw = a.service_end_date || a.endDate;
+    return Boolean(
+      (startRaw && toLocalISO(new Date(startRaw)) === dateISO)
+      || (endRaw && toLocalISO(new Date(endRaw)) === dateISO)
+      || scheduledActions.some((sa) =>
+        ['TERMINATION', 'COMPLETION'].includes(sa.action_type) && String(sa.effective_date || '').slice(0, 10) === dateISO)
+    );
+  };
+
   const getDayMeta = (dateISO, delivered) => {
     if (!delivered) return { salary: null, invoice: null };
     const salaryRecs = attendanceByDate.get(dateISO) || [];
@@ -811,7 +827,13 @@ const CareTimeline = ({
       // A LIVE_IN first/last day is confirmed with its salary deliberately left
       // PENDING (settled when the assignment ends) — once the day itself has been
       // confirmed, that isn't something the admin still has to act on today.
-      const awaitingPay = anyPending && confirmedDates.has(dateISO) && !draftDates.has(dateISO);
+      // "Awaiting pay" only makes sense while the day is still a first/last day of an
+      // assignment (its pay is settled when that assignment ends). A day that stopped being
+      // one — e.g. the start date was moved earlier — will never be settled that way, so it
+      // must show as action-needed instead of promising a settlement that won't come.
+      const stillBoundaryDay = serviceModel !== 'LIVE_IN'
+        || salaryRecs.filter((r) => r.salary_status === 'PENDING').every((r) => isBoundaryDayOfAssignment(r.assignment_id, dateISO));
+      const awaitingPay = anyPending && confirmedDates.has(dateISO) && !draftDates.has(dateISO) && stillBoundaryDay;
       const status = awaitingPay ? 'AWAITING_PAY' : anyPending ? 'PENDING' : anyPaid ? 'PAID' : anyRevoked ? 'REVOKED' : 'SKIPPED';
       const decidedBy = [...new Set(salaryRecs.filter((r) => r.decided_by_name).map((r) => r.decided_by_name))].join(', ') || null;
       const amount = salaryRecs.reduce((sum, r) => sum + (r.salary_status === 'PAID' ? Number(r.salary_amount || 0) : 0), 0);
@@ -1094,7 +1116,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges, serviceCalendar, todayIsOff, effectiveToday]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, scheduledActions, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges, serviceCalendar, todayIsOff, effectiveToday]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;

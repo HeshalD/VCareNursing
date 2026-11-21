@@ -429,15 +429,19 @@ const buildOverdue = async (clientId, totals) => {
 
   const entries = entryRes.rows.map((r) => {
     const isDebit = r.type === 'DEBIT';
-    const ignored = isDebit && BOOKING_NON_CHARGE_DEBIT_CATEGORIES.includes(r.category);
+    const refundedReversal = !isDebit && r.category === 'WALLET_REFUND'
+      && String(r.notes || '').startsWith('Reversal of ') && !String(r.notes || '').includes('(booking extended)');
+    const ignored = (isDebit && BOOKING_NON_CHARGE_DEBIT_CATEGORIES.includes(r.category)) || refundedReversal;
     return {
       id: r.id, code: r.code, date: r.date, category: r.category, method: r.method, notes: r.notes,
       booking_id: r.booking_id, booking_code: r.booking_code,
       invoiced: isDebit && !ignored ? num(r.amount) : null,
-      settled: isDebit ? null : num(r.amount),
+      settled: isDebit || refundedReversal ? null : num(r.amount),
       ignored: ignored ? num(r.amount) : null,
       counted: !ignored,
-      why: ignored ? NOT_A_BOOKING_CHARGE_WHY[r.category] : null,
+      why: refundedReversal
+        ? 'Reversal of a revoked day — it cancels the day’s charge and returns its payment, so it is not counted as paid'
+        : ignored ? NOT_A_BOOKING_CHARGE_WHY[r.category] : null,
       amount: num(r.amount), edit: editOf(r),
     };
   });
@@ -458,8 +462,9 @@ const buildOverdue = async (clientId, totals) => {
       'Only a booking that has been invoiced more than it has been settled counts. A booking paid ahead does not cancel another booking’s debt.',
       'Adds registration-fee invoices that are still marked overdue, unless the fee already has its own ledger charge (then the charge is counted instead, so it is never counted twice).',
       'Adds the unpaid part of the registration fee when its charge belongs to no booking: the fee charged minus every registration payment recorded (cash, transfer or wallet). A waived fee owes nothing. When the fee was charged on a booking it is already inside that booking’s balance above.',
+      'The unpaid registration fee only counts as overdue once the client has a started booking (tier Active · Unpaid). An invoiced client with no booking yet is "not yet due": still in Total Invoiced, not in Overdue.',
       'Adds product invoices that belong to no booking (a standalone sale, or products quoted before a booking exists) as soon as they are unpaid, less anything already paid on them. An invoice with a due date that has not passed yet is not counted. Product invoices that belong to a booking are already inside that booking’s balance above.',
-      'Settled amounts here include wallet draws, refunds and forfeitures — anything credited to the booking — so they can differ from Payments Made.',
+      'Settled amounts here include wallet draws and forfeitures — anything credited to the booking — so they can differ from Payments Made. The "Reversal of …" credit left by a revoked day is not counted: it cancels the day’s charge and returns its payment, so the two offset.',
       'Not counted as invoices: wallet-payoff mirrors, refunds paid out, wallet adjustments and staff-salary clawbacks. They appear dimmed in the entries table with the reason, so a wallet payoff visibly settles a booking instead of being added to what it owes.',
     ],
     checks: [

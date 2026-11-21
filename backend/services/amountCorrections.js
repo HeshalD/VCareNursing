@@ -55,6 +55,7 @@ const {
   checkAndFlagBookingOverdue,
 } = require('./billingService');
 const { drawWalletForBooking } = require('./walletService');
+const { reconcileBookingDays } = require('./dayAllocation');
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -272,6 +273,9 @@ const correctInvoiceAmount = async (client, {
     [newAmount, `Corrected Rs.${oldAmount} -> Rs.${newAmount}: ${reason}`, invoice.daily_invoice_id,
      appliedInPlace ? transactionId : null]
   );
+
+  // The day's charge changed: re-balance which payments settle which day.
+  await reconcileBookingDays(client, booking_id);
 
   const correction = await writeCorrectionRow(client, {
     booking_id, target_type: 'INVOICE', daily_invoice_id: invoice.daily_invoice_id,

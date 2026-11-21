@@ -5,7 +5,7 @@ const { createPaymentReceipt } = require('../services/receiptService');
 const { sendSms } = require('../utils/sms');
 const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials } = require('../services/clientBootstrapService');
 const { ensureCombinedInvoice, ensureRegFeeInvoiceRecord } = require('./quoteController');
-const { bookingChargeSql } = require('../services/clientFinancials');
+const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 const { applyInvoicePayment, lineItemDuplicateSql } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
@@ -13,6 +13,8 @@ const { recordRegFeeInvoiceDebit } = require('../services/registrationFeeService
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { parsePaymentDate } = require('../utils/paymentDate');
 const { creditClientWallet, settleQuoteBookingFromWallet } = require('../services/walletService');
+const { reconcileBookingDays } = require('../services/dayAllocation');
+const { payFromWallet } = require('../services/walletPayments');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1157,6 +1159,8 @@ const recordAllocatedPayment = async (req, res) => {
       }
     }
 
+    if (overflowResult?.booking_id) await reconcileBookingDays(client, overflowResult.booking_id);
+
     await client.query('COMMIT');
 
     sendClientWelcomeCredentials(clientBootstrap);
@@ -1479,6 +1483,8 @@ const recordBookingPayment = async (req, res) => {
     );
 
     const remaining_balance = parseFloat(booking.total_amount || 0) - new_total;
+
+    await reconcileBookingDays(client, booking_id);
 
     await client.query('COMMIT');
 
@@ -2169,7 +2175,7 @@ const walletPayoffBooking = async (req, res) => {
   const pgClient = await db.pool.connect();
   try {
     const { booking_id } = req.params;
-    const { amount, notes } = req.body;
+    const { amount, notes, allow_other_earmarks, override_reason } = req.body;
     const parsedAmount = parseFloat(amount);
 
     if (!booking_id || !uuidRegex.test(booking_id)) {
@@ -2182,155 +2188,50 @@ const walletPayoffBooking = async (req, res) => {
     await pgClient.query('BEGIN');
 
     const bookingResult = await pgClient.query(
-      `SELECT b.booking_id, b.client_id, b.amount_paid, b.status,
-              sr.active_quote_id as quote_id
-       FROM bookings b
-       LEFT JOIN service_requests sr ON sr.request_id = b.request_id
-       WHERE b.booking_id = $1`,
+      `SELECT booking_id, client_id, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
       [booking_id]
     );
-
     if (bookingResult.rows.length === 0) {
       await pgClient.query('ROLLBACK');
       return res.status(404).json({ status: 'error', message: 'Booking not found' });
     }
-
     const booking = bookingResult.rows[0];
     const bookingStatus = (booking.status || '').toUpperCase();
-
     if (!['ACTIVE', 'OVERDUE', 'PENDING'].includes(bookingStatus)) {
       await pgClient.query('ROLLBACK');
       return res.status(400).json({ status: 'error', message: `Wallet payoff is not available for bookings with status: ${booking.status}` });
     }
 
-    const invoiceResult = await pgClient.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_invoiced
-       FROM transactions
-       WHERE booking_id = $1 AND ${bookingChargeSql()} AND status = 'COMPLETED'`,
+    // What the booking still owes: charges minus payments, with a revoked day's returned payment
+    // not counted as paid (the same rule as the client page's Overdue figure).
+    const owedResult = await pgClient.query(
+      `SELECT COALESCE(SUM(amount) FILTER (WHERE ${bookingChargeSql()} AND status = 'COMPLETED'), 0)
+            - COALESCE(SUM(amount) FILTER (WHERE ${bookingSettledSql()}), 0) AS owed
+       FROM transactions WHERE booking_id = $1`,
       [booking_id]
     );
-
-    const totalInvoiced = parseFloat(invoiceResult.rows[0].total_invoiced);
-    const totalPaid = parseFloat(booking.amount_paid || 0);
-    const overdueAmount = totalInvoiced > totalPaid ? totalInvoiced - totalPaid : 0;
-
-    if (overdueAmount <= 0) {
+    const overdueAmount = Math.max(parseFloat(owedResult.rows[0].owed), 0);
+    if (overdueAmount <= 0.005) {
       await pgClient.query('ROLLBACK');
       return res.status(400).json({ status: 'error', message: 'This booking has no overdue amount to pay off' });
     }
-
     if (parsedAmount > overdueAmount + 0.005) {
       await pgClient.query('ROLLBACK');
       return res.status(400).json({ status: 'error', message: `Amount (${parsedAmount}) exceeds the overdue amount (${overdueAmount.toFixed(2)})` });
     }
 
-    const walletResult = await pgClient.query(
-      `SELECT wallet_balance FROM client_profiles WHERE client_profile_id = $1 FOR UPDATE`,
-      [booking.client_id]
-    );
-
-    if (walletResult.rows.length === 0) {
-      await pgClient.query('ROLLBACK');
-      return res.status(404).json({ status: 'error', message: 'Client profile not found' });
-    }
-
-    const walletBalance = parseFloat(walletResult.rows[0].wallet_balance || 0);
-
-    if (parsedAmount > walletBalance + 0.005) {
-      await pgClient.query('ROLLBACK');
-      return res.status(400).json({ status: 'error', message: `Insufficient wallet balance. Available: ${walletBalance.toFixed(2)}, Requested: ${parsedAmount.toFixed(2)}` });
-    }
-
-    const verified_by = req.user?.user_id || null;
-    const paymentNote = notes?.trim() || 'Wallet payoff for overdue booking amount';
-
-    await pgClient.query(
-      `UPDATE client_profiles SET wallet_balance = wallet_balance - $1 WHERE client_profile_id = $2`,
-      [parsedAmount, booking.client_id]
-    );
-
-    const paymentResult = await pgClient.query(
-      `INSERT INTO booking_payment_tracking (
-         booking_id, quote_id, client_id, amount_received, payment_method,
-         status, verified_by, notes, payment_date, verified_at
-       ) VALUES ($1, $2, $3, $4, 'WALLET', 'VERIFIED', $5, $6, NOW(), NOW())
-       RETURNING booking_payment_id, payment_date`,
-      [booking_id, booking.quote_id || null, booking.client_id, parsedAmount, verified_by, paymentNote]
-    );
-
-    const payment = paymentResult.rows[0];
-
-    await pgClient.query(
-      `UPDATE bookings
-       SET amount_paid = (
-         SELECT COALESCE(SUM(amount_received), 0)
-         FROM booking_payment_tracking
-         WHERE booking_id = $1 AND status = 'VERIFIED'
-       ), last_payment_date = NOW()
-       WHERE booking_id = $1`,
-      [booking_id]
-    );
-
-    // Split off any portion of this payoff that crosses the registration-fee
-    // threshold — the overdue amount being cleared can include a
-    // REGISTRATION_FEE DEBIT charge (see bookingController.js's
-    // convertToBooking), so this payment path can settle a reg fee too, same
-    // as the ordinary recordPayment flow. totalPaid (booking.amount_paid,
-    // fetched above before this payoff was applied) is the correct "total
-    // paid so far" ledger here since booking_payment_tracking — not
-    // payment_tracking — is this booking's canonical payment record.
-    const regFeeSplit = booking.quote_id
-      ? await computeRegFeeSplit(pgClient, {
-          client_id: booking.client_id,
-          quote_id: booking.quote_id,
-          amount: parsedAmount,
-          totalPaidBefore: totalPaid,
-        })
-      : { regFeePortion: 0, remainderAmount: parsedAmount, regFeeItem: null };
-
-    if (regFeeSplit.regFeePortion > 0) {
-      await pgClient.query(
-        `INSERT INTO transactions (
-           client_id, booking_id, quote_id, category, amount, payment_method,
-           verified_by, status, notes, transaction_type, created_at
-         ) VALUES ($1, $2, $3, 'REGISTRATION_FEE', $4, 'WALLET', $5, 'COMPLETED', $6, 'CREDIT', NOW())`,
-        [booking.client_id, booking_id, booking.quote_id || null, regFeeSplit.regFeePortion, verified_by, paymentNote]
-      );
-    }
-
-    if (regFeeSplit.remainderAmount > 0) {
-      await pgClient.query(
-        `INSERT INTO transactions (
-           client_id, booking_id, quote_id, category, amount, payment_method,
-           verified_by, status, notes, transaction_type, created_at
-         ) VALUES ($1, $2, $3, 'BOOKING_PAYMENT', $4, 'WALLET', $5, 'COMPLETED', $6, 'CREDIT', NOW())`,
-        [booking.client_id, booking_id, booking.quote_id || null, regFeeSplit.remainderAmount, verified_by, paymentNote]
-      );
-    }
-
-    if (regFeeSplit.regFeeItem) {
-      const newTotalPaid = totalPaid + parsedAmount;
-      if (newTotalPaid >= parseFloat(regFeeSplit.regFeeItem.amount)) {
-        try {
-          await settleRegistrationFee(pgClient, {
-            client_id: booking.client_id,
-            regFeeItem: regFeeSplit.regFeeItem,
-            verified_by,
-            creditSalespersonForRegistration,
-          });
-        } catch (regFeeErr) {
-          console.error('Registration fee settlement check failed (walletPayoffBooking):', regFeeErr.message);
-        }
-      }
-    }
-
-    await pgClient.query(
-      `INSERT INTO transactions (
-         client_id, booking_id, category, amount, payment_method,
-         verified_by, status, notes, transaction_type, created_at
-       ) VALUES ($1, $2, 'WALLET_DEBIT', $3, 'WALLET', $4, 'COMPLETED', $5, 'DEBIT', NOW())`,
-      [booking.client_id, booking_id, parsedAmount, verified_by, `Wallet deducted for booking overdue payoff — ${paymentNote}`]
-    );
+    // Same engine as the Invoices tab: follows the wallet-reservation rule (this booking's own
+    // reserved money first, then unreserved; other bookings' money only with the explicit override)
+    // and tracks which care day each payment settles.
+    const result = await payFromWallet(pgClient, {
+      client_id: booking.client_id,
+      targets: [{ type: 'BOOKING_DUE', id: booking_id, amount: parsedAmount }],
+      allowOtherEarmarks: allow_other_earmarks === true,
+      overrideReason: override_reason || null,
+      note: notes?.trim() || 'Wallet payoff for overdue booking amount',
+      actorUserId: req.user?.user_id || null,
+      creditSalespersonForRegistration,
+    });
 
     await pgClient.query('COMMIT');
 
@@ -2344,11 +2245,12 @@ const walletPayoffBooking = async (req, res) => {
       details: {
         booking_id,
         client_id: booking.client_id,
-        amount: parsedAmount,
-        wallet_balance_before: walletBalance,
-        wallet_balance_after: walletBalance - parsedAmount,
+        amount: result.total,
+        wallet_balance_before: result.wallet_before,
+        wallet_balance_after: result.wallet_after,
         overdue_amount: overdueAmount,
-        payment_id: payment.booking_payment_id,
+        items: result.items,
+        used_other_bookings_money: result.breakdown.fromOthers > 0,
       },
     });
 
@@ -2356,21 +2258,25 @@ const walletPayoffBooking = async (req, res) => {
       status: 'success',
       message: 'Overdue amount paid off from client wallet successfully',
       data: {
-        payment_id: payment.booking_payment_id,
-        amount_paid: parsedAmount,
-        wallet_balance_before: walletBalance,
-        wallet_balance_after: walletBalance - parsedAmount,
-        overdue_cleared: parsedAmount,
+        amount_paid: result.total,
+        wallet_balance_before: result.wallet_before,
+        wallet_balance_after: result.wallet_after,
+        overdue_cleared: result.total,
+        items: result.items,
       },
     });
   } catch (err) {
     await pgClient.query('ROLLBACK').catch(() => {});
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ status: 'error', message: err.message, code: err.code || undefined });
+    }
     console.error('Error in walletPayoffBooking:', err);
     return res.status(500).json({ status: 'error', message: err.message });
   } finally {
     pgClient.release();
   }
 };
+
 
 /**
  * List a client's ACTIVE/OVERDUE bookings that currently have money owed on

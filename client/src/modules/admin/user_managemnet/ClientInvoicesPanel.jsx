@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Download, Info, Loader2, MessageCircle, Pencil, RotateCcw, Search, X,
+  AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Download, Info, Loader2, MessageCircle, Pencil, RotateCcw, Search, Wallet, X,
 } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
 import EditedAmountBadge from '../components/EditedAmountBadge';
@@ -62,6 +62,16 @@ const DAY_STATUS = {
   REVOKED: { label: 'Revoked', tone: 'gray' },
 };
 
+// A billed care day also carries how much of the booking's payments settles it (per-day tracking).
+const PAY_STATUS = {
+  PAID: { label: 'Paid', tone: 'green' },
+  PART_PAID: { label: 'Part paid', tone: 'blue' },
+  UNPAID: { label: 'Unpaid', tone: 'amber' },
+};
+const dayPill = (d) => (d.status === 'INVOICED' && d.payment_status && PAY_STATUS[d.payment_status]) || DAY_STATUS[d.status] || { label: d.status, tone: 'gray' };
+const dayPayable = (d) => d.status === 'INVOICED' && (d.payment_status === 'UNPAID' || d.payment_status === 'PART_PAID');
+const tkey = (t) => `${t.type}:${t.id || ''}`;
+
 const STATUS_FILTERS = [
   { id: 'ALL', label: 'All' },
   { id: 'ATTENTION', label: 'Needs attention' },
@@ -94,9 +104,14 @@ const iconBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bord
 const resendBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bg-green-600 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50';
 const fieldCls = 'rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
-function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit }) {
+function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit, onPay }) {
   return (
     <div className="flex items-center justify-end gap-1">
+      {onPay && (
+        <button type="button" disabled={busy} onClick={onPay} title="Pay from client wallet" className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
+          <Wallet className="h-3.5 w-3.5" />
+        </button>
+      )}
       {onEdit && (
         <button type="button" disabled={busy} onClick={onEdit} title="Edit amount" className={iconBtn}>
           <Pencil className="h-3.5 w-3.5" />
@@ -148,6 +163,9 @@ export default function ClientInvoicesPanel({
   // COMBINED }) and the opener from useInvoiceAmountEditor.
   canEdit = {},
   onEdit,
+  // Pay unpaid invoices from the client's wallet: opener(targets) — null hides every pay control.
+  walletBalance = 0,
+  onPayFromWallet = null,
 }) {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -156,6 +174,7 @@ export default function ClientInvoicesPanel({
   const [dateTo, setDateTo] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
   const [visible, setVisible] = useState(PAGE);
+  const [selected, setSelected] = useState(() => new Map());
 
   const inRange = (d) => {
     const k = dayKey(d);
@@ -196,6 +215,7 @@ export default function ClientInvoicesPanel({
         previewDisabled: !inv.pdf_url,
         download: { href: inv.pdf_url || '' },
         resend: () => actions.resendRegFee(inv.invoice_id),
+        payTarget: !state.settled && inv.invoice_id === currentRegFee?.invoice_id && inv.status !== 'PAID' ? { type: 'REG_FEE' } : null,
         editRecord: inv,
         edit: inv.invoice_id === currentRegFee?.invoice_id
           ? edit('REG_FEE', { invoiceId: inv.invoice_id, currentAmount: inv.amount, label: 'Registration fee', code: inv.invoice_code })
@@ -218,6 +238,7 @@ export default function ClientInvoicesPanel({
           sub: `Ledger entry · ${l.source_label} · no PDF document`,
           amount: l.amount, state, busyKey: l.id,
           preview: () => {}, previewDisabled: true, download: { href: '' }, resend: null, editRecord: null, edit: null,
+          payTarget: !state.settled ? { type: 'REG_FEE' } : null,
         });
       });
       if (legacy) {
@@ -239,6 +260,7 @@ export default function ClientInvoicesPanel({
         title: inv.item_summary || (type === 'EXTRA' ? 'Custom charge' : 'Products'),
         sub: [inv.estimate_number && `Quotation ${inv.estimate_number}`, inv.paid_at && `Paid ${fmtDate(inv.paid_at)}`].filter(Boolean).join(' · ') || null,
         duplicate: inv.is_duplicate,
+        payTarget: type === 'PRODUCT' && !inv.is_duplicate && !state.settled ? { type: 'PRODUCT', id: inv.invoice_id } : null,
         amount: inv.amount, paid: inv.amount_paid, state,
         busyKey: inv.invoice_id,
         preview: () => openPreview(invoicePreview.product(inv)),
@@ -281,15 +303,21 @@ export default function ClientInvoicesPanel({
       g.days.sort((a, b) => dayKey(b.service_date).localeCompare(dayKey(a.service_date)));
       const billed = g.days.filter((d) => d.status === 'INVOICED');
       const pending = g.days.filter((d) => d.status === 'PENDING').length;
+      const unpaidDays = g.days.filter(dayPayable);
+      const hasTracking = billed.some((d) => d.payment_status);
       out.push({
         id: `care-${g.key}`, type: 'CARE', date: g.days[0].service_date, code: g.booking_code || g.booking_id?.slice(0, 8),
         title: monthLabel(g.month),
         booking: g,
         sub: `${billed.length} of ${g.days.length} day${g.days.length === 1 ? '' : 's'} billed`,
         amount: billed.reduce((s, d) => s + Number(d.amount || 0), 0),
+        due: unpaidDays.reduce((sum, d) => sum + Number(d.amount_due || 0), 0),
+        payTargets: unpaidDays.map((d) => ({ type: 'DAY', id: d.daily_invoice_id })),
         state: pending
           ? { label: `${pending} awaiting approval`, tone: 'amber', settled: false }
-          : { label: 'Billed', tone: 'green', settled: true },
+          : unpaidDays.length
+            ? { label: `${unpaidDays.length} unpaid`, tone: 'amber', settled: false }
+            : { label: hasTracking ? 'Paid' : 'Billed', tone: 'green', settled: true },
         days: g.days,
       });
     });
@@ -332,6 +360,30 @@ export default function ClientInvoicesPanel({
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+
+  const allTargets = useMemo(() => {
+    const m = new Map();
+    rows.forEach((r) => {
+      if (r.payTarget) m.set(tkey(r.payTarget), r.payTarget);
+      (r.payTargets || []).forEach((t) => m.set(tkey(t), t));
+    });
+    return [...m.values()];
+  }, [rows]);
+  const toggleTargets = (targets) => setSelected((prev) => {
+    const next = new Map(prev);
+    const allIn = targets.every((t) => next.has(tkey(t)));
+    targets.forEach((t) => { if (allIn) next.delete(tkey(t)); else next.set(tkey(t), t); });
+    return next;
+  });
+  const isSel = (targets) => targets.length > 0 && targets.every((t) => selected.has(tkey(t)));
+  const openPay = (targets) => onPayFromWallet && targets.length > 0 && onPayFromWallet(targets);
+  const checkCell = (targets) => (
+    <td className="w-8 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+      {onPayFromWallet && targets.length > 0 && (
+        <input type="checkbox" checked={isSel(targets)} onChange={() => toggleTargets(targets)} aria-label="Select for wallet payment" />
+      )}
+    </td>
+  );
 
   const cards = [
     { label: 'Needs attention', value: summary.attention, note: 'Unpaid, overdue or awaiting approval', tone: summary.attention ? 'text-amber-700' : 'text-gray-900', onClick: () => { setStatusFilter('ATTENTION'); setTypeFilter('ALL'); } },
@@ -440,6 +492,30 @@ export default function ClientInvoicesPanel({
         </div>
       )}
 
+      {/* Pay from wallet */}
+      {onPayFromWallet && allTargets.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+          <p className="flex items-center gap-2 text-sm text-emerald-900">
+            <Wallet className="h-4 w-4" />
+            Wallet balance <span className="font-semibold">{fmtMoney(walletBalance)}</span>
+            <span className="text-xs text-emerald-700">· {allTargets.length} unpaid invoice{allTargets.length === 1 ? '' : 's'}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            {selected.size > 0 && (
+              <>
+                <button type="button" onClick={() => setSelected(new Map())} className="text-xs font-medium text-emerald-700 hover:underline">Clear selection</button>
+                <button type="button" onClick={() => openPay([...selected.values()])} className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+                  Pay selected ({selected.size})
+                </button>
+              </>
+            )}
+            <button type="button" onClick={() => openPay(allTargets)} className="rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100">
+              Pay all unpaid
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* List */}
       {showLoading ? (
         <div className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white py-12 text-sm text-gray-500">
@@ -457,6 +533,7 @@ export default function ClientInvoicesPanel({
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
               <tr>
+                <th className="w-8 px-2 py-3" />
                 <th className="px-4 py-3 text-left">Date</th>
                 <th className="px-4 py-3 text-left">Invoice</th>
                 <th className="px-4 py-3 text-left">For</th>
@@ -472,6 +549,7 @@ export default function ClientInvoicesPanel({
                   return (
                     <React.Fragment key={r.id}>
                       <tr className="cursor-pointer hover:bg-gray-50" onClick={() => toggle(r.id)}>
+                        {checkCell(r.payTargets)}
                         <td className="px-4 py-3 whitespace-nowrap text-gray-700">
                           <span className="inline-flex items-center gap-1.5">
                             {open ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
@@ -494,16 +572,21 @@ export default function ClientInvoicesPanel({
                           {r.booking.service_type ? `${r.booking.service_type} care` : 'Care service'}
                           <span className="block text-[11px] text-gray-400">{r.sub} · click to {open ? 'hide' : 'see'} days</span>
                         </td>
-                        <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{fmtMoney(r.amount)}</td>
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
+                          <span className="font-semibold text-gray-800">{fmtMoney(r.amount)}</span>
+                          {r.due > 0.005 && <span className="block text-[11px] text-amber-600">{fmtMoney(r.due)} due</span>}
+                        </td>
                         <td className="px-4 py-3"><Pill tone={r.state.tone}>{r.state.label}</Pill></td>
                         <td className="px-4 py-3 text-right text-xs text-gray-400 whitespace-nowrap">{r.days.length} day{r.days.length === 1 ? '' : 's'}</td>
                       </tr>
                       {open && r.days.map((d) => {
-                        const st = DAY_STATUS[d.status] || { label: d.status, tone: 'gray' };
+                        const st = dayPill(d);
+                        const payT = dayPayable(d) ? [{ type: 'DAY', id: d.daily_invoice_id }] : [];
                         const decided = [d.decided_by_name && `by ${d.decided_by_name}`, d.decided_at && `on ${fmtDate(d.decided_at)}`].filter(Boolean).join(' ');
                         return (
                           <tr key={d.daily_invoice_id} className="bg-gray-50/60">
-                            <td className="py-2 pl-10 pr-4 whitespace-nowrap text-gray-600">{fmtDate(d.service_date)}</td>
+                            {checkCell(payT)}
+                            <td className="py-2 pl-6 pr-4 whitespace-nowrap text-gray-600">{fmtDate(d.service_date)}</td>
                             <td className="px-4 py-2 font-mono text-[11px] text-gray-400 whitespace-nowrap">DINV-{String(d.daily_invoice_id).slice(0, 8).toUpperCase()}</td>
                             <td className="px-4 py-2 text-gray-600">
                               {d.shift_label || (d.shift_number ? `Shift ${d.shift_number}` : 'Full day')}
@@ -512,12 +595,18 @@ export default function ClientInvoicesPanel({
                             <td className="px-4 py-2 text-right text-gray-700 whitespace-nowrap">
                               {d.amount != null ? fmtMoney(d.amount) : '—'}
                               <EditedAmountBadge record={d} className="ml-1.5" />
+                              {d.status === 'INVOICED' && d.payment_status && d.payment_status !== 'PAID' && (
+                                <span className="block text-[11px] text-gray-400">
+                                  {Number(d.amount_paid) > 0 ? `${fmtMoney(d.amount_paid)} paid · ` : ''}{fmtMoney(d.amount_due)} due
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-2">
                               <Pill tone={st.tone} title={decided ? `Decided ${decided}` : undefined}>{st.label}</Pill>
                             </td>
                             <td className="px-4 py-2">
                               <Actions
+                                onPay={onPayFromWallet && payT.length ? () => openPay(payT) : null}
                                 busy={busyId === d.daily_invoice_id}
                                 onPreview={() => openPreview(invoicePreview.daily(d))}
                                 download={{ onClick: () => actions.downloadDaily(d) }}
@@ -542,6 +631,7 @@ export default function ClientInvoicesPanel({
                 const overdue = r.state.label === 'Overdue';
                 return (
                   <tr key={r.id} className="hover:bg-gray-50">
+                    {checkCell(r.payTarget ? [r.payTarget] : [])}
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700">{fmtDate(r.date)}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex flex-col items-start gap-1">
@@ -578,6 +668,7 @@ export default function ClientInvoicesPanel({
                     </td>
                     <td className="px-4 py-3">
                       <Actions
+                        onPay={onPayFromWallet && r.payTarget ? () => openPay([r.payTarget]) : null}
                         busy={busyId === r.busyKey}
                         onPreview={r.preview}
                         previewDisabled={r.previewDisabled}

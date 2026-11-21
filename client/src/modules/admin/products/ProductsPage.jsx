@@ -1,14 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Loader2, X, Plus, Package, Image as ImageIcon, Trash2, Pencil,
-  ShoppingBag, FileText, CreditCard, Search, Check, AlertCircle,
-  Repeat, RotateCcw, Wrench, Undo2, Wallet, Download, History, Eye,
-  ExternalLink, EyeOff, ChevronDown, Upload, ChevronLeft, ChevronRight, Tag,
+  Loader2, X, Search, Check, AlertCircle, Download, ChevronDown, ChevronLeft, ChevronRight,
+  MoreHorizontal, Upload, Tag, ExternalLink, ArrowUp, ArrowDown, RotateCcw, Image as ImageIcon, Trash2,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
-import SearchFilterChip from '../components/SearchFilterChip';
-import useUrlSearchState from '../../../hooks/useUrlSearchState';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
@@ -18,9 +14,10 @@ import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
 import { HONORIFICS } from '../../../constants/honorifics';
 
-// Matches the public CatalogPage product card image box, which is a
-// square (aspect-square) slot.
+// Matches the public CatalogPage product card image box (square slot).
 const CATALOG_CARD_IMAGE_ASPECT = 1;
+const LOW_STOCK_THRESHOLD = 5;
+const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE'];
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -45,56 +42,511 @@ const DaysRemainingBadge = ({ date }) => {
   const color = days > 3 ? 'bg-emerald-50 text-emerald-700'
     : days >= 0 ? 'bg-amber-50 text-amber-700'
     : 'bg-red-50 text-red-700';
-  return <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${color}`}>{label}</span>;
+  return <span className={`ml-1.5 inline-flex rounded-full px-2 py-px text-xs font-semibold ${color}`}>{label}</span>;
 };
 
-const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE'];
+// ==================== DESIGN TOKENS ====================
 
-// Shared tokens (same convention used across the rest of the admin app)
-const inputCls = 'w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors';
-const primaryBtnCls = 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
-const ghostBtnCls = 'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
-function VisibilityBadge({ product }) {
-  const on = product.is_public !== false;
+const BTN_BASE = 'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50';
+const BTN_VARIANT = {
+  primary: 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700',
+  secondary: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
+  danger: 'border-red-200 bg-white text-red-700 hover:bg-red-50',
+  dangerSolid: 'border-red-600 bg-red-600 text-white hover:bg-red-700',
+  success: 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800',
+};
+const BTN_SIZE = { md: 'h-9 px-3.5 text-[13px]', sm: 'h-[30px] px-2.5 text-xs' };
+const btn = (variant = 'secondary', size = 'md') => `${BTN_BASE} ${BTN_VARIANT[variant]} ${BTN_SIZE[size]}`;
+const iconBtn = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-600 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50';
+
+const inputCls = (invalid) => `h-9 w-full rounded-md border bg-white px-3 text-sm text-slate-800 placeholder-slate-500 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 ${invalid ? 'border-red-600' : 'border-slate-300 focus-visible:border-blue-500'}`;
+const textareaCls = (invalid) => `w-full rounded-md border bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-500 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 ${invalid ? 'border-red-600' : 'border-slate-300 focus-visible:border-blue-500'}`;
+
+const MOTION_CSS = `
+@keyframes pp-slide{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+@keyframes pp-pop{from{transform:scale(.96);opacity:0}to{transform:none;opacity:1}}
+@keyframes pp-rise{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
+@keyframes pp-fade{from{opacity:0}to{opacity:1}}
+.pp-slide{animation:pp-slide 220ms ease-out}.pp-pop{animation:pp-pop 150ms ease-out}
+.pp-rise{animation:pp-rise 180ms ease-out}.pp-fade{animation:pp-fade 160ms ease-out}
+@media (prefers-reduced-motion:reduce){.pp-slide,.pp-pop,.pp-rise,.pp-fade{animation:none}}
+`;
+
+// ==================== SHARED PIECES ====================
+
+const CHIP_TONES = {
+  green: 'bg-emerald-50 text-emerald-700',
+  amber: 'bg-amber-50 text-amber-700',
+  red: 'bg-red-50 text-red-700',
+  blue: 'bg-blue-50 text-blue-700',
+  slate: 'bg-slate-100 text-slate-600',
+};
+
+function StatusChip({ tone = 'slate', children, className = '' }) {
   return (
-    <span
-      className={`ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[10px] font-semibold ${
-        on ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'
-      }`}
-      title={on ? 'Shown on the public catalog page' : 'Hidden from the public catalog page'}
-    >
-      {on ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-      {on ? 'On display' : 'Not displayed'}
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${CHIP_TONES[tone] || CHIP_TONES.slate} ${className}`}>
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-80" />
+      {children}
     </span>
   );
 }
 
-function SelectCheckbox({ checked, indeterminate = false, onChange, title }) {
+const KPI_VALUE_TONES = { amber: 'text-amber-700', green: 'text-emerald-700', red: 'text-red-700' };
+
+function Kpi({ label, value, sub, active, tone, onClick }) {
+  const body = (
+    <>
+      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</span>
+      <span className={`text-2xl font-semibold tabular-nums ${KPI_VALUE_TONES[tone] || 'text-slate-900'}`}>{value}</span>
+      {sub && <span className="text-xs text-slate-500">{sub}</span>}
+    </>
+  );
+  if (!onClick) {
+    return <div className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-white p-4 text-left">{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!active}
+      className={`flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+        active ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+      }`}
+    >
+      {body}
+    </button>
+  );
+}
+
+function Segmented({ options, value, onChange, ariaLabel }) {
+  return (
+    <div role="group" aria-label={ariaLabel} className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-lg bg-slate-100 p-[3px]">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={String(o.value)}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(o.value)}
+            className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+              on ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {o.label}
+            {o.count != null && <span className="ml-1.5 font-medium tabular-nums text-slate-500">{o.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange, label, disabled }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-50 ${checked ? 'bg-blue-600' : 'bg-slate-300'}`}
+    >
+      <span className={`h-4 w-4 rounded-full bg-white transition-transform motion-reduce:transition-none ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+    </button>
+  );
+}
+
+function SelectCheckbox({ checked, indeterminate = false, onChange, label }) {
   return (
     <input
       type="checkbox"
-      title={title}
+      aria-label={label}
       checked={checked}
       ref={(el) => { if (el) el.indeterminate = indeterminate && !checked; }}
       onChange={onChange}
-      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500"
     />
   );
 }
 
-const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
-const StatusDot = ({ active, activeLabel = 'Active', inactiveLabel = 'Inactive' }) => (
-  <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${active ? 'text-emerald-700' : 'text-slate-500'}`}>
-    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-    {active ? activeLabel : inactiveLabel}
-  </span>
-);
+function Field({ label, htmlFor, error, hint, children, className = '' }) {
+  return (
+    <div className={className}>
+      {label && <label htmlFor={htmlFor} className="mb-1.5 block text-[13px] font-semibold text-slate-700">{label}</label>}
+      {children}
+      {hint && !error && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+      {error && <p role="alert" className="mt-1 text-xs text-red-700">{error}</p>}
+    </div>
+  );
+}
 
-const UNIT_STATUS_DOT = {
-  AVAILABLE: { dot: 'bg-emerald-500', text: 'text-emerald-700' },
-  RENTED: { dot: 'bg-violet-500', text: 'text-violet-700' },
-  MAINTENANCE: { dot: 'bg-amber-400', text: 'text-amber-700' },
-};
+function ErrorBanner({ message, onRetry, onDismiss }) {
+  if (!message) return null;
+  return (
+    <div role="alert" className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+      <AlertCircle className="h-4 w-4 shrink-0" />
+      <span className="flex-1">{message}</span>
+      {onRetry && (
+        <button type="button" onClick={onRetry} className={btn('danger', 'sm')}>
+          <RotateCcw className="h-3 w-3" /> Retry
+        </button>
+      )}
+      {onDismiss && (
+        <button type="button" onClick={onDismiss} aria-label="Dismiss error" className="rounded p-1 text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+          <X className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SkeletonRows({ rows = 6 }) {
+  return (
+    <div role="status" aria-label="Loading" className="divide-y divide-slate-100">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex min-h-[60px] items-center gap-4 px-4">
+          <div className="h-10 w-10 shrink-0 animate-pulse rounded-lg bg-slate-100" />
+          <div className="h-3 w-48 animate-pulse rounded bg-slate-100" />
+          <div className="hidden h-3 flex-1 animate-pulse rounded bg-slate-100 sm:block" />
+          <div className="h-3 w-24 animate-pulse rounded bg-slate-100" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ title, body, action }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 px-4 py-14 text-center">
+      <p className="text-sm font-semibold text-slate-700">{title}</p>
+      {body && <p className="max-w-md text-sm text-slate-500">{body}</p>}
+      {action}
+    </div>
+  );
+}
+
+// Grid-based table primitives with ARIA table semantics.
+function TableShell({ minWidth, children }) {
+  return (
+    <div className="overflow-x-auto">
+      <div role="table" style={{ minWidth }}>{children}</div>
+    </div>
+  );
+}
+function HeadRow({ cols, children }) {
+  return (
+    <div
+      role="row"
+      className="grid min-h-10 items-center gap-x-3 border-b border-slate-200 bg-slate-50 px-4 text-xs font-bold uppercase tracking-wider text-slate-500"
+      style={{ gridTemplateColumns: cols }}
+    >
+      {children}
+    </div>
+  );
+}
+function HCell({ children, right, className = '' }) {
+  return <div role="columnheader" className={`${right ? 'text-right' : ''} ${className}`}>{children}</div>;
+}
+function BodyRow({ cols, children, muted }) {
+  return (
+    <div
+      role="row"
+      className={`grid min-h-[60px] items-center gap-x-3 border-b border-slate-100 px-4 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-50 ${muted ? 'opacity-60' : ''}`}
+      style={{ gridTemplateColumns: cols }}
+    >
+      {children}
+    </div>
+  );
+}
+function Cell({ children, right, className = '' }) {
+  return <div role="cell" className={`min-w-0 ${right ? 'text-right tabular-nums' : ''} ${className}`}>{children}</div>;
+}
+function ExpandRow({ children }) {
+  return (
+    <div role="row" className="pp-fade border-b border-slate-200 bg-slate-50">
+      <div role="cell" className="px-4 py-4">{children}</div>
+    </div>
+  );
+}
+
+function downloadCsv(filename, header, rows) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function SearchBox({ value, onChange, placeholder, label }) {
+  return (
+    <div className="relative min-w-[220px] max-w-[380px] flex-1 basis-[280px]">
+      <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+      <input
+        type="search"
+        aria-label={label || placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`${inputCls(false)} pl-9`}
+      />
+    </div>
+  );
+}
+
+// ==================== URL STATE ====================
+
+// Several keys can be patched in one call; '' / null removes a key.
+function useUrlParams() {
+  const [sp, setSp] = useSearchParams();
+  const ref = useRef(sp);
+  useEffect(() => { ref.current = sp; }, [sp]);
+  const update = useCallback((patch) => {
+    const next = new URLSearchParams(ref.current);
+    Object.entries(patch).forEach(([k, v]) => {
+      if (v === null || v === undefined || v === '') next.delete(k); else next.set(k, String(v));
+    });
+    ref.current = next;
+    setSp(next, { replace: true });
+  }, [setSp]);
+  return [sp, update];
+}
+
+function useEscape(handler) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      // A confirm dialog on top handles Escape itself.
+      if (document.querySelector('[role="alertdialog"]') && !e.target.closest?.('[role="alertdialog"]')) return;
+      handler();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [handler]);
+}
+
+// Lets the page header's primary button open the active tab's "new" drawer.
+function useCreateSignal(tick, fn) {
+  const seen = useRef(tick);
+  useEffect(() => {
+    if (tick !== seen.current) { seen.current = tick; fn(); }
+  }, [tick, fn]);
+}
+
+// ==================== TOAST + CONFIRM ====================
+
+const UiCtx = createContext({ toast: () => {}, confirm: () => Promise.resolve(false) });
+const useUi = () => useContext(UiCtx);
+
+function ConfirmDialog({ title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', tone = 'primary', onConfirm, onCancel }) {
+  useEscape(onCancel);
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <button type="button" aria-label="Cancel" tabIndex={-1} onClick={onCancel} className="pp-fade absolute inset-0 cursor-default bg-slate-900/40" />
+      <div role="alertdialog" aria-modal="true" aria-labelledby="pp-confirm-title" className="pp-pop relative w-full max-w-[420px] rounded-xl bg-white p-6 shadow-xl">
+        <h2 id="pp-confirm-title" className="text-base font-semibold text-slate-900">{title}</h2>
+        {body && <p className="mt-2 text-sm leading-relaxed text-slate-600">{body}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" autoFocus onClick={onCancel} className={btn('secondary')}>{cancelLabel}</button>
+          <button type="button" onClick={onConfirm} className={btn(tone === 'danger' ? 'dangerSolid' : tone === 'success' ? 'success' : 'primary')}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Toast({ message, undo, link, onClose }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[70] flex justify-center px-4">
+      <div role="status" aria-live="polite" className="pp-rise pointer-events-auto inline-flex max-w-full items-center gap-4 rounded-lg bg-slate-900 px-4 py-2.5 text-sm text-slate-50 shadow-lg">
+        <span>{message}</span>
+        {undo && (
+          <button type="button" onClick={() => { undo(); onClose(); }} className="font-bold text-blue-300 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+            Undo
+          </button>
+        )}
+        {link && (
+          <a href={link.href} target="_blank" rel="noreferrer" className="font-bold text-blue-300 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+            {link.label}
+          </a>
+        )}
+        <button type="button" onClick={onClose} aria-label="Dismiss notification" className="rounded p-0.5 text-slate-300 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UiProvider({ children }) {
+  const [toastState, setToastState] = useState(null);
+  const [dialog, setDialog] = useState(null);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const dismissToast = useCallback(() => { clearTimeout(timer.current); setToastState(null); }, []);
+  const toast = useCallback((message, opts = {}) => {
+    clearTimeout(timer.current);
+    setToastState({ message, undo: opts.undo, link: opts.link, key: Date.now() });
+    timer.current = setTimeout(() => setToastState(null), 6000);
+  }, []);
+  const confirm = useCallback((opts) => new Promise((resolve) => setDialog({ ...opts, resolve })), []);
+  const settle = (value) => { dialog?.resolve(value); setDialog(null); };
+  const ctx = useMemo(() => ({ toast, confirm }), [toast, confirm]);
+
+  return (
+    <UiCtx.Provider value={ctx}>
+      <style>{MOTION_CSS}</style>
+      {children}
+      {dialog && (
+        <ConfirmDialog
+          title={dialog.title}
+          body={dialog.body}
+          confirmLabel={dialog.confirmLabel}
+          cancelLabel={dialog.cancelLabel}
+          tone={dialog.tone}
+          onCancel={() => settle(false)}
+          onConfirm={() => settle(true)}
+        />
+      )}
+      {toastState && <Toast key={toastState.key} message={toastState.message} undo={toastState.undo} link={toastState.link} onClose={dismissToast} />}
+    </UiCtx.Provider>
+  );
+}
+
+// ==================== MODAL + DRAWER ====================
+
+function Modal({ title, subtitle, onClose, footer, children, onSubmit, width = 620 }) {
+  useEscape(onClose);
+  const Shell = onSubmit ? 'form' : 'div';
+  const shellProps = onSubmit ? { onSubmit, noValidate: true } : {};
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button type="button" aria-label="Close dialog" tabIndex={-1} onClick={onClose} className="pp-fade absolute inset-0 cursor-default bg-slate-900/40" />
+      <Shell
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        {...shellProps}
+        className="pp-pop relative flex max-h-[90vh] w-full flex-col rounded-xl bg-white shadow-xl"
+        style={{ maxWidth: width }}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className={iconBtn}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-xl border-t border-slate-200 bg-slate-50 px-5 py-3.5">{footer}</div>}
+      </Shell>
+    </div>
+  );
+}
+
+function Drawer({ title, subtitle, onClose, dirty = false, onSubmit, footer, children, width = 500 }) {
+  const { confirm } = useUi();
+  const requestClose = useCallback(async () => {
+    if (dirty) {
+      const ok = await confirm({
+        title: 'Discard unsaved changes?',
+        body: 'You have edits in this form that have not been saved.',
+        confirmLabel: 'Discard changes',
+        cancelLabel: 'Keep editing',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
+    onClose();
+  }, [dirty, confirm, onClose]);
+  useEscape(requestClose);
+  const Shell = onSubmit ? 'form' : 'div';
+  const shellProps = onSubmit ? { onSubmit, noValidate: true } : {};
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button type="button" aria-label="Close panel" tabIndex={-1} onClick={requestClose} className="pp-fade absolute inset-0 cursor-default bg-slate-900/40" />
+      <Shell
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        {...shellProps}
+        className="pp-slide relative flex h-full w-full flex-col bg-white shadow-xl"
+        style={{ maxWidth: width }}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={requestClose} aria-label="Close panel" className={iconBtn}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">{children}</div>
+        {footer && <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3.5">{footer}</div>}
+      </Shell>
+    </div>
+  );
+}
+
+function RowMenu({ items, label = 'More actions' }) {
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const open = !!pos;
+
+  const toggle = () => {
+    if (open) { setPos(null); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    const needed = items.length * 36 + 12;
+    const right = window.innerWidth - r.right;
+    setPos(r.bottom + needed > window.innerHeight ? { bottom: window.innerHeight - r.top + 4, right } : { top: r.bottom + 4, right });
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setPos(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+  }, [open]);
+
+  return (
+    <>
+      <button ref={btnRef} type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={toggle} className={iconBtn}>
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          <button type="button" aria-label="Close menu" tabIndex={-1} onClick={() => setPos(null)} className="fixed inset-0 z-40 cursor-default" />
+          <div role="menu" className="pp-pop fixed z-50 w-52 rounded-lg border border-slate-200 bg-white p-1 shadow-lg" style={pos}>
+            {items.map((it) => (
+              <button
+                key={it.label}
+                type="button"
+                role="menuitem"
+                onClick={() => { setPos(null); it.onClick(); }}
+                className={`block w-full rounded px-3 py-2 text-left text-[13px] font-medium hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${it.danger ? 'text-red-700' : 'text-slate-700'}`}
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// ==================== RECIPIENT (shared by quote + rental drawers) ====================
 
 const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
@@ -103,542 +555,1041 @@ const emptyWalkInClient = () => ({
   company_name: '', display_name_source: 'FULL_NAME', email: '', mobile_number: '', primary_address: '', city_id: '',
 });
 
-// Collects the same required fields as the normal "Add Client" flow
-// (user_managemnet.jsx) so a walk-in customer is registered as a full client
-// rather than a bare name + phone number.
-const WalkInClientFields = ({ value, onChange }) => {
+const walkInPayload = (w) => ({
+  full_name: w.full_name.trim(),
+  email: w.email || undefined,
+  mobile_number: w.mobile_number.trim(),
+  gender: w.gender,
+  primary_address: w.primary_address || undefined,
+  city_id: w.city_id || undefined,
+  client_type: w.client_type || 'INDIVIDUAL',
+  honorific: w.honorific || undefined,
+  company_name: w.company_name || undefined,
+  display_name_source: w.client_type === 'CORPORATE_PROXY' && w.company_name ? w.display_name_source : 'FULL_NAME',
+});
+
+// Validates the recipient block; returns { errors, message } using the same messages as before.
+function validateRecipient(recipientType, selectedClientId, walkIn) {
+  const errors = {};
+  if (recipientType === 'client' && !selectedClientId) errors.client = 'Please select a client';
+  if (recipientType === 'walk_in') {
+    if (!walkIn.full_name.trim()) errors.full_name = 'Please enter the walk-in customer\'s full name';
+    if (!walkIn.gender) errors.gender = 'Please select the walk-in customer\'s gender';
+    if (!walkIn.mobile_number.trim()) errors.mobile_number = 'Please enter the walk-in customer\'s mobile number — it registers them as a client';
+  }
+  return errors;
+}
+
+// Collects the same required fields as the normal "Add Client" flow so a
+// walk-in customer is registered as a full client.
+function WalkInClientFields({ value, onChange, errors = {} }) {
   const set = (patch) => onChange((v) => ({ ...v, ...patch }));
   return (
-    <div className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-      <div className="grid grid-cols-3 gap-2">
-        <select
-          value={value.honorific}
-          onChange={(e) => set({ honorific: e.target.value })}
-          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
-        >
-          <option value="">Honorific</option>
-          {HONORIFICS.map((h) => <option key={h} value={h}>{h}</option>)}
-        </select>
-        <input
-          type="text"
-          placeholder="Full name *"
-          value={value.full_name}
-          onChange={(e) => set({ full_name: e.target.value })}
-          className="col-span-2 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
+    <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Honorific" htmlFor="wi-honorific">
+          <select id="wi-honorific" value={value.honorific} onChange={(e) => set({ honorific: e.target.value })} className={inputCls(false)}>
+            <option value="">None</option>
+            {HONORIFICS.map((h) => <option key={h} value={h}>{h}</option>)}
+          </select>
+        </Field>
+        <Field label="Full name *" htmlFor="wi-name" error={errors.full_name} className="sm:col-span-2">
+          <input id="wi-name" type="text" value={value.full_name} onChange={(e) => set({ full_name: e.target.value })} className={inputCls(!!errors.full_name)} />
+        </Field>
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <select
-          value={value.gender}
-          onChange={(e) => set({ gender: e.target.value })}
-          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        >
-          <option value="">Gender *</option>
-          <option value="MALE">Male</option>
-          <option value="FEMALE">Female</option>
-          <option value="OTHER">Other</option>
-        </select>
-        <select
-          value={value.client_type}
-          onChange={(e) => set({
-            client_type: e.target.value,
-            ...(e.target.value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
-          })}
-          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        >
-          {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
-        </select>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Gender *" htmlFor="wi-gender" error={errors.gender}>
+          <select id="wi-gender" value={value.gender} onChange={(e) => set({ gender: e.target.value })} className={inputCls(!!errors.gender)}>
+            <option value="">Select…</option>
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </Field>
+        <Field label="Client type" htmlFor="wi-type">
+          <select
+            id="wi-type"
+            value={value.client_type}
+            onChange={(e) => set({
+              client_type: e.target.value,
+              ...(e.target.value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
+            })}
+            className={inputCls(false)}
+          >
+            {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
+          </select>
+        </Field>
       </div>
       {value.client_type === 'CORPORATE_PROXY' && (
-        <input
-          type="text"
-          placeholder="Company name"
-          value={value.company_name}
-          onChange={(e) => set({ company_name: e.target.value, ...(!e.target.value ? { display_name_source: 'FULL_NAME' } : {}) })}
-          className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
+        <Field label="Company name" htmlFor="wi-company">
+          <input
+            id="wi-company"
+            type="text"
+            value={value.company_name}
+            onChange={(e) => set({ company_name: e.target.value, ...(!e.target.value ? { display_name_source: 'FULL_NAME' } : {}) })}
+            className={inputCls(false)}
+          />
+        </Field>
       )}
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          type="email"
-          placeholder="Email (optional)"
-          value={value.email}
-          onChange={(e) => set({ email: e.target.value })}
-          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
-        <input
-          type="text"
-          placeholder="Mobile number *"
-          value={value.mobile_number}
-          onChange={(e) => set({ mobile_number: e.target.value })}
-          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Email (optional)" htmlFor="wi-email">
+          <input id="wi-email" type="email" value={value.email} onChange={(e) => set({ email: e.target.value })} className={inputCls(false)} />
+        </Field>
+        <Field label="Mobile number *" htmlFor="wi-mobile" error={errors.mobile_number}>
+          <input id="wi-mobile" type="text" value={value.mobile_number} onChange={(e) => set({ mobile_number: e.target.value })} className={inputCls(!!errors.mobile_number)} />
+        </Field>
       </div>
-      <CitySelect
-        value={value.city_id}
-        onChange={(city) => set({ city_id: city ? city.city_id : '' })}
-        placeholder="City (optional)"
-        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-      />
-      <input
-        type="text"
-        placeholder="Primary address (optional)"
-        value={value.primary_address}
-        onChange={(e) => set({ primary_address: e.target.value })}
-        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-      />
-      <p className="text-[11px] text-slate-400">
+      <Field label="City (optional)">
+        <CitySelect
+          value={value.city_id}
+          onChange={(city) => set({ city_id: city ? city.city_id : '' })}
+          placeholder="Select a city"
+          className={inputCls(false)}
+        />
+      </Field>
+      <Field label="Primary address (optional)" htmlFor="wi-address">
+        <input id="wi-address" type="text" value={value.primary_address} onChange={(e) => set({ primary_address: e.target.value })} className={inputCls(false)} />
+      </Field>
+      <p className="text-xs text-slate-500">
         Registers them as a client (login credentials sent via SMS) with their registration fee left pending — they can rent or purchase now and settle it later.
       </p>
     </div>
   );
-};
+}
 
-export default function ProductsPage() {
-  const [tab, setTab] = useState('catalog'); // 'catalog' | 'quotes' | 'rentals'
+function useClientsList() {
+  const [clients, setClients] = useState([]);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    try {
+      const res = await apiClient.getAllClients();
+      setError('');
+      setClients(Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []));
+    } catch (err) {
+      setError(err?.message || 'Failed to load clients.');
+    }
+  }, []);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
+  return { clients, error, reload: load };
+}
+
+function RecipientBlock({ recipientType, onTypeChange, clientsState, search, onSearch, selectedId, onSelect, walkIn, onWalkIn, errors = {} }) {
+  const q = search.trim().toLowerCase();
+  const qDigits = q.replace(/\s/g, '');
+  const filtered = clientsState.clients.filter((c) => (
+    (c.full_name || c.client_name || '').toLowerCase().includes(q)
+    || (qDigits && String(c.mobile_number || '').replace(/\s/g, '').includes(qDigits))
+  ));
+  const visible = filtered.slice(0, 50);
 
   return (
-    <AdminLayout title="Products" subtitle="Catalog, rentals, and product-based quotations & invoices">
-      <div className="space-y-5">
-        <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 w-fit">
-          {[
-            { id: 'catalog', label: 'Catalog', icon: Package },
-            { id: 'quotes', label: 'Quotes & Invoices', icon: FileText },
-            { id: 'rentals', label: 'Rentals', icon: Repeat },
-          ].map(({ id, label, icon: Icon }) => (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-slate-900">1. Recipient</h3>
+      <Segmented
+        ariaLabel="Recipient type"
+        value={recipientType}
+        onChange={onTypeChange}
+        options={[{ value: 'client', label: 'Existing client' }, { value: 'walk_in', label: 'Walk-in customer' }]}
+      />
+      {recipientType === 'client' ? (
+        <div className="space-y-2">
+          <ErrorBanner message={clientsState.error} onRetry={clientsState.reload} />
+          <SearchBox value={search} onChange={onSearch} placeholder="Search clients by name or mobile…" />
+          <div role="listbox" aria-label="Clients" className={`max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border ${errors.client ? 'border-red-600' : 'border-slate-200'}`}>
+            {visible.length === 0 ? (
+              <p className="px-3 py-4 text-center text-sm text-slate-500">No clients match your search.</p>
+            ) : visible.map((c) => {
+              const id = c.client_profile_id || c.client_id;
+              const sel = selectedId === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="option"
+                  aria-selected={sel}
+                  onClick={() => onSelect(id)}
+                  className={`flex w-full items-center justify-between gap-3 border-l-[3px] px-3 py-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${
+                    sel ? 'border-blue-600 bg-blue-50 font-semibold text-blue-700' : 'border-transparent text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="truncate">{withHonorific(c.honorific, c.full_name || c.client_name)}</span>
+                  <span className="flex shrink-0 items-center gap-2 text-xs font-normal text-slate-500">
+                    {c.mobile_number ? formatMobileNumber(c.mobile_number) : ''}
+                    {sel && <Check className="h-4 w-4 text-blue-600" />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {filtered.length > visible.length && <p className="text-xs text-slate-500">Showing the first {visible.length} of {filtered.length} matches — refine your search to narrow the list.</p>}
+          {errors.client && <p role="alert" className="text-xs text-red-700">{errors.client}</p>}
+        </div>
+      ) : (
+        <WalkInClientFields value={walkIn} onChange={onWalkIn} errors={errors} />
+      )}
+    </section>
+  );
+}
+
+// ==================== PAGE SHELL ====================
+
+const TABS = [
+  { id: 'catalog', label: 'Catalog', primary: 'New product' },
+  { id: 'quotes', label: 'Quotes & Invoices', primary: 'New quotation' },
+  { id: 'rentals', label: 'Rentals', primary: 'New rental agreement' },
+];
+
+const URL_KEYS_TO_RESET = {
+  search: '', type: '', category: '', stock: '', quick: '', sort: '', dir: '',
+  status: '', page: '', view: '', filter: '', dstatus: '',
+};
+
+function ProductsPageInner() {
+  const [sp, update] = useUrlParams();
+  const tab = TABS.some((t) => t.id === sp.get('tab')) ? sp.get('tab') : 'catalog';
+  const [counts, setCounts] = useState({ catalog: null, quotes: null, rentals: null });
+  const [ticks, setTicks] = useState({ catalog: 0, quotes: 0, rentals: 0 });
+
+  const reportCount = useCallback((key, n) => setCounts((c) => (c[key] === n ? c : { ...c, [key]: n })), []);
+
+  // Counts for tabs that have not been opened yet (best effort; the tab itself shows load errors).
+  useEffect(() => {
+    let off = false;
+    const run = async (key, fn) => {
+      try {
+        const res = await fn();
+        if (!off && Array.isArray(res?.data)) reportCount(key, res.data.length);
+      } catch {
+        // Count stays hidden until the tab is opened and shows its own error with Retry.
+      }
+    };
+    if (tab !== 'catalog') run('catalog', () => apiClient.getProducts({ include_unavailable: 'true' }));
+    if (tab !== 'quotes') run('quotes', () => apiClient.getProductQuotes());
+    if (tab !== 'rentals') run('rentals', () => apiClient.getRentalAgreements());
+    return () => { off = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const switchTab = (id) => update({ ...URL_KEYS_TO_RESET, tab: id === 'catalog' ? '' : id });
+  const active = TABS.find((t) => t.id === tab);
+
+  return (
+    <div className="space-y-5 text-sm text-slate-700">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">Catalog, quotations and rentals in one place.</p>
+        <button type="button" onClick={() => setTicks((t) => ({ ...t, [tab]: t[tab] + 1 }))} className={btn('primary')}>
+          + {active.primary}
+        </button>
+      </div>
+
+      <div role="tablist" aria-label="Products sections" className="flex gap-6 overflow-x-auto border-b border-slate-200">
+        {TABS.map((t) => {
+          const on = t.id === tab;
+          return (
             <button
-              key={id}
+              key={t.id}
+              id={`tab-${t.id}`}
               type="button"
-              onClick={() => setTab(id)}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
-                tab === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              role="tab"
+              aria-selected={on}
+              aria-controls="products-panel"
+              onClick={() => switchTab(t.id)}
+              className={`-mb-px inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-1 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                on ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Icon className="h-3.5 w-3.5" /> {label}
+              {t.label}
+              {counts[t.id] != null && (
+                <span className={`rounded-full px-2 py-px text-xs font-semibold tabular-nums ${on ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{counts[t.id]}</span>
+              )}
             </button>
-          ))}
-        </div>
-
-        {tab === 'catalog' ? <CatalogTab /> : tab === 'quotes' ? <QuotesTab /> : <RentalsTab />}
+          );
+        })}
       </div>
+
+      <div id="products-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="space-y-4">
+        {tab === 'catalog' && <CatalogTab createTick={ticks.catalog} onCount={reportCount} />}
+        {tab === 'quotes' && <QuotesTab createTick={ticks.quotes} onCount={reportCount} />}
+        {tab === 'rentals' && <RentalsTab createTick={ticks.rentals} onCount={reportCount} />}
+      </div>
+    </div>
+  );
+}
+
+export default function ProductsPage() {
+  return (
+    <AdminLayout title="Products">
+      <UiProvider>
+        <ProductsPageInner />
+      </UiProvider>
     </AdminLayout>
   );
 }
 
 // ==================== CATALOG TAB ====================
 
-function CatalogTab() {
+const TYPE_PARAM = { rental: 'RENTAL', item: 'ITEM', service: 'ONE_TIME_SERVICE' };
+const TYPE_META = {
+  RENTAL: { label: 'Rental', tile: 'bg-blue-100 text-blue-700', sub: 'per month' },
+  ITEM: { label: 'Item', tile: 'bg-slate-200 text-slate-700', sub: 'each' },
+  ONE_TIME_SERVICE: { label: 'Service', tile: 'bg-emerald-100 text-emerald-700', sub: 'per visit / shift' },
+};
+const STOCK_FILTERS = [
+  { value: '', label: 'Any stock status' },
+  { value: 'in', label: 'In stock' },
+  { value: 'lowout', label: 'Low or out of stock' },
+  { value: 'low', label: 'Low stock' },
+  { value: 'out', label: 'Out of stock' },
+  { value: 'inactive', label: 'Deactivated' },
+];
+const CAT_COLS = '28px minmax(240px,2.2fr) minmax(120px,1fr) 140px 170px 110px 150px';
+
+const unitSummary = (units) => units.reduce((a, u) => {
+  a.total += 1;
+  if (u.status === 'AVAILABLE') a.free += 1;
+  else if (u.status === 'RENTED') a.rented += 1;
+  else if (u.status === 'MAINTENANCE') a.maint += 1;
+  return a;
+}, { total: 0, free: 0, rented: 0, maint: 0 });
+
+// 'inactive' | 'na' | 'out' | 'low' | 'in'
+function stockState(p, us) {
+  if (!p.is_available) return 'inactive';
+  if (p.product_type === 'ONE_TIME_SERVICE') return 'na';
+  if (p.product_type === 'RENTAL') return us.free === 0 ? 'out' : us.free <= 1 ? 'low' : 'in';
+  if (p.stock_quantity === null || p.stock_quantity === undefined) return 'na';
+  const q = Number(p.stock_quantity);
+  return q <= 0 ? 'out' : q <= LOW_STOCK_THRESHOLD ? 'low' : 'in';
+}
+
+// Same fields the product form has always sent.
+const payloadFromProduct = (p, patch = {}) => ({
+  name: p.name,
+  product_type: p.product_type,
+  category_id: p.category_id || '',
+  description: p.description || '',
+  price: p.price,
+  cost_price: p.cost_price ?? '',
+  stock_quantity: p.stock_quantity ?? 0,
+  vendor_id: p.vendor_id || '',
+  ...patch,
+});
+
+function ProductTile({ p }) {
+  const meta = TYPE_META[p.product_type] || TYPE_META.ITEM;
+  if (p.image_url) {
+    return <img src={p.image_url} alt="" className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 object-cover" />;
+  }
+  return (
+    <div aria-hidden="true" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg font-bold ${meta.tile}`}>
+      {(p.name || '?').charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function StockCell({ p, us, state }) {
+  if (p.product_type === 'ONE_TIME_SERVICE') return <span className="text-[13px] text-slate-500">Not tracked</span>;
+  if (p.product_type === 'RENTAL') {
+    const pct = us.total ? Math.round((us.free / us.total) * 100) : 0;
+    const color = us.free === 0 ? 'bg-red-500' : us.free <= 1 ? 'bg-amber-500' : 'bg-emerald-500';
+    return (
+      <div>
+        <span className="text-sm text-slate-700"><b className="font-semibold tabular-nums text-slate-900">{us.free}</b> of {us.total} free</span>
+        <div className="mt-1.5 h-1 w-28 overflow-hidden rounded-sm bg-slate-200" role="presentation">
+          <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <b className="font-semibold tabular-nums text-slate-900">{p.stock_quantity ?? '—'}</b>
+      {state === 'out' && <StatusChip tone="red">Out of stock</StatusChip>}
+      {state === 'low' && <StatusChip tone="amber">Low</StatusChip>}
+    </span>
+  );
+}
+
+function SortHeader({ label, field, sort, dir, onSort, right }) {
+  const on = sort === field;
+  return (
+    <div role="columnheader" aria-sort={on ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'} className={right ? 'text-right' : ''}>
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className={`inline-flex items-center gap-1 rounded text-xs font-bold uppercase tracking-wider hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${on ? 'text-slate-800' : 'text-slate-500'}`}
+      >
+        {label}
+        {on && (dir === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
+      </button>
+    </div>
+  );
+}
+
+function CatalogTab({ createTick, onCount }) {
+  const { toast, confirm } = useUi();
+  const [sp, update] = useUrlParams();
+  const search = sp.get('search') || '';
+  const typeParam = TYPE_PARAM[sp.get('type')] ? sp.get('type') : '';
+  const categoryFilter = sp.get('category') || '';
+  const stockFilter = STOCK_FILTERS.some((s) => s.value === sp.get('stock')) ? (sp.get('stock') || '') : '';
+  const quick = ['public', 'rented'].includes(sp.get('quick')) ? sp.get('quick') : '';
+  const sortField = sp.get('sort') === 'price' ? 'price' : 'name';
+  const sortDir = sp.get('dir') === 'desc' ? 'desc' : 'asc';
+
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [units, setUnits] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [drawer, setDrawer] = useState(null); // { mode: 'create'|'edit'|'duplicate', product }
   const [historyProduct, setHistoryProduct] = useState(null);
-  const [error, setError] = useState('');
   const [selected, setSelected] = useState(() => new Set());
-  const [displayFilter, setDisplayFilter] = useState('ALL'); // 'ALL' | 'ON' | 'OFF'
-  // Set when the page is opened from global search (?search=); narrows the catalog to matching products.
-  const [catalogSearch, setCatalogSearch] = useUrlSearchState();
-  const [visibilityBusy, setVisibilityBusy] = useState(false);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [busyIds, setBusyIds] = useState(() => new Set());
+  const [bulkProgress, setBulkProgress] = useState(null); // { label, done, total }
+  const [categoryModal, setCategoryModal] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const [prodRes, unitsRes] = await Promise.all([
+      const [prodRes, unitsRes, catRes, vendRes] = await Promise.all([
         apiClient.getProducts({ include_unavailable: 'true' }),
         apiClient.getRentalUnits({}),
+        apiClient.getProductCategories(),
+        apiClient.getVendors(),
       ]);
-      setProducts(Array.isArray(prodRes?.data) ? prodRes.data : []);
+      const list = Array.isArray(prodRes?.data) ? prodRes.data : [];
+      setProducts(list);
       setUnits(Array.isArray(unitsRes?.data) ? unitsRes.data : []);
-    } catch {
-      setProducts([]);
-      setUnits([]);
+      setCategories(Array.isArray(catRes?.data) ? catRes.data : []);
+      setVendors(Array.isArray(vendRes?.data) ? vendRes.data : []);
+      setSelected((prev) => new Set([...prev].filter((id) => list.some((p) => p.product_id === id))));
+    } catch (err) {
+      setLoadError(err?.message || 'Failed to load the catalog.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const fetchCategories = useCallback(async () => {
-    try {
-      const res = await apiClient.getProductCategories();
-      setCategories(Array.isArray(res?.data) ? res.data : []);
-    } catch {
-      setCategories([]);
-    }
-  }, []);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (!loading && !loadError) onCount('catalog', products.length); }, [loading, loadError, products.length, onCount]);
 
-  const fetchVendors = useCallback(async () => {
-    try {
-      const res = await apiClient.getVendors();
-      setVendors(Array.isArray(res?.data) ? res.data : []);
-    } catch {
-      setVendors([]);
-    }
-  }, []);
+  const openCreate = useCallback(() => setDrawer({ mode: 'create', product: null }), []);
+  useCreateSignal(createTick, openCreate);
 
-  useEffect(() => { fetchAll(); fetchCategories(); fetchVendors(); }, [fetchAll, fetchCategories, fetchVendors]);
+  const unitsByProduct = useMemo(() => {
+    const map = new Map();
+    units.forEach((u) => { if (!map.has(u.product_id)) map.set(u.product_id, []); map.get(u.product_id).push(u); });
+    return map;
+  }, [units]);
+  const unitsOf = useCallback((p) => unitsByProduct.get(p.product_id) || [], [unitsByProduct]);
+  const summaryOf = useCallback((p) => unitSummary(unitsOf(p)), [unitsOf]);
 
-  const openCreate = () => { setEditingProduct(null); setModalOpen(true); };
-  const openEdit = (product) => { setEditingProduct(product); setModalOpen(true); };
+  // ----- filtering -----
+  const isPublic = (p) => p.is_public !== false;
+  const needsRestock = useCallback((p) => ['low', 'out'].includes(stockState(p, summaryOf(p))), [summaryOf]);
 
-  const handleDeactivate = async (product) => {
-    if (!window.confirm(`Deactivate "${product.name}"? It will no longer appear in the catalog.`)) return;
-    try {
-      await apiClient.deactivateProduct(product.product_id);
-      fetchAll();
-    } catch (err) {
-      alert(err.message || 'Failed to deactivate product');
-    }
-  };
+  const base = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return products.filter((p) => {
+      if (q) {
+        const hay = [p.name, p.category_name, ...unitsOf(p).flatMap((u) => [u.unit_code, u.rented_to_client_name, u.rented_to_walk_in_name])]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (categoryFilter && String(p.category_id || '') !== categoryFilter) return false;
+      if (stockFilter) {
+        const st = stockState(p, summaryOf(p));
+        if (stockFilter === 'lowout' && !['low', 'out'].includes(st)) return false;
+        if (['in', 'low', 'out', 'inactive'].includes(stockFilter) && st !== stockFilter) return false;
+      }
+      if (quick === 'public' && !isPublic(p)) return false;
+      if (quick === 'rented' && !(p.product_type === 'RENTAL' && summaryOf(p).rented > 0)) return false;
+      return true;
+    });
+  }, [products, search, categoryFilter, stockFilter, quick, unitsOf, summaryOf]);
 
-  const isOn = (p) => p.is_public !== false;
-  const onDisplayCount = products.filter(isOn).length;
-  const catalogQuery = catalogSearch.trim().toLowerCase();
-  const shownProducts = products.filter((p) =>
-    (displayFilter === 'ALL' || (displayFilter === 'ON' ? isOn(p) : !isOn(p)))
-    && (!catalogQuery || String(p.name || '').toLowerCase().includes(catalogQuery))
-  );
-  const rentalProducts = shownProducts.filter((p) => p.product_type === 'RENTAL');
-  const serviceProducts = shownProducts.filter((p) => p.product_type === 'ONE_TIME_SERVICE');
-  const itemProducts = shownProducts.filter((p) => p.product_type === 'ITEM');
+  const typeCounts = useMemo(() => ({
+    all: base.length,
+    rental: base.filter((p) => p.product_type === 'RENTAL').length,
+    item: base.filter((p) => p.product_type === 'ITEM').length,
+    service: base.filter((p) => p.product_type === 'ONE_TIME_SERVICE').length,
+  }), [base]);
 
+  const shown = useMemo(() => {
+    const list = typeParam ? base.filter((p) => p.product_type === TYPE_PARAM[typeParam]) : base.slice();
+    const dir = sortDir === 'desc' ? -1 : 1;
+    list.sort((a, b) => (sortField === 'price'
+      ? (Number(a.price) - Number(b.price)) * dir
+      : String(a.name || '').localeCompare(String(b.name || '')) * dir));
+    return list;
+  }, [base, typeParam, sortField, sortDir]);
+
+  const activeCount = products.filter((p) => p.is_available).length;
+  const publicCount = products.filter((p) => p.is_available && isPublic(p)).length;
+  const restockCount = products.filter((p) => needsRestock(p)).length;
+  const rentedUnits = units.filter((u) => u.status === 'RENTED').length;
+  const hasFilters = !!(search || typeParam || categoryFilter || stockFilter || quick);
+
+  const clearFilters = () => update({ search: '', type: '', category: '', stock: '', quick: '' });
+  const onSort = (field) => update(sortField === field
+    ? { sort: field === 'name' ? '' : field, dir: sortDir === 'asc' ? 'desc' : '' }
+    : { sort: field === 'name' ? '' : field, dir: '' });
+
+  // ----- selection -----
+  const shownIds = shown.map((p) => p.product_id);
+  const allSelected = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
+  const someSelected = shownIds.some((id) => selected.has(id));
+  const toggleAll = () => setSelected((prev) => {
+    const next = new Set(prev);
+    if (allSelected) shownIds.forEach((id) => next.delete(id)); else shownIds.forEach((id) => next.add(id));
+    return next;
+  });
   const toggleOne = (id) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
-  const groupState = (list) => {
-    const n = list.filter((p) => selected.has(p.product_id)).length;
-    return { checked: list.length > 0 && n === list.length, indeterminate: n > 0 && n < list.length };
-  };
-  const toggleGroup = (list) => setSelected((prev) => {
+  const toggleExpanded = (id) => setExpanded((prev) => {
     const next = new Set(prev);
-    const allIn = list.length > 0 && list.every((p) => next.has(p.product_id));
-    list.forEach((p) => { if (allIn) next.delete(p.product_id); else next.add(p.product_id); });
+    if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
-  const applyVisibility = async (isPublic) => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
-    setVisibilityBusy(true);
-    setError('');
+  // ----- row actions -----
+  const withBusy = async (id, fn) => {
+    setBusyIds((s) => new Set(s).add(id));
+    try { await fn(); } finally { setBusyIds((s) => { const n = new Set(s); n.delete(id); return n; }); }
+  };
+
+  const toggleVisibility = (p, next) => withBusy(p.product_id, async () => {
+    setActionError('');
     try {
-      await apiClient.setProductsVisibility(ids, isPublic);
-      setSelected(new Set());
-      await fetchAll();
+      await apiClient.setProductsVisibility([p.product_id], next);
+      setProducts((list) => list.map((x) => (x.product_id === p.product_id ? { ...x, is_public: next } : x)));
+      toast(`"${p.name}" is now ${next ? 'shown on' : 'hidden from'} the public catalog.`);
     } catch (err) {
-      setError(err.message || 'Failed to update catalog visibility');
-    } finally {
-      setVisibilityBusy(false);
+      setActionError(err?.message || 'Failed to update catalog visibility');
+    }
+  });
+
+  const reactivate = async (p, undo = false) => {
+    setActionError('');
+    try {
+      await apiClient.updateProduct(p.product_id, { ...payloadFromProduct(p), is_available: true }, null);
+      await fetchAll();
+      toast(undo ? `"${p.name}" restored.` : `"${p.name}" reactivated.`);
+    } catch (err) {
+      setActionError(err?.message || 'Failed to reactivate product');
     }
   };
 
+  const handleDeactivate = async (p) => {
+    const ok = await confirm({
+      title: `Deactivate "${p.name}"?`,
+      body: 'It will no longer appear in the catalog. You can reactivate it later.',
+      confirmLabel: 'Deactivate',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setActionError('');
+    try {
+      await apiClient.deactivateProduct(p.product_id);
+      await fetchAll();
+      toast(`"${p.name}" deactivated.`, { undo: () => reactivate(p, true) });
+    } catch (err) {
+      setActionError(err?.message || 'Failed to deactivate product');
+    }
+  };
+
+  const handleDuplicate = (p) => setDrawer({
+    mode: 'duplicate',
+    product: { ...p, product_id: undefined, name: `${p.name} (copy)`, image_url: '', is_public: false },
+  });
+
+  // ----- bulk actions -----
+  const runBulk = async (label, ids, fn) => {
+    setBulkProgress({ label, done: 0, total: ids.length });
+    let failed = 0;
+    for (let i = 0; i < ids.length; i += 1) {
+      try { await fn(ids[i]); } catch { failed += 1; }
+      setBulkProgress({ label, done: i + 1, total: ids.length });
+    }
+    setBulkProgress(null);
+    await fetchAll();
+    return failed;
+  };
+
+  const applyVisibility = async (flag) => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkProgress({ label: flag ? 'Showing on catalog' : 'Hiding from catalog', done: 0, total: ids.length });
+    setActionError('');
+    try {
+      await apiClient.setProductsVisibility(ids, flag);
+      setSelected(new Set());
+      await fetchAll();
+      toast(`${ids.length} product${ids.length === 1 ? '' : 's'} ${flag ? 'shown on' : 'hidden from'} the public catalog.`);
+    } catch (err) {
+      setActionError(err?.message || 'Failed to update catalog visibility');
+    } finally {
+      setBulkProgress(null);
+    }
+  };
+
+  const bulkDeactivate = async () => {
+    const ids = [...selected].filter((id) => products.find((p) => p.product_id === id)?.is_available);
+    if (!ids.length) { toast('The selected products are already deactivated.'); return; }
+    const ok = await confirm({
+      title: `Deactivate ${ids.length} product${ids.length === 1 ? '' : 's'}?`,
+      body: 'They will no longer appear in the catalog. You can reactivate them later.',
+      confirmLabel: 'Deactivate',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    const failed = await runBulk('Deactivating', ids, (id) => apiClient.deactivateProduct(id));
+    setSelected(new Set());
+    toast(failed ? `Deactivated ${ids.length - failed} of ${ids.length}. ${failed} failed.` : `${ids.length} product${ids.length === 1 ? '' : 's'} deactivated.`);
+  };
+
+  const bulkChangeCategory = async (categoryId) => {
+    setCategoryModal(false);
+    const ids = [...selected];
+    const failed = await runBulk('Updating category', ids, (id) => {
+      const p = products.find((x) => x.product_id === id);
+      return apiClient.updateProduct(id, { ...payloadFromProduct(p, { category_id: categoryId || '' }), is_available: p.is_available }, null);
+    });
+    setSelected(new Set());
+    toast(failed ? `Updated ${ids.length - failed} of ${ids.length}. ${failed} failed.` : `Category updated for ${ids.length} product${ids.length === 1 ? '' : 's'}.`);
+  };
+
+  const exportCsv = () => downloadCsv(
+    'products.csv',
+    ['Name', 'Type', 'Category', 'Price', 'Cost price', 'Stock', 'On public catalog', 'Status'],
+    shown.map((p) => {
+      const us = summaryOf(p);
+      const stock = p.product_type === 'ONE_TIME_SERVICE' ? 'Not tracked'
+        : p.product_type === 'RENTAL' ? `${us.free} of ${us.total} free` : (p.stock_quantity ?? '');
+      return [p.name, TYPE_META[p.product_type]?.label || p.product_type, p.category_name || '', p.price, p.cost_price ?? '', stock, isPublic(p) ? 'Yes' : 'No', p.is_available ? 'Active' : 'Deactivated'];
+    }),
+  );
+
+  const busyBulk = !!bulkProgress;
+  const initialLoading = loading && products.length === 0;
+
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-xs text-slate-500">
-            <span className="font-semibold text-blue-600">{onDisplayCount}</span> on public display ·{' '}
-            <span className="font-semibold text-slate-600">{products.length - onDisplayCount}</span> not displayed
-          </span>
-          <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5">
-            {[['ALL', 'All'], ['ON', 'On display'], ['OFF', 'Not displayed']].map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setDisplayFilter(id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  displayFilter === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
-        >
-          <Plus className="h-4 w-4" /> New Product
+      <ErrorBanner message={loadError} onRetry={fetchAll} />
+      <ErrorBanner message={actionError} onDismiss={() => setActionError('')} />
+
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
+        <Kpi label="Active products" value={activeCount} sub={`${products.length - activeCount} deactivated`} active={!hasFilters} onClick={clearFilters} />
+        <Kpi label="On public catalog" value={publicCount} sub={`${activeCount - publicCount} hidden from customers`} active={quick === 'public'} onClick={() => update({ quick: quick === 'public' ? '' : 'public' })} />
+        <Kpi label="Needs restocking" value={restockCount} tone="amber" sub="Low or out of stock" active={stockFilter === 'lowout'} onClick={() => update({ stock: stockFilter === 'lowout' ? '' : 'lowout' })} />
+        <Kpi label="Units rented" value={rentedUnits} sub={`of ${units.length} rental units`} active={quick === 'rented'} onClick={() => update({ quick: quick === 'rented' ? '' : 'rented' })} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2.5">
+        <SearchBox value={search} onChange={(v) => update({ search: v })} placeholder="Search products, categories, unit codes…" />
+        <select aria-label="Filter by category" value={categoryFilter} onChange={(e) => update({ category: e.target.value })} className={`${inputCls(false)} w-[200px]`}>
+          <option value="">All categories</option>
+          {categories.map((c) => <option key={c.category_id} value={String(c.category_id)}>{c.name}</option>)}
+        </select>
+        <select aria-label="Filter by stock status" value={stockFilter} onChange={(e) => update({ stock: e.target.value })} className={`${inputCls(false)} w-[200px]`}>
+          {STOCK_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <span className="flex-1" />
+        <button type="button" onClick={exportCsv} disabled={shown.length === 0} className={btn('secondary')}>
+          <Download className="h-4 w-4" /> Export CSV
         </button>
       </div>
 
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" /> {error}
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <Segmented
+            ariaLabel="Product type"
+            value={typeParam}
+            onChange={(v) => update({ type: v })}
+            options={[
+              { value: '', label: 'All', count: typeCounts.all },
+              { value: 'rental', label: 'Rentals', count: typeCounts.rental },
+              { value: 'item', label: 'Items', count: typeCounts.item },
+              { value: 'service', label: 'Services', count: typeCounts.service },
+            ]}
+          />
+          <span className="text-[13px] text-slate-500">Showing {shown.length} of {products.length}</span>
         </div>
-      )}
 
-      <SearchFilterChip value={catalogSearch} onClear={() => setCatalogSearch('')} />
-
-      {selected.size > 0 && (
-        <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 shadow-sm">
-          <span className="text-sm font-medium text-blue-800">{selected.size} selected</span>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={visibilityBusy}
-              onClick={() => applyVisibility(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-            >
-              {visibilityBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Show on public catalog
-            </button>
-            <button
-              type="button"
-              disabled={visibilityBusy}
-              onClick={() => applyVisibility(false)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              <EyeOff className="h-3.5 w-3.5" /> Hide from public catalog
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="text-xs font-medium text-slate-500 hover:text-slate-700"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading catalog…
-        </div>
-      ) : products.length === 0 ? (
-        <div className="rounded-lg border border-slate-200 bg-white flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
-          <Package className="h-8 w-8" />
-          <p className="text-sm font-medium">No products yet — create one to get started</p>
-        </div>
-      ) : (
-        <div className="space-y-8">
-          <div>
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
-              <Repeat className="h-4 w-4 text-purple-500" /> Rental Items
-              <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-600">{rentalProducts.length}</span>
-              {rentalProducts.length > 0 && (
-                <label className="ml-2 flex items-center gap-1.5 text-xs font-normal text-slate-500 cursor-pointer">
-                  <SelectCheckbox {...groupState(rentalProducts)} onChange={() => toggleGroup(rentalProducts)} title="Select all rentals" />
-                  Select all
-                </label>
-              )}
-            </h3>
-            {rentalProducts.length === 0 ? (
-              <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">
-                No rental products yet.
-              </div>
+        {selected.size > 0 && (
+          <div className="flex flex-wrap items-center gap-2.5 border-b border-blue-200 bg-blue-50 px-4 py-2.5">
+            <b className="text-[13px] text-blue-700">{selected.size} selected</b>
+            {busyBulk ? (
+              <span role="status" className="inline-flex items-center gap-2 text-[13px] text-blue-700">
+                <Loader2 className="h-4 w-4 animate-spin" /> {bulkProgress.label}… {bulkProgress.done} of {bulkProgress.total}
+              </span>
             ) : (
-              <div className="space-y-4">
-                {rentalProducts.map((p) => (
-                  <RentalProductPanel
-                    key={p.product_id}
-                    product={p}
-                    selected={selected.has(p.product_id)}
-                    onToggleSelect={() => toggleOne(p.product_id)}
-                    units={units.filter((u) => u.product_id === p.product_id)}
-                    onEdit={() => openEdit(p)}
-                    onDeactivate={() => handleDeactivate(p)}
-                    onChanged={fetchAll}
-                    setError={setError}
-                  />
-                ))}
-              </div>
+              <>
+                <button type="button" onClick={() => applyVisibility(true)} className={btn('secondary', 'sm')}>Show on public catalog</button>
+                <button type="button" onClick={() => applyVisibility(false)} className={btn('secondary', 'sm')}>Hide from catalog</button>
+                <button type="button" onClick={() => setCategoryModal(true)} className={btn('secondary', 'sm')}>Change category</button>
+                <button type="button" onClick={bulkDeactivate} className={btn('danger', 'sm')}>Deactivate</button>
+                <span className="flex-1" />
+                <button type="button" onClick={() => setSelected(new Set())} className="rounded text-xs font-semibold text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Clear selection</button>
+              </>
             )}
           </div>
+        )}
 
-          <div>
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
-              <ShoppingBag className="h-4 w-4 text-blue-500" /> Purchasable Items
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">{itemProducts.length}</span>
-            </h3>
-            {itemProducts.length === 0 ? (
-              <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">
-                No purchasable products yet.
-              </div>
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50">
-                        <th className="px-4 py-3 w-8"><SelectCheckbox {...groupState(itemProducts)} onChange={() => toggleGroup(itemProducts)} title="Select all in this group" /></th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Image</th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th>
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Stock Available</th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                        <th className="px-4 py-3" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {itemProducts.map((p) => (
-                        <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-3 w-8">
-                            <SelectCheckbox checked={selected.has(p.product_id)} onChange={() => toggleOne(p.product_id)} title="Select for bulk display change" />
-                          </td>
-                          <td className="px-4 py-3">
-                            {p.image_url ? (
-                              <img src={p.image_url} alt={p.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
-                            ) : (
-                              <div className="h-9 w-9 rounded bg-slate-100 flex items-center justify-center text-slate-300">
-                                <ImageIcon className="h-4 w-4" />
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}<VisibilityBadge product={p} /></td>
-                          <td className="px-4 py-3 text-slate-500">{p.category_name || '—'}</td>
-                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(p.price)}</td>
-                          <td className="px-4 py-3 text-right text-slate-600">
-                            <span className={Number(p.stock_quantity) <= 0 ? 'font-medium text-red-600' : ''}>
-                              {p.stock_quantity ?? '—'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${p.is_available ? 'text-emerald-700' : 'text-slate-500'}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.is_available ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                              {p.is_available ? 'Available' : 'Deactivated'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-end gap-0.5">
-                              <button type="button" onClick={() => setHistoryProduct(p)} title="Purchase history" className={iconBtnCls}>
-                                <History className="h-3.5 w-3.5" />
-                              </button>
-                              <button type="button" onClick={() => openEdit(p)} title="Edit product" className={iconBtnCls}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              {p.is_available && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeactivate(p)}
-                                  title="Deactivate product"
-                                  className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
-              <Wrench className="h-4 w-4 text-emerald-500" /> One-Time Services
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600">{serviceProducts.length}</span>
-            </h3>
-            {serviceProducts.length === 0 ? (
-              <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">
-                No one-time services yet.
-              </div>
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50">
-                        <th className="px-4 py-3 w-8"><SelectCheckbox {...groupState(serviceProducts)} onChange={() => toggleGroup(serviceProducts)} title="Select all in this group" /></th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Image</th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                        <th className="px-4 py-3" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {serviceProducts.map((p) => (
-                        <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-3 w-8">
-                            <SelectCheckbox checked={selected.has(p.product_id)} onChange={() => toggleOne(p.product_id)} title="Select for bulk display change" />
-                          </td>
-                          <td className="px-4 py-3">
-                            {p.image_url ? (
-                              <img src={p.image_url} alt={p.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
-                            ) : (
-                              <div className="h-9 w-9 rounded bg-slate-100 flex items-center justify-center text-slate-300">
-                                <ImageIcon className="h-4 w-4" />
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}<VisibilityBadge product={p} /></td>
-                          <td className="px-4 py-3 text-slate-500">{p.category_name || '—'}</td>
-                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(p.price)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${p.is_available ? 'text-emerald-700' : 'text-slate-500'}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.is_available ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                              {p.is_available ? 'Available' : 'Deactivated'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-end gap-0.5">
-                              <button type="button" onClick={() => setHistoryProduct(p)} title="Purchase history" className={iconBtnCls}>
-                                <History className="h-3.5 w-3.5" />
-                              </button>
-                              <button type="button" onClick={() => openEdit(p)} title="Edit product" className={iconBtnCls}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              {p.is_available && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeactivate(p)}
-                                  title="Deactivate product"
-                                  className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
+        {initialLoading ? (
+          <SkeletonRows rows={6} />
+        ) : products.length === 0 && !loadError ? (
+          <EmptyState title="No products yet" body="Use New product above to add your first product, rental or service." />
+        ) : shown.length === 0 && !loadError ? (
+          <EmptyState
+            title="No products match your filters"
+            action={hasFilters ? <button type="button" onClick={clearFilters} className={btn('secondary')}>Clear filters</button> : null}
+          />
+        ) : (
+          <TableShell minWidth={1000}>
+            <HeadRow cols={CAT_COLS}>
+              <HCell><SelectCheckbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} label="Select all shown products" /></HCell>
+              <SortHeader label="Product" field="name" sort={sortField} dir={sortDir} onSort={onSort} />
+              <HCell>Category</HCell>
+              <SortHeader label="Price" field="price" sort={sortField} dir={sortDir} onSort={onSort} right />
+              <HCell>Stock</HCell>
+              <HCell>On catalog</HCell>
+              <HCell right>Actions</HCell>
+            </HeadRow>
+            {shown.map((p) => {
+              const meta = TYPE_META[p.product_type] || TYPE_META.ITEM;
+              const us = summaryOf(p);
+              const state = stockState(p, us);
+              const isRental = p.product_type === 'RENTAL';
+              const open = expanded.has(p.product_id);
+              const menuItems = [
+                { label: 'Edit product', onClick: () => setDrawer({ mode: 'edit', product: p }) },
+                { label: 'Purchase history', onClick: () => setHistoryProduct(p) },
+                { label: 'Duplicate', onClick: () => handleDuplicate(p) },
+                p.is_available
+                  ? { label: 'Deactivate', danger: true, onClick: () => handleDeactivate(p) }
+                  : { label: 'Reactivate', onClick: () => reactivate(p) },
+              ];
+              return (
+                <React.Fragment key={p.product_id}>
+                  <BodyRow cols={CAT_COLS} muted={!p.is_available}>
+                    <Cell><SelectCheckbox checked={selected.has(p.product_id)} onChange={() => toggleOne(p.product_id)} label={`Select ${p.name}`} /></Cell>
+                    <Cell>
+                      <div className="flex items-center gap-3">
+                        <ProductTile p={p} />
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-slate-900">{p.name}</div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            {meta.label}
+                            {!p.is_available && <StatusChip tone="slate" className="!py-px">Deactivated</StatusChip>}
+                          </div>
+                        </div>
+                      </div>
+                    </Cell>
+                    <Cell className="truncate">{p.category_name || '—'}</Cell>
+                    <Cell right>
+                      <div className="font-semibold text-slate-900">{formatMoney(p.price)}</div>
+                      <div className="text-xs text-slate-500">{meta.sub}</div>
+                    </Cell>
+                    <Cell><StockCell p={p} us={us} state={state} /></Cell>
+                    <Cell>
+                      <Toggle
+                        checked={isPublic(p)}
+                        disabled={busyIds.has(p.product_id)}
+                        label={`Show ${p.name} on public catalog`}
+                        onChange={(next) => toggleVisibility(p, next)}
+                      />
+                    </Cell>
+                    <Cell right>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {isRental ? (
+                          <button type="button" aria-expanded={open} onClick={() => toggleExpanded(p.product_id)} className={btn('secondary', 'sm')}>
+                            Units <ChevronDown className={`h-3 w-3 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} />
+                          </button>
+                        ) : (
+                          <button type="button" onClick={() => setDrawer({ mode: 'edit', product: p })} className={btn('secondary', 'sm')}>Edit</button>
+                        )}
+                        <RowMenu label={`More actions for ${p.name}`} items={menuItems} />
+                      </div>
+                    </Cell>
+                  </BodyRow>
+                  {isRental && open && (
+                    <ExpandRow>
+                      <UnitsPanel product={p} units={unitsOf(p)} us={us} onChanged={fetchAll} />
+                    </ExpandRow>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </TableShell>
+        )}
+        <div className="border-t border-slate-200 px-4 py-3 text-[13px] text-slate-500">
+          {shown.length} product{shown.length === 1 ? '' : 's'}{selected.size > 0 ? ` · ${selected.size} selected` : ''}
         </div>
-      )}
+      </div>
 
-      {modalOpen && (
-        <ProductModal
-          product={editingProduct}
+      {drawer && (
+        <ProductDrawer
+          key={`${drawer.mode}-${drawer.product?.product_id || 'new'}`}
+          mode={drawer.mode}
+          product={drawer.product}
           categories={categories}
           vendors={vendors}
-          onClose={() => setModalOpen(false)}
-          onSaved={() => { setModalOpen(false); fetchAll(); fetchCategories(); }}
+          onClose={() => setDrawer(null)}
+          onSaved={async ({ addAnother, name, created, visibilityFailed }) => {
+            await fetchAll();
+            toast(`"${name}" ${created ? 'created' : 'saved'}.${visibilityFailed ? ' Its catalog visibility could not be updated.' : ''}`);
+            if (!addAnother) setDrawer(null);
+          }}
         />
       )}
 
-      {historyProduct && (
-        <ProductPurchaseHistoryModal product={historyProduct} onClose={() => setHistoryProduct(null)} />
+      {historyProduct && <ProductPurchaseHistoryModal product={historyProduct} onClose={() => setHistoryProduct(null)} />}
+
+      {categoryModal && (
+        <ChangeCategoryModal count={selected.size} categories={categories} onClose={() => setCategoryModal(false)} onApply={bulkChangeCategory} />
       )}
     </>
   );
 }
 
+function ChangeCategoryModal({ count, categories, onClose, onApply }) {
+  const [categoryId, setCategoryId] = useState('');
+  return (
+    <Modal
+      title="Change category"
+      subtitle={`Applies to ${count} selected product${count === 1 ? '' : 's'}.`}
+      onClose={onClose}
+      onSubmit={(e) => { e.preventDefault(); onApply(categoryId); }}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="submit" className={btn('primary')}>Apply category</button>
+        </>
+      )}
+    >
+      <Field label="Category" htmlFor="bulk-category">
+        <select id="bulk-category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputCls(false)}>
+          <option value="">No category</option>
+          {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
+        </select>
+      </Field>
+    </Modal>
+  );
+}
+
+// ----- Rental units -----
+
+const UNIT_TONE = { AVAILABLE: 'green', RENTED: 'blue', MAINTENANCE: 'amber' };
+const UNIT_LABEL = { AVAILABLE: 'Available', RENTED: 'Rented', MAINTENANCE: 'Maintenance' };
+const UNIT_COLS = '110px 140px minmax(160px,1.2fr) 190px 170px';
+
+function UnitsPanel({ product, units, us, onChanged }) {
+  const { toast } = useUi();
+  const [busyUnitId, setBusyUnitId] = useState('');
+  const [error, setError] = useState('');
+  const [modal, setModal] = useState(null); // 'add' | 'bulk'
+
+  const toggleMaintenance = async (u) => {
+    const next = u.status === 'MAINTENANCE' ? 'AVAILABLE' : 'MAINTENANCE';
+    setBusyUnitId(u.unit_id);
+    setError('');
+    try {
+      await apiClient.updateRentalUnitStatus(u.unit_id, next);
+      await onChanged();
+      toast(`${u.unit_code || 'Unit'} marked ${next === 'AVAILABLE' ? 'available' : 'as in maintenance'}.`);
+    } catch (err) {
+      setError(err?.message || 'Failed to update unit');
+    } finally {
+      setBusyUnitId('');
+    }
+  };
+
+  const untilOf = (u) => (u.rental_billing_type === 'RECURRING' ? u.rental_next_invoice_date : u.rental_end_date);
+  const renterOf = (u) => (u.rented_to_client_name
+    ? <ClientLink id={u.rented_to_client_id}>{u.rented_to_client_name}</ClientLink>
+    : (u.rented_to_walk_in_name || '—'));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <b className="text-[13px] text-slate-900">Units · {us.free} available, {us.rented} rented, {us.maint} in maintenance</b>
+        <span className="flex gap-2">
+          <button type="button" onClick={() => setModal('add')} className={btn('secondary', 'sm')}>Add unit</button>
+          <button type="button" onClick={() => setModal('bulk')} className={btn('secondary', 'sm')}>Bulk add units</button>
+        </span>
+      </div>
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {units.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-slate-500">No units yet — add one above.</p>
+        ) : (
+          <TableShell minWidth={720}>
+            <HeadRow cols={UNIT_COLS}>
+              <HCell>Unit</HCell><HCell>Status</HCell><HCell>Rented by</HCell><HCell>Until</HCell><HCell right>Action</HCell>
+            </HeadRow>
+            {units.map((u) => (
+              <div key={u.unit_id} role="row" className="grid min-h-12 items-center gap-x-3 border-b border-slate-100 px-4 py-1.5 text-sm text-slate-700 last:border-b-0" style={{ gridTemplateColumns: UNIT_COLS }}>
+                <Cell>
+                  <div className="font-mono text-[13px] font-semibold text-slate-900">{u.unit_code || u.unit_id.slice(0, 8)}</div>
+                  {u.notes && <div className="truncate text-xs text-slate-500" title={u.notes}>{u.notes}</div>}
+                </Cell>
+                <Cell><StatusChip tone={UNIT_TONE[u.status] || 'slate'}>{UNIT_LABEL[u.status] || u.status}</StatusChip></Cell>
+                <Cell>{u.status === 'RENTED' ? renterOf(u) : '—'}</Cell>
+                <Cell>
+                  {u.status === 'RENTED' ? <>{formatDate(untilOf(u))}<DaysRemainingBadge date={untilOf(u)} /></> : '—'}
+                </Cell>
+                <Cell right>
+                  {u.status !== 'RENTED' && (
+                    <button type="button" disabled={busyUnitId === u.unit_id} onClick={() => toggleMaintenance(u)} className={btn('secondary', 'sm')}>
+                      {busyUnitId === u.unit_id && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {u.status === 'MAINTENANCE' ? 'Mark available' : 'Send to maintenance'}
+                    </button>
+                  )}
+                </Cell>
+              </div>
+            ))}
+          </TableShell>
+        )}
+      </div>
+      {modal === 'add' && (
+        <AddUnitModal product={product} onClose={() => setModal(null)} onAdded={async () => { setModal(null); await onChanged(); toast('Unit added.'); }} />
+      )}
+      {modal === 'bulk' && (
+        <BulkAddUnitsModal
+          product={product}
+          existingCodes={units.map((u) => (u.unit_code || '').toLowerCase())}
+          onClose={() => setModal(null)}
+          onDone={async (msg) => { setModal(null); await onChanged(); toast(msg); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddUnitModal({ product, onClose, onAdded }) {
+  const [unitCode, setUnitCode] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      await apiClient.createRentalUnit({ product_id: product.product_id, unit_code: unitCode.trim() || undefined, notes: notes.trim() || undefined });
+      await onAdded();
+    } catch (err) {
+      setError(err?.message || 'Failed to add unit');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Add unit"
+      subtitle={product.name}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="submit" disabled={saving} className={btn('primary')}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Add unit</button>
+        </>
+      )}
+    >
+      <ErrorBanner message={error} />
+      <Field label="Unit code (optional)" htmlFor="unit-code" hint="Leave blank to generate one automatically.">
+        <input id="unit-code" type="text" placeholder="e.g. BED-002" value={unitCode} onChange={(e) => setUnitCode(e.target.value)} className={inputCls(false)} />
+      </Field>
+      <Field label="Notes" htmlFor="unit-notes">
+        <input id="unit-notes" type="text" value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls(false)} />
+      </Field>
+    </Modal>
+  );
+}
+
+function BulkAddUnitsModal({ product, existingCodes, onClose, onDone }) {
+  const [prefix, setPrefix] = useState('');
+  const [from, setFrom] = useState('1');
+  const [to, setTo] = useState('5');
+  const [progress, setProgress] = useState(null);
+  const [error, setError] = useState('');
+
+  const f = parseInt(from, 10);
+  const t = parseInt(to, 10);
+  const valid = Number.isInteger(f) && Number.isInteger(t) && f >= 0 && t >= f && t - f + 1 <= 50;
+  const pad = Math.max(3, String(Number.isInteger(t) ? t : 0).length);
+  const codes = valid ? Array.from({ length: t - f + 1 }, (_, i) => `${prefix}${String(f + i).padStart(pad, '0')}`) : [];
+  const clashes = codes.filter((c) => existingCodes.includes(c.toLowerCase()));
+  const rangeError = !valid ? 'Enter a range of 1 to 50 units (the "to" number must be at least the "from" number).' : '';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!valid) { setError(rangeError); return; }
+    if (clashes.length) { setError(`These codes already exist: ${clashes.slice(0, 5).join(', ')}${clashes.length > 5 ? '…' : ''}`); return; }
+    let failed = 0;
+    for (let i = 0; i < codes.length; i += 1) {
+      setProgress({ done: i, total: codes.length });
+      try { await apiClient.createRentalUnit({ product_id: product.product_id, unit_code: codes[i] }); } catch { failed += 1; }
+    }
+    setProgress(null);
+    if (failed === codes.length) { setError('No units could be added. Check the codes and try again.'); return; }
+    onDone(failed ? `Added ${codes.length - failed} of ${codes.length} units. ${failed} failed.` : `Added ${codes.length} units.`);
+  };
+
+  return (
+    <Modal
+      title="Bulk add units"
+      subtitle={product.name}
+      onClose={progress ? () => {} : onClose}
+      onSubmit={submit}
+      footer={(
+        <>
+          <button type="button" disabled={!!progress} onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="submit" disabled={!!progress || !valid} className={btn('primary')}>
+            {progress && <Loader2 className="h-4 w-4 animate-spin" />}
+            {progress ? `Adding ${progress.done + 1} of ${progress.total}…` : `Add ${codes.length || ''} units`.replace('  ', ' ')}
+          </button>
+        </>
+      )}
+    >
+      <ErrorBanner message={error} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Prefix" htmlFor="bulk-prefix"><input id="bulk-prefix" type="text" placeholder="B-" value={prefix} onChange={(e) => setPrefix(e.target.value)} className={inputCls(false)} /></Field>
+        <Field label="From" htmlFor="bulk-from"><input id="bulk-from" type="number" min="0" value={from} onChange={(e) => setFrom(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(!valid)} /></Field>
+        <Field label="To" htmlFor="bulk-to"><input id="bulk-to" type="number" min="0" value={to} onChange={(e) => setTo(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(!valid)} /></Field>
+      </div>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] text-slate-700" aria-live="polite">
+        {valid
+          ? <>Adds <b>{codes.length}</b> unit{codes.length === 1 ? '' : 's'} as Available · <span className="font-mono font-semibold">{codes[0]}</span>{codes.length > 1 && <> to <span className="font-mono font-semibold">{codes[codes.length - 1]}</span></>}</>
+          : <span className="text-red-700">{rangeError}</span>}
+      </div>
+    </Modal>
+  );
+}
+
+// ----- Purchase history -----
+
 // Every quotation line item that referenced this product, plus the invoice
-// generated for that quote and its payment status — lets an admin see who
-// bought how many of an ITEM-type product, when, and whether it's been paid,
-// without leaving the Catalog tab.
+// generated for that quote and its payment status.
 function ProductPurchaseHistoryModal({ product, onClose }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -649,282 +1600,63 @@ function ProductPurchaseHistoryModal({ product, onClose }) {
         const res = await apiClient.getProductPurchaseHistory(product.product_id);
         if (!cancelled) setRows(Array.isArray(res?.data) ? res.data : []);
       } catch (err) {
-        if (!cancelled) setError(err.message || 'Failed to load purchase history');
+        if (!cancelled) setError(err?.message || 'Failed to load purchase history');
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [product.product_id]);
+  }, [product.product_id, reloadKey]);
+
+  const cols = '110px minmax(150px,1.3fr) 130px 60px 130px minmax(150px,1fr)';
+  const invoiceTone = (s) => (s === 'PAID' ? 'green' : s === 'OVERDUE' ? 'red' : s === 'CANCELLED' ? 'slate' : 'amber');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-3xl rounded-lg bg-white shadow-xl max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Purchase History — {product.name}</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
+    <Modal title={`Purchase history — ${product.name}`} subtitle="Every quotation that included this product." onClose={onClose} width={760}
+      footer={<button type="button" onClick={onClose} className={btn('secondary')}>Close</button>}>
+      <ErrorBanner message={error} onRetry={() => setReloadKey((k) => k + 1)} />
+      {loading ? (
+        <SkeletonRows rows={4} />
+      ) : rows.length === 0 && !error ? (
+        <EmptyState title="No purchases of this product yet" />
+      ) : rows.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-slate-200">
+          <TableShell minWidth={720}>
+            <HeadRow cols={cols}>
+              <HCell>Date</HCell><HCell>Buyer</HCell><HCell>Quote</HCell><HCell right>Qty</HCell><HCell right>Amount</HCell><HCell>Invoice</HCell>
+            </HeadRow>
+            {rows.map((r) => (
+              <BodyRow key={r.line_item_id} cols={cols}>
+                <Cell className="text-[13px] text-slate-500">{formatDate(r.quoted_at)}</Cell>
+                <Cell>
+                  {r.client_name ? <ClientLink id={r.client_id}>{r.client_name}</ClientLink> : (r.walk_in_name || '—')}
+                  {r.walk_in_name && !r.client_name && <div className="text-xs font-semibold text-amber-700">Walk-in</div>}
+                </Cell>
+                <Cell className="font-mono text-[13px] font-semibold">{r.estimate_number}</Cell>
+                <Cell right>{r.quantity}</Cell>
+                <Cell right className="font-semibold text-slate-900">{formatMoney(r.amount)}</Cell>
+                <Cell>
+                  {r.invoice_status ? (
+                    <>
+                      <StatusChip tone={invoiceTone(r.invoice_status)}>{r.invoice_status.charAt(0) + r.invoice_status.slice(1).toLowerCase()}</StatusChip>
+                      <div className="mt-0.5 font-mono text-xs text-slate-500">{r.invoice_code || '—'}{r.paid_at ? ` · paid ${formatDate(r.paid_at)}` : ''}</div>
+                    </>
+                  ) : <span className="text-xs text-slate-500">Not invoiced</span>}
+                </Cell>
+              </BodyRow>
+            ))}
+          </TableShell>
         </div>
-
-        <div className="px-5 py-4">
-          {error && (
-            <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading purchase history…
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-400">
-              <History className="h-8 w-8" />
-              <p className="text-sm font-medium">No purchases of this product yet</p>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-slate-100 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-100 text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Date</th>
-                      <th className="px-3 py-2 text-left">Buyer</th>
-                      <th className="px-3 py-2 text-left">Estimate #</th>
-                      <th className="px-3 py-2 text-right">Qty</th>
-                      <th className="px-3 py-2 text-right">Line Amount</th>
-                      <th className="px-3 py-2 text-left">Invoice Code</th>
-                      <th className="px-3 py-2 text-left">Invoice Status</th>
-                      <th className="px-3 py-2 text-left">Paid</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {rows.map((r) => (
-                      <tr key={r.line_item_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{formatDate(r.quoted_at)}</td>
-                        <td className="px-3 py-2 text-slate-800">
-                          {r.client_name ? <ClientLink id={r.client_id}>{r.client_name}</ClientLink> : (r.walk_in_name || '—')}
-                          {r.walk_in_name && !r.client_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
-                        </td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-600 whitespace-nowrap">{r.estimate_number}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{r.quantity}</td>
-                        <td className="px-3 py-2 text-right font-semibold text-slate-800 whitespace-nowrap">{formatMoney(r.amount)}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-600 whitespace-nowrap">{r.invoice_code || '—'}</td>
-                        <td className="px-3 py-2">
-                          {r.invoice_status ? (
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
-                              r.invoice_status === 'PAID' ? 'bg-emerald-50 text-emerald-700' :
-                              r.invoice_status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
-                              r.invoice_status === 'OVERDUE' ? 'bg-red-50 text-red-700' :
-                              'bg-amber-50 text-amber-700'
-                            }`}>
-                              {r.invoice_status}
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-slate-400">Not invoiced</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{r.paid_at ? formatDate(r.paid_at) : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }
 
-// A rental product's own card: identity + actions up top, then every physical
-// unit for that product inline (status, notes, who's renting it and until
-// when if RENTED, mark-maintenance toggle) plus an inline "add unit" form —
-// so units never require leaving the Catalog tab to manage.
-function RentalProductPanel({ product, selected, onToggleSelect, units, onEdit, onDeactivate, onChanged, setError }) {
-  const [unitCode, setUnitCode] = useState('');
-  const [notes, setNotes] = useState('');
-  const [addingUnit, setAddingUnit] = useState(false);
-  const [busyUnitId, setBusyUnitId] = useState('');
-
-  const counts = units.reduce((acc, u) => { acc[u.status] = (acc[u.status] || 0) + 1; return acc; }, {});
-
-  const handleAddUnit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setAddingUnit(true);
-    try {
-      await apiClient.createRentalUnit({ product_id: product.product_id, unit_code: unitCode.trim() || undefined, notes: notes.trim() || undefined });
-      setUnitCode('');
-      setNotes('');
-      onChanged();
-    } catch (err) {
-      setError(err.message || 'Failed to add unit');
-    } finally {
-      setAddingUnit(false);
-    }
-  };
-
-  const handleToggleMaintenance = async (unit) => {
-    const nextStatus = unit.status === 'MAINTENANCE' ? 'AVAILABLE' : 'MAINTENANCE';
-    setBusyUnitId(unit.unit_id);
-    setError('');
-    try {
-      await apiClient.updateRentalUnitStatus(unit.unit_id, nextStatus);
-      onChanged();
-    } catch (err) {
-      setError(err.message || 'Failed to update unit');
-    } finally {
-      setBusyUnitId('');
-    }
-  };
-
-  const rentedUntilDate = (u) => {
-    if (u.status !== 'RENTED') return null;
-    return u.rental_billing_type === 'RECURRING' ? u.rental_next_invoice_date : u.rental_end_date;
-  };
-  const rentedTo = (u) => u.rented_to_client_name || u.rented_to_walk_in_name || '—';
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3">
-        <div className="flex items-center gap-3">
-          <SelectCheckbox checked={!!selected} onChange={onToggleSelect} title="Select for bulk display change" />
-          {product.image_url ? (
-            <img src={product.image_url} alt={product.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
-          ) : (
-            <div className="h-9 w-9 rounded bg-slate-100 flex items-center justify-center text-slate-300">
-              <ImageIcon className="h-4 w-4" />
-            </div>
-          )}
-          <div>
-            <p className="text-sm font-semibold text-slate-900">
-              {product.name}
-              {!product.is_available && (
-                <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">Deactivated</span>
-              )}
-              <VisibilityBadge product={product} />
-            </p>
-            <p className="text-xs text-slate-400">
-              {product.category_name || 'Uncategorized'} · {formatMoney(product.price)} / rental
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-3 text-xs text-slate-500">
-            <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{counts.AVAILABLE || 0} Available</span>
-            <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-violet-500" />{counts.RENTED || 0} Rented</span>
-            <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" />{counts.MAINTENANCE || 0} Maintenance</span>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <button type="button" onClick={onEdit} title="Edit product" className={iconBtnCls}>
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            {product.is_available && (
-              <button
-                type="button"
-                onClick={onDeactivate}
-                title="Deactivate product"
-                className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50">
-              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Unit</th>
-              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</th>
-              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rented By</th>
-              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Until</th>
-              <th className="px-4 py-2.5" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {units.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-xs text-slate-400">No units yet — add one below.</td>
-              </tr>
-            ) : (
-              units.map((u) => {
-                const cfg = UNIT_STATUS_DOT[u.status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
-                return (
-                  <tr key={u.unit_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-2.5 font-medium text-slate-800">{u.unit_code || u.unit_id.slice(0, 8)}</td>
-                    <td className="px-4 py-2.5 text-slate-500">{u.notes || '—'}</td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                        {u.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-700">{u.status === 'RENTED' ? (u.rented_to_client_name ? <ClientLink id={u.rented_to_client_id}>{u.rented_to_client_name}</ClientLink> : rentedTo(u)) : '—'}</td>
-                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
-                      {formatDate(rentedUntilDate(u))}
-                      {u.status === 'RENTED' && <DaysRemainingBadge date={rentedUntilDate(u)} />}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      {u.status !== 'RENTED' && (
-                        <button
-                          type="button"
-                          disabled={busyUnitId === u.unit_id}
-                          onClick={() => handleToggleMaintenance(u)}
-                          title={u.status === 'MAINTENANCE' ? 'Mark available' : 'Mark under maintenance'}
-                          className={iconBtnCls}
-                        >
-                          {busyUnitId === u.unit_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <form onSubmit={handleAddUnit} className="flex flex-wrap items-end gap-2 border-t border-slate-100 bg-slate-50 px-4 py-3">
-        <div>
-          <label className="block text-[10px] font-medium text-slate-500 mb-1">Unit code (optional)</label>
-          <input
-            type="text"
-            placeholder="e.g. BED-002"
-            value={unitCode}
-            onChange={(e) => setUnitCode(e.target.value)}
-            className="w-40 rounded-lg border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors"
-          />
-        </div>
-        <div className="flex-1 min-w-[160px]">
-          <label className="block text-[10px] font-medium text-slate-500 mb-1">Notes</label>
-          <input
-            type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors"
-          />
-        </div>
-        <button type="submit" disabled={addingUnit} className={primaryBtnCls}>
-          {addingUnit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add Unit
-        </button>
-      </form>
-    </div>
-  );
-}
+// ----- Category picker + product drawer -----
 
 const CATEGORY_PAGE_SIZE = 6;
 
-// Paginated, searchable list of existing categories the admin can pick from,
-// plus an inline "add new" row — replaces the old bare <select> which gave
-// no sense of how many categories existed or let you search them.
+// Paginated, searchable list of existing categories plus an inline "add new" row.
 function CategoryPicker({ categories, value, onChange, onCreated }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -952,126 +1684,77 @@ function CategoryPicker({ categories, value, onChange, onCreated }) {
       setNewName('');
       setAddingNew(false);
     } catch (err) {
-      setCreateError(err.message || 'Failed to create category');
+      setCreateError(err?.message || 'Failed to create category');
     } finally {
       setCreating(false);
     }
   };
 
+  const optionCls = (on) => `flex w-full items-center justify-between px-3 py-2 text-left text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${on ? 'bg-blue-50 font-semibold text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`;
+
   return (
     <div>
-      <label className="block text-[11px] font-medium text-slate-500 mb-1">Category</label>
-
+      <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Category</span>
       {selected && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 w-fit">
+        <div className="mb-2 flex w-fit items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
           <Tag className="h-3 w-3" /> {selected.name}
-          <button type="button" onClick={() => onChange('')} className="ml-1 text-blue-400 hover:text-blue-600">
+          <button type="button" aria-label="Clear category" onClick={() => onChange('')} className="ml-1 rounded text-blue-700 hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
             <X className="h-3 w-3" />
           </button>
         </div>
       )}
-
-      <div className="rounded-md border border-slate-300 bg-white overflow-hidden">
-        <div className="flex items-center gap-1.5 border-b border-slate-100 px-2 py-1.5">
-          <Search className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+      <div className="overflow-hidden rounded-md border border-slate-300 bg-white">
+        <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1.5">
+          <Search className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
           <input
             type="text"
+            aria-label="Search categories"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search categories…"
-            className="w-full text-xs text-slate-700 placeholder-slate-400 outline-none"
+            className="w-full py-1 text-[13px] text-slate-700 placeholder-slate-500 outline-none"
           />
         </div>
-
-        <div className="divide-y divide-slate-50">
-          <button
-            type="button"
-            onClick={() => onChange('')}
-            className={`w-full flex items-center px-2.5 py-1.5 text-left text-xs transition-colors ${
-              !value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-500 hover:bg-slate-50'
-            }`}
-          >
-            — None —
-          </button>
+        <div className="divide-y divide-slate-100">
+          <button type="button" onClick={() => onChange('')} className={optionCls(!value)}>None</button>
           {pageItems.length === 0 ? (
-            <p className="px-2.5 py-3 text-center text-xs text-slate-400">No categories found.</p>
-          ) : (
-            pageItems.map((c) => (
-              <button
-                key={c.category_id}
-                type="button"
-                onClick={() => onChange(c.category_id)}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 text-left text-xs transition-colors ${
-                  String(value) === String(c.category_id) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                {c.name}
-                {String(value) === String(c.category_id) && <Check className="h-3 w-3 shrink-0" />}
-              </button>
-            ))
-          )}
+            <p className="px-3 py-3 text-center text-[13px] text-slate-500">No categories found.</p>
+          ) : pageItems.map((c) => (
+            <button key={c.category_id} type="button" onClick={() => onChange(c.category_id)} className={optionCls(String(value) === String(c.category_id))}>
+              {c.name}
+              {String(value) === String(c.category_id) && <Check className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+          ))}
         </div>
-
         {totalPages > 1 && (
           <div className="flex items-center justify-between border-t border-slate-100 px-2 py-1.5">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:hover:text-slate-400"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <span className="text-[10px] text-slate-400">Page {page} of {totalPages}</span>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="rounded p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:hover:text-slate-400"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
+            <button type="button" aria-label="Previous categories" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded p-1 text-slate-600 hover:bg-slate-100 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+            <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
+            <button type="button" aria-label="Next categories" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="rounded p-1 text-slate-600 hover:bg-slate-100 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
           </div>
         )}
-
-        <div className="border-t border-slate-100 px-2 py-1.5">
+        <div className="border-t border-slate-100 px-3 py-2">
           {addingNew ? (
             <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <input
                   type="text"
                   autoFocus
+                  aria-label="New category name"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreate(); } }}
                   placeholder="New category name"
-                  className="w-full rounded border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400"
+                  className={inputCls(false)}
                 />
-                <button
-                  type="button"
-                  onClick={handleCreate}
-                  disabled={creating || !newName.trim()}
-                  className="shrink-0 rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {creating ? '…' : 'Add'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setAddingNew(false); setNewName(''); setCreateError(''); }}
-                  className="shrink-0 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                <button type="button" onClick={handleCreate} disabled={creating || !newName.trim()} className={btn('primary', 'sm')}>{creating ? '…' : 'Add'}</button>
+                <button type="button" aria-label="Cancel new category" onClick={() => { setAddingNew(false); setNewName(''); setCreateError(''); }} className={iconBtn}><X className="h-4 w-4" /></button>
               </div>
-              {createError && <p className="text-[10px] text-red-600">{createError}</p>}
+              {createError && <p role="alert" className="text-xs text-red-700">{createError}</p>}
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setAddingNew(true)}
-              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
-            >
-              <Plus className="h-3 w-3" /> Add new category
+            <button type="button" onClick={() => setAddingNew(true)} className="rounded text-[13px] font-semibold text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+              + Add new category
             </button>
           )}
         </div>
@@ -1080,24 +1763,42 @@ function CategoryPicker({ categories, value, onChange, onCreated }) {
   );
 }
 
-function ProductModal({ product, categories, vendors, onClose, onSaved }) {
-  const isEdit = !!product;
-  const [form, setForm] = useState({
-    name: product?.name || '',
-    product_type: product?.product_type || 'ITEM',
-    category_id: product?.category_id || '',
-    description: product?.description || '',
-    price: product?.price || '',
-    cost_price: product?.cost_price ?? '',
-    stock_quantity: product?.stock_quantity ?? 0,
-    vendor_id: product?.vendor_id || '',
-  });
+const blankProductForm = () => ({
+  name: '', product_type: 'ITEM', category_id: '', description: '', price: '', cost_price: '', stock_quantity: 0, vendor_id: '',
+});
+const formFromProduct = (p) => (p ? {
+  name: p.name || '',
+  product_type: p.product_type || 'ITEM',
+  category_id: p.category_id || '',
+  description: p.description || '',
+  price: p.price || '',
+  cost_price: p.cost_price ?? '',
+  stock_quantity: p.stock_quantity ?? 0,
+  vendor_id: p.vendor_id || '',
+} : blankProductForm());
+
+const TYPE_HELP = {
+  ITEM: 'Sold per unit with a tracked stock quantity.',
+  RENTAL: 'Rented out by the month. Availability comes from its units.',
+  ONE_TIME_SERVICE: 'Charged per visit or shift. Stock is not tracked.',
+};
+
+function ProductDrawer({ mode, product, categories, vendors, onClose, onSaved }) {
+  const isEdit = mode === 'edit';
+  const baselinePublic = isEdit ? product?.is_public !== false : true;
+  const [form, setForm] = useState(() => formFromProduct(product));
+  const [isPublicOn, setIsPublicOn] = useState(() => (product ? product.is_public !== false : true));
   const [localCategories, setLocalCategories] = useState(categories);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(product?.image_url || '');
   const [imageToCrop, setImageToCrop] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState({});
+  const [serverError, setServerError] = useState('');
+  const baseline = useRef({ form: JSON.stringify(formFromProduct(product)), pub: product ? product.is_public !== false : true, image: product?.image_url || '' });
+
+  const dirty = JSON.stringify(form) !== baseline.current.form || isPublicOn !== baseline.current.pub || imagePreview !== baseline.current.image;
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   const handleImageSelect = (file) => { if (file) setImageToCrop(file); };
   const handleImageCropComplete = (croppedFile) => {
@@ -1108,255 +1809,251 @@ function ProductModal({ product, categories, vendors, onClose, onSaved }) {
     reader.readAsDataURL(croppedFile);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    if (!form.name || !form.price) {
-      setError('Name and price are required');
-      return;
-    }
+  const priceN = parseFloat(form.price);
+  const costN = parseFloat(form.cost_price);
+  const showMargin = !Number.isNaN(priceN) && !Number.isNaN(costN) && form.cost_price !== '';
+  const margin = priceN - costN;
+  const marginPct = priceN > 0 ? Math.round((margin / priceN) * 100) : 0;
+
+  const resetForNext = () => {
+    const blank = { ...blankProductForm(), product_type: form.product_type };
+    setForm(blank);
+    setIsPublicOn(true);
+    setImageFile(null);
+    setImagePreview('');
+    setErrors({});
+    baseline.current = { form: JSON.stringify(blank), pub: true, image: '' };
+  };
+
+  const submit = async (addAnother) => {
+    setServerError('');
+    const errs = {};
+    if (!form.name) errs.name = 'Enter a product name.';
+    if (!form.price) errs.price = 'Enter a price.';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+
     setSaving(true);
     try {
       const payload = { ...form, category_id: form.category_id || '' };
+      let id = product?.product_id;
       if (isEdit) {
         await apiClient.updateProduct(product.product_id, { ...payload, is_available: product.is_available }, imageFile);
       } else {
-        await apiClient.createProduct(payload, imageFile);
+        const res = await apiClient.createProduct(payload, imageFile);
+        id = res?.data?.product_id || res?.product_id;
       }
-      onSaved();
+      let visibilityFailed = false;
+      if (isPublicOn !== baselinePublic) {
+        try {
+          if (!id) throw new Error('missing id');
+          await apiClient.setProductsVisibility([id], isPublicOn);
+        } catch {
+          visibilityFailed = true;
+        }
+      }
+      await onSaved({ addAnother, name: form.name, created: !isEdit, visibilityFailed });
+      if (addAnother) resetForNext();
     } catch (err) {
-      setError(err.message || 'Failed to save product');
+      setServerError(err?.message || 'Failed to save product');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/30" onClick={onClose} />
+    <>
+      <Drawer
+        title={isEdit ? 'Edit product' : mode === 'duplicate' ? 'Duplicate product' : 'New product'}
+        subtitle={isEdit ? 'Update this product in your catalog.' : 'Add a product, rental or service to your catalog.'}
+        dirty={dirty}
+        onClose={onClose}
+        onSubmit={(e) => { e.preventDefault(); submit(false); }}
+        footer={(
+          <>
+            <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+            <span className="flex-1" />
+            {!isEdit && <button type="button" disabled={saving} onClick={() => submit(true)} className={btn('secondary')}>Save and add another</button>}
+            <button type="submit" disabled={saving} className={btn('primary')}>
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isEdit ? 'Save changes' : 'Create product'}
+            </button>
+          </>
+        )}
+      >
+        <ErrorBanner message={serverError} />
 
-      <div className="w-full max-w-lg bg-white flex flex-col shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
-          <h3 className="text-sm font-semibold text-slate-900">{isEdit ? 'Edit Product' : 'New Product'}</h3>
-          <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <X className="h-4 w-4" />
-          </button>
+        <div>
+          <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Type</span>
+          <Segmented
+            ariaLabel="Product type"
+            value={form.product_type}
+            onChange={(v) => set({ product_type: v })}
+            options={[{ value: 'ITEM', label: 'Item' }, { value: 'RENTAL', label: 'Rental' }, { value: 'ONE_TIME_SERVICE', label: 'Service' }]}
+          />
+          <p className="mt-1.5 text-xs text-slate-500">{TYPE_HELP[form.product_type]}</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-          <div className="px-5 pt-4 pb-2 space-y-4">
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Name *</label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
+        <Field label="Name *" htmlFor="pd-name" error={errors.name}>
+          <input id="pd-name" type="text" value={form.name} onChange={(e) => set({ name: e.target.value })} className={inputCls(!!errors.name)} />
+        </Field>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-medium text-slate-500 mb-1">Type</label>
-                <select
-                  value={form.product_type}
-                  onChange={(e) => setForm((f) => ({ ...f, product_type: e.target.value }))}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="ITEM">Item (customer keeps it)</option>
-                  <option value="RENTAL">Rental</option>
-                  <option value="ONE_TIME_SERVICE">One-Time Service</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[11px] font-medium text-slate-500 mb-1">
-                  {form.product_type === 'RENTAL' ? 'Rental Price *' : 'Price *'}
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.price}
-                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                  onWheel={(e) => e.target.blur()}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-            </div>
+        <CategoryPicker
+          categories={localCategories}
+          value={form.category_id}
+          onChange={(id) => set({ category_id: id })}
+          onCreated={(cat) => setLocalCategories((prev) => [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
+        />
 
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Cost Price</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.cost_price}
-                onChange={(e) => setForm((f) => ({ ...f, cost_price: e.target.value }))}
-                onWheel={(e) => e.target.blur()}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-              <p className="mt-1 text-[10px] text-slate-400">What this item costs the business — used for the Profit &amp; Loss report's COGS.</p>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Vendor</label>
-              <select
-                value={form.vendor_id}
-                onChange={(e) => setForm((f) => ({ ...f, vendor_id: e.target.value }))}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="">— In-house stock (no vendor) —</option>
-                {vendors.map((v) => (
-                  <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>
-                ))}
-              </select>
-              <p className="mt-1 text-[10px] text-slate-400">If this item is sourced from an outside vendor, selecting it here lets you record what's owed to them when it's sold or rented.</p>
-            </div>
-
-            <CategoryPicker
-              categories={localCategories}
-              value={form.category_id}
-              onChange={(id) => setForm((f) => ({ ...f, category_id: id }))}
-              onCreated={(cat) => setLocalCategories((prev) => [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
-            />
-
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Description</label>
-              <textarea
-                rows={3}
-                value={form.description}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            {form.product_type === 'ITEM' && (
-              <div>
-                <label className="block text-[11px] font-medium text-slate-500 mb-1">Stock Quantity</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.stock_quantity}
-                  onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
-                  onWheel={(e) => e.target.blur()}
-                  className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-            )}
-
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Image</label>
-              <p className="mb-1.5 text-[10px] text-slate-400">Crop to match how it appears on the public catalog card.</p>
-              {imagePreview ? (
-                <div className="relative w-fit">
-                  <img
-                    src={imagePreview}
-                    alt="preview"
-                    className="h-24 rounded-lg border border-slate-200 object-cover"
-                    style={{ aspectRatio: CATALOG_CARD_IMAGE_ASPECT }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => { setImagePreview(''); setImageFile(null); }}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                  <div className="mt-1.5">
-                    <input type="file" id="product-image-change" className="hidden" accept="image/*"
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }} />
-                    <label htmlFor="product-image-change"
-                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium hover:bg-slate-200 cursor-pointer transition-colors">
-                      <Upload className="w-3 h-3" /> Change
-                    </label>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <input type="file" id="product-image-upload" className="hidden" accept="image/*"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }} />
-                  <label htmlFor="product-image-upload"
-                    className="flex flex-col items-center justify-center w-full h-24 border border-dashed border-slate-300 rounded-lg bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors group">
-                    <Upload className="w-5 h-5 text-slate-400 group-hover:text-blue-500 mb-1 transition-colors" />
-                    <p className="text-xs font-medium text-slate-500">Click to upload</p>
-                    <p className="text-xs text-slate-400">JPG, PNG</p>
-                  </label>
-                </div>
-              )}
-            </div>
-
-            {error && (
-              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-              </div>
-            )}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label={form.product_type === 'RENTAL' ? 'Rate per month (LKR) *' : 'Price (LKR) *'} htmlFor="pd-price" error={errors.price}>
+            <input id="pd-price" type="number" min="0" step="0.01" value={form.price} onChange={(e) => set({ price: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(!!errors.price)} />
+          </Field>
+          <Field label="Cost price (LKR)" htmlFor="pd-cost" hint="Used for the Profit & Loss report's COGS.">
+            <input id="pd-cost" type="number" min="0" step="0.01" value={form.cost_price} onChange={(e) => set({ cost_price: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+          </Field>
+        </div>
+        {showMargin && (
+          <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px]">
+            <span className="text-slate-500">Estimated margin</span>
+            <b className={`tabular-nums ${margin >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatMoney(margin)} ({marginPct}%)</b>
           </div>
-        </form>
+        )}
 
-        <div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={saving}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50"
-          >
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {isEdit ? 'Save Changes' : 'Create Product'}
-          </button>
+        {form.product_type === 'ITEM' && (
+          <Field label="Stock quantity" htmlFor="pd-stock" className="max-w-[200px]">
+            <input id="pd-stock" type="number" min="0" value={form.stock_quantity} onChange={(e) => set({ stock_quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+          </Field>
+        )}
+
+        <Field label="Vendor" htmlFor="pd-vendor" hint="If this is sourced from an outside vendor, selecting it lets you record what's owed to them when it's sold or rented.">
+          <select id="pd-vendor" value={form.vendor_id} onChange={(e) => set({ vendor_id: e.target.value })} className={inputCls(false)}>
+            <option value="">In-house stock (no vendor)</option>
+            {vendors.map((v) => <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>)}
+          </select>
+        </Field>
+
+        <Field label="Description" htmlFor="pd-desc">
+          <textarea id="pd-desc" rows={3} value={form.description} onChange={(e) => set({ description: e.target.value })} className={textareaCls(false)} />
+        </Field>
+
+        <div>
+          <span className="mb-1 block text-[13px] font-semibold text-slate-700">Image</span>
+          <p className="mb-2 text-xs text-slate-500">Crop to match how it appears on the public catalog card.</p>
+          {imagePreview ? (
+            <div className="flex items-center gap-4">
+              <img src={imagePreview} alt="Product preview" className="h-24 rounded-lg border border-slate-200 object-cover" style={{ aspectRatio: CATALOG_CARD_IMAGE_ASPECT }} />
+              <div className="flex flex-col gap-2">
+                <input type="file" id="product-image-change" className="sr-only" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); e.target.value = ''; }} />
+                <label htmlFor="product-image-change" className={`${btn('secondary', 'sm')} cursor-pointer`}><Upload className="h-3.5 w-3.5" /> Change</label>
+                <button type="button" onClick={() => { setImagePreview(''); setImageFile(null); }} className={btn('danger', 'sm')}>Remove</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <input type="file" id="product-image-upload" className="sr-only" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); e.target.value = ''; }} />
+              <label htmlFor="product-image-upload" className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-600 transition-colors hover:bg-slate-100 focus-within:ring-2 focus-within:ring-blue-500">
+                <Upload className="mb-1 h-5 w-5" />
+                <span className="text-[13px] font-semibold">Click to upload</span>
+                <span className="text-xs text-slate-500">JPG or PNG</span>
+              </label>
+            </div>
+          )}
         </div>
-      </div>
 
-      <ImageCropModal
-        imageFile={imageToCrop}
-        aspect={CATALOG_CARD_IMAGE_ASPECT}
-        onCancel={() => setImageToCrop(null)}
-        onCropComplete={handleImageCropComplete}
-      />
-    </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 px-3.5 py-3">
+          <div>
+            <b className="text-sm text-slate-900">Show on public catalog</b>
+            <p className="text-xs text-slate-500">Customers can see this product on the website.</p>
+          </div>
+          <Toggle checked={isPublicOn} onChange={setIsPublicOn} label="Show on public catalog" />
+        </div>
+      </Drawer>
+
+      {imageToCrop && (
+        <div className="fixed inset-0 z-[60]">
+          <ImageCropModal
+            imageFile={imageToCrop}
+            aspect={CATALOG_CARD_IMAGE_ASPECT}
+            onCancel={() => setImageToCrop(null)}
+            onCropComplete={handleImageCropComplete}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
 // ==================== QUOTES & INVOICES TAB ====================
 
-const QUOTE_STATUS_TABS = [
-  { key: 'all', label: 'All' },
-  { key: 'pending', label: 'Pending Acceptance' },
-  { key: 'awaiting_payment', label: 'Awaiting Payment' },
-  { key: 'paid', label: 'Paid' },
-];
-
 const QUOTE_PAGE_SIZE = 12;
+const QUO_COLS = '90px 150px minmax(190px,1.6fr) 140px 190px 210px 36px';
 
-function QuotesTab() {
+const invoiceTone = (s) => (s === 'PAID' ? 'green' : s === 'OVERDUE' ? 'red' : s === 'CANCELLED' ? 'slate' : 'amber');
+const invoiceLabel = (s) => (s === 'PAID' ? 'Paid' : s ? s.charAt(0) + s.slice(1).toLowerCase() : 'Unpaid');
+
+function Step({ done, children, sub }) {
+  return (
+    <div className={`flex items-center gap-2.5 text-[13px] ${done ? 'text-slate-800' : 'text-slate-500'}`}>
+      <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${done ? 'bg-emerald-500' : 'border-2 border-slate-300 bg-white'}`} />
+      <span>{children}</span>
+      {sub && <span className="text-xs text-slate-500">{sub}</span>}
+      <span className="sr-only">{done ? '(done)' : '(not yet)'}</span>
+    </div>
+  );
+}
+
+function useBankAccounts() {
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    try {
+      const res = await apiClient.getBankAccounts();
+      setError('');
+      setBankAccounts(Array.isArray(res?.data) ? res.data : []);
+    } catch (err) {
+      setError(err?.message || 'Failed to load bank accounts.');
+    }
+  }, []);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
+  return { bankAccounts, error, reload: load };
+}
+
+function BankAccountSelect({ id, value, onChange, accounts, invalid }) {
+  return (
+    <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={inputCls(invalid)}>
+      <option value="">Select a bank account…</option>
+      {accounts.map((b) => <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>)}
+    </select>
+  );
+}
+
+function QuotesTab({ createTick, onCount }) {
   const navigate = useNavigate();
+  const { toast, confirm } = useUi();
+  const [sp, update] = useUrlParams();
+  const statusTab = ['pending', 'awaiting_payment', 'paid'].includes(sp.get('status')) ? sp.get('status') : 'all';
+  const search = sp.get('search') || '';
+
   const [quotes, setQuotes] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [quoteModalOpen, setQuoteModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [error, setError] = useState('');
+  const [quoteDrawerOpen, setQuoteDrawerOpen] = useState(false);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
   const [previewQuote, setPreviewQuote] = useState(null);
   const [busyQuoteId, setBusyQuoteId] = useState('');
   const [sendingQuoteId, setSendingQuoteId] = useState('');
   const [downloadingQuoteId, setDownloadingQuoteId] = useState('');
-  const [sendResult, setSendResult] = useState(null); // { quoteId, pdfUrl }
-  const [error, setError] = useState('');
-
-  const [statusTab, setStatusTab] = useState('all');
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const [sentIds, setSentIds] = useState(() => new Set());
   const [expandedQuoteId, setExpandedQuoteId] = useState(null);
-  const [vendorPromptQuote, setVendorPromptQuote] = useState(null); // full quote (with line_items) awaiting vendor-payment decisions
-  const [vendorPromptLoading, setVendorPromptLoading] = useState(false);
+  const [vendorPromptQuote, setVendorPromptQuote] = useState(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [qRes, prodInvRes, rentalOneTimeRes, rentalRecurringRes] = await Promise.all([
         apiClient.getProductQuotes(),
@@ -1370,37 +2067,40 @@ function QuotesTab() {
         ...(Array.isArray(rentalOneTimeRes?.data) ? rentalOneTimeRes.data : []),
         ...(Array.isArray(rentalRecurringRes?.data) ? rentalRecurringRes.data : []),
       ]);
-    } catch {
-      setQuotes([]);
-      setInvoices([]);
+    } catch (err) {
+      setLoadError(err?.message || 'Failed to load quotations.');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (!loading && !loadError) onCount('quotes', quotes.length); }, [loading, loadError, quotes.length, onCount]);
+
+  const openCreate = useCallback(() => setQuoteDrawerOpen(true), []);
+  useCreateSignal(createTick, openCreate);
 
   // A quote with several rental items (each getting its own agreement) plus
   // maybe a combined invoice for any non-rental items can spawn more than one
-  // invoice on acceptance — and RECURRING rentals add another each billing
-  // cycle after that. Show all of them, oldest first.
+  // invoice on acceptance. Show all of them, oldest first.
   const invoicesForQuote = (quoteId) =>
     invoices.filter((i) => i.quote_id === quoteId).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-  const quoteStatusOf = (quoteInvoices) => {
-    if (quoteInvoices.length === 0) return 'pending';
+  // Every product line has its own invoice, so a quotation is only invoiced once none of its lines
+  // is still waiting for one (unbilled_line_count comes from the server).
+  const quoteStatusOf = (quoteInvoices, quote) => {
+    if (quoteInvoices.length === 0 || Number(quote?.unbilled_line_count) > 0) return 'pending';
     return quoteInvoices.every((inv) => inv.status === 'PAID') ? 'paid' : 'awaiting_payment';
   };
 
-  // Enrich once so filtering/sorting/summary cards all read off the same shape.
   const enrichedQuotes = quotes.map((q) => {
     const quoteInvoices = invoicesForQuote(q.quote_id);
-    return { quote: q, quoteInvoices, bucket: quoteStatusOf(quoteInvoices) };
+    return { quote: q, quoteInvoices, bucket: quoteStatusOf(quoteInvoices, q) };
   });
 
   const tabCounts = enrichedQuotes.reduce(
     (acc, { bucket }) => ({ ...acc, all: acc.all + 1, [bucket]: acc[bucket] + 1 }),
-    { all: 0, pending: 0, awaiting_payment: 0, paid: 0 }
+    { all: 0, pending: 0, awaiting_payment: 0, paid: 0 },
   );
 
   const outstandingTotal = invoices.filter((i) => i.status !== 'PAID').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
@@ -1408,64 +2108,83 @@ function QuotesTab() {
 
   const recipientName = (q) => q.client_name || q.walk_in_name || '—';
 
-  const filtered = enrichedQuotes.filter(({ quote: q, bucket }) => {
+  const filtered = enrichedQuotes.filter(({ quote: q, quoteInvoices, bucket }) => {
     if (statusTab !== 'all' && bucket !== statusTab) return false;
     const query = search.trim().toLowerCase();
     if (!query) return true;
     return (
-      (q.estimate_number || '').toLowerCase().includes(query) ||
-      recipientName(q).toLowerCase().includes(query)
+      (q.estimate_number || '').toLowerCase().includes(query)
+      || recipientName(q).toLowerCase().includes(query)
+      || quoteInvoices.some((i) => (i.invoice_code || '').toLowerCase().includes(query))
     );
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / QUOTE_PAGE_SIZE));
+  const page = Math.min(Math.max(1, parseInt(sp.get('page') || '1', 10) || 1), totalPages);
   const pageItems = filtered.slice((page - 1) * QUOTE_PAGE_SIZE, page * QUOTE_PAGE_SIZE);
-
-  useEffect(() => { setPage(1); }, [statusTab, search]);
+  const hasFilters = statusTab !== 'all' || !!search;
 
   const handleAccept = async (quote) => {
     setError('');
-    // Vendor-linked line items need a pay-now-or-leave-unpaid decision before
-    // acceptance — check for those first instead of always accepting blind.
-    setVendorPromptLoading(true);
-    let hasVendorItems = false;
-    let full = null;
+    setBusyQuoteId(quote.quote_id);
+    let data;
     try {
-      full = await apiClient.getProductQuote(quote.quote_id);
-      const lineItems = full?.data?.line_items || full?.line_items || [];
-      hasVendorItems = lineItems.some((li) => li.vendor_id);
+      const full = await apiClient.getProductQuote(quote.quote_id);
+      data = full?.data || full;
     } catch (err) {
-      setError(err.message || 'Failed to load quotation details');
-      setVendorPromptLoading(false);
+      setError(err?.message || 'Failed to load quotation details');
+      setBusyQuoteId('');
       return;
     }
-    setVendorPromptLoading(false);
+    const lineItems = data?.line_items || [];
+    // Vendor-linked line items need a pay-now-or-leave-unpaid decision first.
+    if (lineItems.some((li) => li.vendor_id)) {
+      setVendorPromptQuote(data);
+      setBusyQuoteId('');
+      return;
+    }
+    setBusyQuoteId('');
 
-    if (hasVendorItems) {
-      setVendorPromptQuote(full?.data || full);
-      return;
-    }
+    // One invoice for every product line still waiting for one, plus an agreement and invoice for
+    // each rental. Lines already invoiced on their own are left as they are.
+    const waiting = lineItems.filter((li) => li.billed === false);
+    const rentals = waiting.filter((li) => li.rental_billing_type).length;
+    const otherLines = waiting.filter((li) => !li.rental_billing_type && ['PRODUCT', 'DEPOSIT'].includes(li.item_type)).length;
+    const invoiceCount = rentals + otherLines;
+    const grand = Number(quote.total_amount || 0) + Number(quote.total_deposit_amount || 0);
+    const summary = invoiceCount > 0
+      ? `This will create ${invoiceCount} invoice${invoiceCount === 1 ? '' : 's'}${rentals ? ` and ${rentals} rental agreement${rentals === 1 ? '' : 's'}` : ''} for ${recipientName(quote)}, totalling ${formatMoney(grand)}.`
+      : `This will invoice ${recipientName(quote)} for ${formatMoney(grand)}.`;
+    const ok = await confirm({
+      title: `Accept quotation ${quote.estimate_number}?`,
+      body: summary,
+      confirmLabel: rentals ? 'Accept and create rental' : 'Accept and invoice',
+      tone: 'success',
+    });
+    if (!ok) return;
 
     setBusyQuoteId(quote.quote_id);
     try {
       await apiClient.acceptProductQuote(quote.quote_id);
       await fetchAll();
+      toast(`Quotation ${quote.estimate_number} accepted.`);
     } catch (err) {
-      setError(err.message || 'Failed to accept quotation');
+      setError(err?.message || 'Failed to accept quotation');
     } finally {
       setBusyQuoteId('');
     }
   };
 
-  const handleAcceptWithVendorPayments = async (quoteId, vendorPayments) => {
-    setBusyQuoteId(quoteId);
+  const handleAcceptWithVendorPayments = async (quote, vendorPayments) => {
+    setBusyQuoteId(quote.quote_id);
     setError('');
     try {
-      await apiClient.acceptProductQuote(quoteId, { vendor_payments: vendorPayments });
+      await apiClient.acceptProductQuote(quote.quote_id, { vendor_payments: vendorPayments });
       setVendorPromptQuote(null);
       await fetchAll();
+      toast(`Quotation ${quote.estimate_number} accepted.`);
     } catch (err) {
-      setError(err.message || 'Failed to accept quotation');
+      setError(err?.message || 'Failed to accept quotation');
     } finally {
       setBusyQuoteId('');
     }
@@ -1474,13 +2193,13 @@ function QuotesTab() {
   const handleSend = async (quote) => {
     setSendingQuoteId(quote.quote_id);
     setError('');
-    setSendResult(null);
     try {
       const res = await apiClient.sendProductQuotePDF(quote.quote_id);
-      setSendResult({ quoteId: quote.quote_id, pdfUrl: res?.pdf_link });
+      setSentIds((s) => new Set(s).add(quote.quote_id));
       await fetchAll();
+      toast('Quotation sent via WhatsApp.', res?.pdf_link ? { link: { label: 'View PDF', href: res.pdf_link } } : {});
     } catch (err) {
-      setError(err.message || 'Failed to send quotation');
+      setError(err?.message || 'Failed to send quotation');
     } finally {
       setSendingQuoteId('');
     }
@@ -1491,311 +2210,209 @@ function QuotesTab() {
     setError('');
     try {
       const res = await apiClient.generateProductQuotePdf(quote.quote_id);
-      if (res?.pdf_url) {
-        window.open(res.pdf_url, '_blank', 'noopener');
-      }
+      if (res?.pdf_url) window.open(res.pdf_url, '_blank', 'noopener');
     } catch (err) {
-      setError(err.message || 'Failed to generate quotation PDF');
+      setError(err?.message || 'Failed to generate quotation PDF');
     } finally {
       setDownloadingQuoteId('');
     }
   };
 
+  const exportCsv = () => downloadCsv(
+    'quotations.csv',
+    ['Date', 'Quote #', 'Recipient', 'Total', 'Deposit', 'Status', 'Invoices'],
+    filtered.map(({ quote: q, quoteInvoices, bucket }) => [
+      formatDate(q.created_at), q.estimate_number, recipientName(q), q.total_amount, q.total_deposit_amount || 0,
+      bucket === 'pending' ? 'Pending acceptance' : bucket === 'paid' ? 'Paid' : 'Awaiting payment',
+      quoteInvoices.map((i) => i.invoice_code).join(' '),
+    ]),
+  );
+
+  const setStatus = (v) => update({ status: v === 'all' ? '' : v, page: '' });
+
   return (
     <>
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Quotes</p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">{quotes.length}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Pending Acceptance</p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">{tabCounts.pending}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Awaiting Payment</p>
-          <p className="mt-1 text-lg font-semibold text-amber-700">{formatMoney(outstandingTotal)}</p>
-          <p className="text-xs text-slate-400">{tabCounts.awaiting_payment} quote{tabCounts.awaiting_payment !== 1 ? 's' : ''}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Collected</p>
-          <p className="mt-1 text-lg font-semibold text-emerald-700">{formatMoney(collectedTotal)}</p>
-          <p className="text-xs text-slate-400">{tabCounts.paid} quote{tabCounts.paid !== 1 ? 's' : ''} fully paid</p>
-        </div>
+      <ErrorBanner message={loadError} onRetry={fetchAll} />
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
+
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
+        <Kpi label="Total quotes" value={quotes.length} sub="All time" active={statusTab === 'all'} onClick={() => setStatus('all')} />
+        <Kpi label="Pending acceptance" value={tabCounts.pending} sub="Waiting for the client" active={statusTab === 'pending'} onClick={() => setStatus('pending')} />
+        <Kpi label="Awaiting payment" value={formatMoney(outstandingTotal)} tone="amber" sub={`${tabCounts.awaiting_payment} quote${tabCounts.awaiting_payment === 1 ? '' : 's'}`} active={statusTab === 'awaiting_payment'} onClick={() => setStatus('awaiting_payment')} />
+        <Kpi label="Collected" value={formatMoney(collectedTotal)} tone="green" sub={`${tabCounts.paid} fully paid`} active={statusTab === 'paid'} onClick={() => setStatus('paid')} />
       </div>
 
-      {/* Toolbar: status tabs, search, new quote */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 w-fit">
-          {QUOTE_STATUS_TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setStatusTab(key)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                statusTab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {label}
-              <span className="ml-1.5 tabular-nums text-slate-400">{tabCounts[key]}</span>
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search recipient or estimate #…"
-              className={`${inputCls} pl-8 w-64`}
-            />
-          </div>
-          <button type="button" onClick={() => setQuoteModalOpen(true)} className={`${primaryBtnCls} shrink-0`}>
-            <Plus className="h-4 w-4" /> New Product Quote
-          </button>
-        </div>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <SearchBox value={search} onChange={(v) => update({ search: v, page: '' })} placeholder="Search quote #, recipient or invoice code…" />
+        <Segmented
+          ariaLabel="Quote status"
+          value={statusTab}
+          onChange={setStatus}
+          options={[
+            { value: 'all', label: 'All', count: tabCounts.all },
+            { value: 'pending', label: 'Pending', count: tabCounts.pending },
+            { value: 'awaiting_payment', label: 'Awaiting payment', count: tabCounts.awaiting_payment },
+            { value: 'paid', label: 'Paid', count: tabCounts.paid },
+          ]}
+        />
+        <span className="flex-1" />
+        <button type="button" onClick={exportCsv} disabled={filtered.length === 0} className={btn('secondary')}>
+          <Download className="h-4 w-4" /> Export CSV
+        </button>
       </div>
 
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" /> {error}
-        </div>
-      )}
-
-      {sendResult && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">
-          <Check className="h-4 w-4 shrink-0" /> Quotation sent via WhatsApp.
-          <a href={sendResult.pdfUrl} target="_blank" rel="noreferrer" className="underline font-medium ml-1">View PDF</a>
-        </div>
-      )}
-
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading quotes…
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
-            <ShoppingBag className="h-8 w-8" />
-            <p className="text-sm font-medium">
-              {quotes.length === 0 ? 'No product quotations yet' : 'No quotes match your filters'}
-            </p>
-          </div>
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {loading && quotes.length === 0 ? (
+          <SkeletonRows rows={6} />
+        ) : filtered.length === 0 && !loadError ? (
+          <EmptyState
+            title={quotes.length === 0 ? 'No product quotations yet' : 'No quotes match your filters'}
+            body={quotes.length === 0 ? 'Use New quotation above to create the first one.' : undefined}
+            action={hasFilters && quotes.length > 0 ? <button type="button" onClick={() => update({ status: '', search: '', page: '' })} className={btn('secondary')}>Clear filters</button> : null}
+          />
         ) : (
-          <div className="divide-y divide-slate-100">
+          <TableShell minWidth={1020}>
+            <HeadRow cols={QUO_COLS}>
+              <HCell>Date</HCell><HCell>Quote #</HCell><HCell>Recipient</HCell><HCell right>Total</HCell><HCell>Status</HCell><HCell right>Next step</HCell><HCell><span className="sr-only">Details</span></HCell>
+            </HeadRow>
             {pageItems.map(({ quote: q, quoteInvoices, bucket }) => {
               const rentalItemCount = Number(q.rental_item_count) || 0;
               const isRentalQuote = rentalItemCount > 0;
               const isExpanded = expandedQuoteId === q.quote_id;
-              const singleUnpaidInvoice = quoteInvoices.length === 1 && quoteInvoices[0].status !== 'PAID' ? quoteInvoices[0] : null;
-
+              const firstUnpaid = quoteInvoices.find((i) => i.status !== 'PAID');
+              const unpaidCount = quoteInvoices.filter((i) => i.status !== 'PAID').length;
+              const busy = busyQuoteId === q.quote_id;
               return (
-                <div key={q.quote_id}>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedQuoteId(isExpanded ? null : q.quote_id)}
-                    className="flex w-full items-center gap-4 px-4 py-3.5 text-left hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="w-24 shrink-0 text-xs text-slate-500">{formatDate(q.created_at)}</div>
-
-                    <div className="w-40 shrink-0">
-                      <p className="font-mono text-xs font-semibold text-slate-700">{q.estimate_number}</p>
-                      {q.linked_quote_id ? (
-                        <span className="mt-0.5 inline-block rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-                          + Service Request
-                        </span>
-                      ) : (
-                        <span className="mt-0.5 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
-                          Product Only
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm text-slate-800">
+                <React.Fragment key={q.quote_id}>
+                  <BodyRow cols={QUO_COLS}>
+                    <Cell className="text-[13px] text-slate-500">{formatDate(q.created_at)}</Cell>
+                    <Cell>
+                      <div className="font-mono text-[13px] font-semibold text-slate-900">{q.estimate_number}</div>
+                      <div className="text-xs text-slate-500">{q.linked_quote_id ? '+ Service request' : 'Product only'}</div>
+                    </Cell>
+                    <Cell>
+                      <div className="truncate font-semibold text-slate-900">
                         {q.client_name ? <ClientLink id={q.client_id}>{q.client_name}</ClientLink> : recipientName(q)}
-                        {q.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
-                      </p>
-                      {isRentalQuote && (
-                        <span className="mt-0.5 inline-block rounded bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700">
-                          {rentalItemCount > 1 ? `${rentalItemCount} Rental Items` : '1 Rental Item'}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="w-32 shrink-0 text-right">
-                      <p className="font-semibold text-slate-800">{formatMoney(q.total_amount)}</p>
-                      {Number(q.total_deposit_amount) > 0 && (
-                        <p className="text-[10px] text-slate-400">+{formatMoney(q.total_deposit_amount)} deposit</p>
-                      )}
-                    </div>
-
-                    <div className="w-40 shrink-0">
-                      {bucket === 'pending' && (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" /> Pending Acceptance
-                        </span>
-                      )}
-                      {bucket === 'awaiting_payment' && (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                          Awaiting Payment{quoteInvoices.length > 1 ? ` (${quoteInvoices.filter((i) => i.status !== 'PAID').length}/${quoteInvoices.length})` : ''}
-                        </span>
-                      )}
-                      {bucket === 'paid' && (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Paid
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="w-40 shrink-0 flex justify-end" onClick={(e) => e.stopPropagation()}>
-                      {bucket === 'pending' && (
-                        <button
-                          type="button"
-                          disabled={busyQuoteId === q.quote_id || vendorPromptLoading}
-                          onClick={() => handleAccept(q)}
-                          className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                        >
-                          {busyQuoteId === q.quote_id || vendorPromptLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          {isRentalQuote ? 'Accept & Create Rental(s)' : 'Accept & Invoice'}
-                        </button>
-                      )}
-                      {bucket === 'awaiting_payment' && singleUnpaidInvoice && (
-                        <button
-                          type="button"
-                          onClick={() => setPaymentModalInvoice(singleUnpaidInvoice)}
-                          className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-                        >
-                          <CreditCard className="h-3 w-3" /> Record Payment
-                        </button>
-                      )}
-                      {bucket === 'awaiting_payment' && !singleUnpaidInvoice && (
-                        <span className="text-xs text-slate-400">See invoices below</span>
-                      )}
-                    </div>
-
-                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-300 transition-transform ${isExpanded ? 'rotate-180 text-blue-500' : ''}`} />
-                  </button>
-
-                  {isExpanded && (
-                    <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-4">
-                      {quoteInvoices.length > 0 && (
-                        <div className="mb-3 space-y-1.5">
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Invoices</p>
-                          {quoteInvoices.map((inv) => (
-                            <div key={inv.invoice_id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs text-slate-500">{inv.invoice_code}</span>
-                                <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-                                  inv.status === 'PAID' ? 'text-emerald-700' : 'text-amber-700'
-                                }`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full ${inv.status === 'PAID' ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-                                  {inv.status}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-sm font-semibold text-slate-800">{formatMoney(inv.amount)}</span>
-                                {inv.status !== 'PAID' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setPaymentModalInvoice(inv)}
-                                    className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700"
-                                  >
-                                    <CreditCard className="h-3 w-3" /> Pay
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                      </div>
+                      {(q.walk_in_name || isRentalQuote) && (
+                        <div className="text-xs text-slate-500">
+                          {q.walk_in_name && <span className="font-semibold text-amber-700">Walk-in</span>}
+                          {q.walk_in_name && isRentalQuote && ' · '}
+                          {isRentalQuote && <span className="font-semibold text-blue-700">{rentalItemCount} rental item{rentalItemCount === 1 ? '' : 's'}</span>}
                         </div>
                       )}
+                    </Cell>
+                    <Cell right>
+                      <div className="font-semibold text-slate-900">{formatMoney(q.total_amount)}</div>
+                      {Number(q.total_deposit_amount) > 0 && <div className="text-xs text-slate-500">+ {formatMoney(q.total_deposit_amount)} deposit</div>}
+                    </Cell>
+                    <Cell>
+                      {bucket === 'pending' && <StatusChip tone="slate">{quoteInvoices.length > 0 ? 'Partly invoiced' : 'Pending acceptance'}</StatusChip>}
+                      {bucket === 'awaiting_payment' && <StatusChip tone="amber">Awaiting payment{quoteInvoices.length > 1 ? ` (${unpaidCount}/${quoteInvoices.length})` : ''}</StatusChip>}
+                      {bucket === 'paid' && <StatusChip tone="green">Paid</StatusChip>}
+                    </Cell>
+                    <Cell right>
+                      {bucket === 'pending' && (
+                        <button type="button" disabled={busy} onClick={() => handleAccept(q)} className={btn('success', 'sm')}>
+                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          {isRentalQuote ? 'Accept and create rental' : 'Accept and invoice'}
+                        </button>
+                      )}
+                      {bucket === 'awaiting_payment' && firstUnpaid && (
+                        <button type="button" onClick={() => setPaymentModalInvoice(firstUnpaid)} className={btn('primary', 'sm')}>Record payment</button>
+                      )}
+                      {bucket === 'paid' && <span className="text-[13px] text-slate-500">Complete</span>}
+                    </Cell>
+                    <Cell>
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? 'Hide' : 'Show'} details for ${q.estimate_number}`}
+                        onClick={() => setExpandedQuoteId(isExpanded ? null : q.quote_id)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                      >
+                        <ChevronDown className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180 text-blue-600' : ''}`} />
+                      </button>
+                    </Cell>
+                  </BodyRow>
 
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {quoteInvoices.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setPreviewQuote(q)}
-                            title="Preview what's included in each invoice"
-                            className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                          >
-                            <Eye className="h-3 w-3" /> Preview Invoice Contents
+                  {isExpanded && (
+                    <ExpandRow>
+                      <div className="flex flex-wrap gap-8">
+                        <div className="min-w-[240px] flex-1 basis-[280px]">
+                          <div className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">Progress</div>
+                          <div className="space-y-2">
+                            <Step done sub={formatDate(q.created_at)}>Quotation created</Step>
+                            <Step done={!!q.sent_at || sentIds.has(q.quote_id) || quoteInvoices.length > 0}>Sent to client</Step>
+                            <Step done={bucket !== 'pending'}>Accepted and invoiced</Step>
+                            <Step done={bucket === 'paid'}>Fully paid</Step>
+                          </div>
+                        </div>
+                        <div className="min-w-[280px] flex-1 basis-[320px]">
+                          <div className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">Invoices</div>
+                          {quoteInvoices.length === 0 ? (
+                            <p className="text-[13px] text-slate-500">No invoices yet. Each product line is invoiced when the quotation is accepted.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {quoteInvoices.map((inv) => (
+                                <div key={inv.invoice_id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                  <span className="flex flex-wrap items-center gap-2">
+                                    <span className="font-mono text-[13px] text-slate-600">{inv.invoice_code}</span>
+                                    <StatusChip tone={invoiceTone(inv.status)}>{invoiceLabel(inv.status)}</StatusChip>
+                                  </span>
+                                  <span className="flex items-center gap-3">
+                                    <b className="tabular-nums text-slate-900">{formatMoney(inv.amount)}</b>
+                                    {inv.status !== 'PAID' && <button type="button" onClick={() => setPaymentModalInvoice(inv)} className={btn('primary', 'sm')}>Pay</button>}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex basis-full flex-wrap gap-2">
+                          <button type="button" disabled={downloadingQuoteId === q.quote_id} onClick={() => handleDownload(q)} className={btn('secondary', 'sm')}>
+                            {downloadingQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Download PDF
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          disabled={downloadingQuoteId === q.quote_id}
-                          onClick={() => handleDownload(q)}
-                          title="Download quotation PDF"
-                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                        >
-                          {downloadingQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-                          Download Quote PDF
-                        </button>
-                        <button
-                          type="button"
-                          disabled={sendingQuoteId === q.quote_id}
-                          onClick={() => handleSend(q)}
-                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                        >
-                          {sendingQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-                          {quoteInvoices.length === 0 ? 'Send via WhatsApp' : 'Resend via WhatsApp'}
-                        </button>
-                        {q.linked_quote_id && (
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/admin/quotations/${q.linked_quote_id}`)}
-                            title="Also includes service request charges — open the linked service quote"
-                            className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
-                          >
-                            Open Linked Service Quote{q.linked_estimate_number ? ` (${q.linked_estimate_number})` : ''}
-                            <ExternalLink className="h-2.5 w-2.5" />
+                          <button type="button" disabled={sendingQuoteId === q.quote_id} onClick={() => handleSend(q)} className={btn('secondary', 'sm')}>
+                            {sendingQuoteId === q.quote_id && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {quoteInvoices.length === 0 ? 'Send via WhatsApp' : 'Resend via WhatsApp'}
                           </button>
-                        )}
+                          {quoteInvoices.length > 0 && (
+                            <button type="button" onClick={() => setPreviewQuote(q)} className={btn('secondary', 'sm')}>Preview invoice contents</button>
+                          )}
+                          {q.linked_quote_id && (
+                            <button type="button" onClick={() => navigate(`/admin/quotations/${q.linked_quote_id}`)} className={btn('secondary', 'sm')}>
+                              Open linked service quote{q.linked_estimate_number ? ` (${q.linked_estimate_number})` : ''} <ExternalLink className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </ExpandRow>
                   )}
-                </div>
+                </React.Fragment>
               );
             })}
-          </div>
+          </TableShell>
         )}
 
-        {!loading && filtered.length > 0 && totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
-            <p className="text-xs text-slate-400">
-              Showing {(page - 1) * QUOTE_PAGE_SIZE + 1}–{Math.min(page * QUOTE_PAGE_SIZE, filtered.length)} of {filtered.length}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <span className="text-xs font-medium text-slate-600">Page {page} of {totalPages}</span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
+        {filtered.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 text-[13px] text-slate-500">
+            <span>Showing {(page - 1) * QUOTE_PAGE_SIZE + 1}–{Math.min(page * QUOTE_PAGE_SIZE, filtered.length)} of {filtered.length} quotation{filtered.length === 1 ? '' : 's'}</span>
+            {totalPages > 1 && (
+              <span className="flex items-center gap-2">
+                <button type="button" onClick={() => update({ page: page - 1 <= 1 ? '' : page - 1 })} disabled={page <= 1} className={btn('secondary', 'sm')}>Previous</button>
+                <span className="font-semibold text-slate-700">Page {page} of {totalPages}</span>
+                <button type="button" onClick={() => update({ page: page + 1 })} disabled={page >= totalPages} className={btn('secondary', 'sm')}>Next</button>
+              </span>
+            )}
           </div>
         )}
       </div>
 
-      {quoteModalOpen && (
-        <NewProductQuoteModal
-          onClose={() => setQuoteModalOpen(false)}
-          onCreated={() => { setQuoteModalOpen(false); fetchAll(); }}
+      {quoteDrawerOpen && (
+        <NewProductQuoteDrawer
+          onClose={() => setQuoteDrawerOpen(false)}
+          onCreated={() => { setQuoteDrawerOpen(false); fetchAll(); toast('Quotation created.'); }}
         />
       )}
 
@@ -1803,16 +2420,12 @@ function QuotesTab() {
         <RecordInvoicePaymentModal
           invoice={paymentModalInvoice}
           onClose={() => setPaymentModalInvoice(null)}
-          onRecorded={() => { setPaymentModalInvoice(null); fetchAll(); }}
+          onRecorded={() => { setPaymentModalInvoice(null); fetchAll(); toast(`Payment recorded for ${paymentModalInvoice.invoice_code}.`); }}
         />
       )}
 
       {previewQuote && (
-        <InvoicePreviewModal
-          quote={previewQuote}
-          invoices={invoicesForQuote(previewQuote.quote_id)}
-          onClose={() => setPreviewQuote(null)}
-        />
+        <InvoicePreviewModal quote={previewQuote} invoices={invoicesForQuote(previewQuote.quote_id)} onClose={() => setPreviewQuote(null)} />
       )}
 
       {vendorPromptQuote && (
@@ -1820,7 +2433,7 @@ function QuotesTab() {
           quote={vendorPromptQuote}
           submitting={busyQuoteId === vendorPromptQuote.quote_id}
           onClose={() => setVendorPromptQuote(null)}
-          onConfirm={(vendorPayments) => handleAcceptWithVendorPayments(vendorPromptQuote.quote_id, vendorPayments)}
+          onConfirm={(vendorPayments) => handleAcceptWithVendorPayments(vendorPromptQuote, vendorPayments)}
         />
       )}
     </>
@@ -1829,37 +2442,22 @@ function QuotesTab() {
 
 // Shown when accepting a PRODUCT quote that has one or more line items backed
 // by a vendor-sourced product. For each such item the admin decides whether
-// to pay the vendor now (from a company bank account) or leave it as an
-// unpaid balance owed to the vendor, settled later from the Vendors page.
-// The chosen amount defaults to the line's cost-price snapshot (COGS), editable.
+// to pay the vendor now or leave it as an unpaid balance owed to the vendor.
 function VendorPaymentPromptModal({ quote, submitting, onClose, onConfirm }) {
-  const [bankAccounts, setBankAccounts] = useState([]);
+  const bank = useBankAccounts();
   const vendorItems = (quote.line_items || []).filter((li) => li.vendor_id);
 
   const [decisions, setDecisions] = useState(() => {
     const initial = {};
     for (const li of vendorItems) {
       const defaultAmount = parseFloat(li.cost_price_snapshot ?? li.product_cost_price ?? 0) * parseFloat(li.quantity || 1);
-      initial[li.line_item_id] = {
-        pay_now: false,
-        amount: defaultAmount || 0,
-        payment_method: 'CASH',
-        bank_account_id: '',
-        cheque_number: '',
-        cheque_date: '',
-      };
+      initial[li.line_item_id] = { pay_now: false, amount: defaultAmount || 0, payment_method: 'CASH', bank_account_id: '', cheque_number: '', cheque_date: '' };
     }
     return initial;
   });
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
-  }, []);
-
-  const updateDecision = (lineItemId, patch) => {
-    setDecisions((prev) => ({ ...prev, [lineItemId]: { ...prev[lineItemId], ...patch } }));
-  };
+  const updateDecision = (id, patch) => setDecisions((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
 
   const handleConfirm = () => {
     setError('');
@@ -1879,145 +2477,80 @@ function VendorPaymentPromptModal({ quote, submitting, onClose, onConfirm }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-800">Vendor Payment</h3>
-            <p className="text-xs text-slate-400 mt-0.5">This quote includes items sourced from a vendor. Decide how to settle each one.</p>
-          </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
+    <Modal
+      title="Vendor payment"
+      subtitle="This quote includes items sourced from a vendor. Decide how to settle each one."
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="button" disabled={submitting} onClick={handleConfirm} className={btn('success')}>
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />} Accept quote
           </button>
-        </div>
-
-        <div className="px-5 py-4 space-y-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
+        </>
+      )}
+    >
+      <ErrorBanner message={error} />
+      <ErrorBanner message={bank.error} onRetry={bank.reload} />
+      {vendorItems.map((li) => {
+        const d = decisions[li.line_item_id];
+        const fid = `vp-${li.line_item_id}`;
+        return (
+          <div key={li.line_item_id} className="space-y-3 rounded-lg border border-slate-200 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">{li.description}</p>
+              <span className="text-xs text-slate-500">Vendor: {li.vendor_name}</span>
             </div>
-          )}
-
-          {vendorItems.map((li) => {
-            const d = decisions[li.line_item_id];
-            return (
-              <div key={li.line_item_id} className="rounded-lg border border-slate-200 p-3 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-800">{li.description}</p>
-                  <span className="text-xs text-slate-400">Vendor: {li.vendor_name}</span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <label className="block text-[11px] font-medium text-slate-500">Amount owed</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={d.amount}
-                    onChange={(e) => updateDecision(li.line_item_id, { amount: e.target.value })}
-                    onWheel={(e) => e.target.blur()}
-                    className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1 text-sm outline-none focus:border-blue-500"
-                  />
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => updateDecision(li.line_item_id, { pay_now: false })}
-                    className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                      !d.pay_now ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                    }`}
-                  >
-                    Leave Unpaid
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateDecision(li.line_item_id, { pay_now: true })}
-                    className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                      d.pay_now ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                    }`}
-                  >
-                    Pay Now
-                  </button>
-                </div>
-
-                {d.pay_now && (
-                  <div className="space-y-2 border-t border-slate-100 pt-2.5">
-                    <select
-                      value={d.payment_method}
-                      onChange={(e) => updateDecision(li.line_item_id, { payment_method: e.target.value })}
-                      className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                    >
-                      {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
-                    </select>
-
-                    {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(d.payment_method) && (
-                      <select
-                        value={d.bank_account_id}
-                        onChange={(e) => updateDecision(li.line_item_id, { bank_account_id: e.target.value })}
-                        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                      >
-                        <option value="">Select bank account…</option>
-                        {bankAccounts.map((b) => (
-                          <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
-                        ))}
-                      </select>
-                    )}
-
-                    {d.payment_method === 'CHEQUE' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="text"
-                          placeholder="Cheque number"
-                          value={d.cheque_number}
-                          onChange={(e) => updateDecision(li.line_item_id, { cheque_number: e.target.value })}
-                          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                        />
-                        <DateInput
-                          value={d.cheque_date}
-                          onChange={(e) => updateDecision(li.line_item_id, { cheque_date: e.target.value })}
-                          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                        />
-                      </div>
-                    )}
+            <Field label="Amount owed" htmlFor={`${fid}-amt`} className="max-w-[200px]">
+              <input id={`${fid}-amt`} type="number" min="0" step="0.01" value={d.amount} onChange={(e) => updateDecision(li.line_item_id, { amount: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+            </Field>
+            <Segmented
+              ariaLabel={`Settlement for ${li.description}`}
+              value={d.pay_now ? 'now' : 'later'}
+              onChange={(v) => updateDecision(li.line_item_id, { pay_now: v === 'now' })}
+              options={[{ value: 'later', label: 'Leave unpaid' }, { value: 'now', label: 'Pay now' }]}
+            />
+            {d.pay_now && (
+              <div className="space-y-3 border-t border-slate-100 pt-3">
+                <Field label="Payment method" htmlFor={`${fid}-m`}>
+                  <select id={`${fid}-m`} value={d.payment_method} onChange={(e) => updateDecision(li.line_item_id, { payment_method: e.target.value })} className={inputCls(false)}>
+                    {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                  </select>
+                </Field>
+                {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(d.payment_method) && (
+                  <Field label="Bank account" htmlFor={`${fid}-b`}>
+                    <BankAccountSelect id={`${fid}-b`} value={d.bank_account_id} onChange={(v) => updateDecision(li.line_item_id, { bank_account_id: v })} accounts={bank.bankAccounts} />
+                  </Field>
+                )}
+                {d.payment_method === 'CHEQUE' && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label="Cheque number" htmlFor={`${fid}-cn`}>
+                      <input id={`${fid}-cn`} type="text" value={d.cheque_number} onChange={(e) => updateDecision(li.line_item_id, { cheque_number: e.target.value })} className={inputCls(false)} />
+                    </Field>
+                    <Field label="Cheque date">
+                      <DateInput value={d.cheque_date} onChange={(e) => updateDecision(li.line_item_id, { cheque_date: e.target.value })} className={inputCls(false)} />
+                    </Field>
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
-          <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={handleConfirm}
-            className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Accept Quote
-          </button>
-        </div>
-      </div>
-    </div>
+            )}
+          </div>
+        );
+      })}
+    </Modal>
   );
 }
 
 // Shows which of the quote's line items landed on each of its invoices.
-// Non-rental lines (ITEM purchases + standalone deposits) all land on the
-// one combined PRODUCT-category invoice. Each RENTAL line item instead gets
-// its own agreement and its own invoice — rather than trying to re-match a
-// rental invoice back to "its" line item (fragile if a quote has two rental
-// lines for the same product), the rental agreement itself (product, unit,
-// rate, deposit) is fetched directly and used as the source of truth.
+// Non-rental lines (ITEM purchases + standalone deposits) all land on the one
+// combined PRODUCT-category invoice. Each RENTAL line item instead gets its own
+// agreement and invoice, so the agreement itself is the source of truth.
 function InvoicePreviewModal({ quote, invoices, onClose }) {
   const [lineItems, setLineItems] = useState([]);
   const [rentalDetails, setRentalDetails] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -2038,17 +2571,18 @@ function InvoicePreviewModal({ quote, invoices, onClose }) {
             } catch {
               return [inv.rental_agreement_id, null];
             }
-          })
+          }),
         );
         if (!cancelled) setRentalDetails(Object.fromEntries(agreementEntries));
       } catch (err) {
-        if (!cancelled) setError(err.message || 'Failed to load invoice items');
+        if (!cancelled) setError(err?.message || 'Failed to load invoice items');
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [quote.quote_id, invoices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote.quote_id, reloadKey]);
 
   const nonRentalItems = lineItems.filter((li) => !li.rental_billing_type);
 
@@ -2066,71 +2600,56 @@ function InvoicePreviewModal({ quote, invoices, onClose }) {
         description: `Refundable Deposit — ${agreement.product_name} (Unit ${agreement.unit_code})`,
         quantity: 1,
         amount: agreement.deposit_amount,
+        item_type: 'DEPOSIT',
       });
     }
     return items;
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-lg bg-white shadow-xl max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Invoice Contents — {quote.estimate_number}</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="px-5 py-4 space-y-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
+    <Modal
+      title={`Invoice contents — ${quote.estimate_number}`}
+      onClose={onClose}
+      footer={<button type="button" onClick={onClose} className={btn('secondary')}>Close</button>}
+    >
+      <ErrorBanner message={error} onRetry={() => setReloadKey((k) => k + 1)} />
+      {loading ? (
+        <SkeletonRows rows={3} />
+      ) : invoices.map((inv) => {
+        const items = itemsForInvoice(inv);
+        return (
+          <div key={inv.invoice_id} className="overflow-hidden rounded-lg border border-slate-200">
+            <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-2.5">
+              <span className="flex items-center gap-2">
+                <span className="font-mono text-[13px] font-semibold text-slate-800">{inv.invoice_code}</span>
+                <StatusChip tone={invoiceTone(inv.status)}>{invoiceLabel(inv.status)}</StatusChip>
+              </span>
+              <b className="tabular-nums text-slate-900">{formatMoney(inv.amount)}</b>
             </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            <div className="divide-y divide-slate-100">
+              {items.length === 0 ? (
+                <p className="px-4 py-3 text-[13px] text-slate-500">No items resolved for this invoice.</p>
+              ) : items.map((li, idx) => {
+                const isDeposit = li.item_type === 'DEPOSIT' || /^refundable deposit/i.test(li.description || '');
+                return (
+                  <div key={idx} className="flex items-start justify-between gap-3 px-4 py-2 text-sm">
+                    <span className="text-slate-700">
+                      {li.description}{Number(li.quantity) > 1 ? ` × ${li.quantity}` : ''}
+                      {isDeposit && <span className="block text-xs text-slate-500">Refundable deposit (held, not income)</span>}
+                    </span>
+                    <span className="shrink-0 font-semibold tabular-nums text-slate-900">{formatMoney(li.amount)}</span>
+                  </div>
+                );
+              })}
             </div>
-          ) : (
-            invoices.map((inv) => {
-              const items = itemsForInvoice(inv);
-              return (
-                <div key={inv.invoice_id} className="rounded-lg border border-slate-200 overflow-hidden">
-                  <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-semibold text-slate-700">{inv.invoice_code}</span>
-                      <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
-                        inv.status === 'PAID' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                      }`}>
-                        {inv.status}
-                      </span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-800">{formatMoney(inv.amount)}</span>
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {items.length === 0 ? (
-                      <p className="px-4 py-3 text-xs text-slate-400">No items resolved for this invoice.</p>
-                    ) : (
-                      items.map((li, idx) => (
-                        <div key={idx} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
-                          <span className="text-slate-700">
-                            {li.description}{Number(li.quantity) > 1 ? ` × ${li.quantity}` : ''}
-                          </span>
-                          <span className="shrink-0 font-medium text-slate-800">{formatMoney(li.amount)}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
+          </div>
+        );
+      })}
+    </Modal>
   );
 }
+
+// ----- New quotation drawer -----
 
 const emptyLineItem = () => ({
   description: '', quantity: 1, unit_price: '', product_id: '', unit_id: '',
@@ -2138,115 +2657,83 @@ const emptyLineItem = () => ({
   rental_end_date: '', deposit_amount: '',
 });
 
-// A standalone refundable deposit — held by the company independent of any
-// rental item (e.g. a general security deposit). Distinct from the
-// per-rental-item deposit_amount field on a RENTAL line.
+// A standalone refundable deposit, held by the company independent of any rental item.
 const emptyDepositLine = () => ({
   description: 'Refundable Deposit', quantity: 1, unit_price: '', isStandaloneDeposit: true,
 });
 
-const CLIENTS_PER_PAGE = 5;
+const LINE_GRID = 'grid grid-cols-[1fr_1fr_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_72px_120px_110px_36px]';
 
-function NewProductQuoteModal({ onClose, onCreated }) {
-  const [recipientType, setRecipientType] = useState('client'); // 'client' | 'walk_in'
-  const [clients, setClients] = useState([]);
+function NewProductQuoteDrawer({ onClose, onCreated }) {
+  const clientsState = useClientsList();
+  const [recipientType, setRecipientType] = useState('client');
   const [clientSearch, setClientSearch] = useState('');
-  const [clientPage, setClientPage] = useState(1);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [walkInClient, setWalkInClient] = useState(emptyWalkInClient());
   const [products, setProducts] = useState([]);
   const [rentalUnits, setRentalUnits] = useState([]);
+  const [refError, setRefError] = useState('');
   const [lineItems, setLineItems] = useState([emptyLineItem()]);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState({});
+  const [serverError, setServerError] = useState('');
 
-  useEffect(() => {
-    apiClient.getAllClients().then((res) => setClients(Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []))).catch(() => setClients([]));
-    apiClient.getProducts().then((res) => setProducts(Array.isArray(res?.data) ? res.data : [])).catch(() => setProducts([]));
-    apiClient.getRentalUnits({ status: 'AVAILABLE' }).then((res) => setRentalUnits(Array.isArray(res?.data) ? res.data : [])).catch(() => setRentalUnits([]));
+  const snap = () => JSON.stringify({ recipientType, selectedClientId, walkInClient, lineItems });
+  const baseline = useRef(null);
+  if (baseline.current === null) baseline.current = snap();
+  const dirty = snap() !== baseline.current;
+
+  const loadRefs = useCallback(async () => {
+    setRefError('');
+    try {
+      const [pRes, uRes] = await Promise.all([apiClient.getProducts(), apiClient.getRentalUnits({ status: 'AVAILABLE' })]);
+      setProducts(Array.isArray(pRes?.data) ? pRes.data : []);
+      setRentalUnits(Array.isArray(uRes?.data) ? uRes.data : []);
+    } catch (err) {
+      setRefError(err?.message || 'Failed to load products.');
+    }
   }, []);
+  useEffect(() => { loadRefs(); }, [loadRefs]);
 
-  const isRentalLine = (it) => products.find((p) => p.product_id === it.product_id)?.product_type === 'RENTAL';
+  const productOf = (it) => products.find((p) => p.product_id === it.product_id);
+  const isRentalLine = (it) => productOf(it)?.product_type === 'RENTAL';
 
-  const filteredClients = clients.filter((c) => {
-    const name = c.full_name || c.client_name || '';
-    return name.toLowerCase().includes(clientSearch.toLowerCase());
-  });
-
-  useEffect(() => { setClientPage(1); }, [clientSearch]);
-
-  const clientTotalPages = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
-  const pagedClients = filteredClients.slice((clientPage - 1) * CLIENTS_PER_PAGE, clientPage * CLIENTS_PER_PAGE);
-
-  const updateLineItem = (idx, patch) => {
-    setLineItems((items) => items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
-  };
-  const addLineItem = () => setLineItems((items) => [...items, emptyLineItem()]);
+  const updateLineItem = (idx, patch) => setLineItems((items) => items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   const removeLineItem = (idx) => setLineItems((items) => items.filter((_, i) => i !== idx));
 
   const selectProductForLine = (idx, productId) => {
     const product = products.find((p) => p.product_id === productId);
-    updateLineItem(idx, {
-      product_id: productId,
-      description: product ? product.name : '',
-      unit_price: product ? product.price : '',
-      unit_id: '',
-    });
+    updateLineItem(idx, { product_id: productId, description: product ? product.name : '', unit_price: product ? product.price : '', unit_id: '' });
   };
 
-  const total = lineItems.reduce((sum, it) => sum + (parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0), 0);
-  const totalDeposit = lineItems.reduce((sum, it) => sum + (isRentalLine(it) ? (parseFloat(it.deposit_amount) || 0) : 0), 0);
+  const lineTotal = (it) => (parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0);
+  const itemsTotal = lineItems.reduce((s, it) => s + (it.isStandaloneDeposit ? 0 : lineTotal(it)), 0);
+  const depositsTotal = lineItems.reduce((s, it) => s + (it.isStandaloneDeposit ? lineTotal(it) : (isRentalLine(it) ? (parseFloat(it.deposit_amount) || 0) : 0)), 0);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
-
-    if (recipientType === 'client' && !selectedClientId) {
-      setError('Please select a client');
-      return;
-    }
-    if (recipientType === 'walk_in' && !walkInClient.full_name.trim()) {
-      setError('Please enter the walk-in customer\'s full name');
-      return;
-    }
-    if (recipientType === 'walk_in' && !walkInClient.gender) {
-      setError('Please select the walk-in customer\'s gender');
-      return;
-    }
-    if (recipientType === 'walk_in' && !walkInClient.mobile_number.trim()) {
-      setError('Please enter the walk-in customer\'s mobile number — it registers them as a client');
-      return;
-    }
-    const validItems = lineItems.filter((it) => it.description && it.unit_price !== '');
-    if (validItems.length === 0) {
-      setError('Add at least one line item with a description and price');
-      return;
-    }
-    for (const it of validItems) {
+    setServerError('');
+    const errs = validateRecipient(recipientType, selectedClientId, walkInClient);
+    const lineErrs = {};
+    const validIdx = [];
+    lineItems.forEach((it, idx) => {
+      if (!(it.description && it.unit_price !== '')) return;
+      validIdx.push(idx);
       if (isRentalLine(it) && it.rental_billing_type === 'ONE_TIME' && !it.rental_end_date) {
-        setError(`End date is required for the one-time rental item "${it.description}"`);
-        return;
+        lineErrs[idx] = 'End date is required for one-time rentals.';
       }
-    }
+    });
+    if (validIdx.length === 0) errs.lines = 'Add at least one line item with a description and price';
+    errs.lineErrs = lineErrs;
+    setErrors(errs);
+    if (Object.keys(errs).some((k) => k !== 'lineErrs') || Object.keys(lineErrs).length) return;
 
+    const validItems = validIdx.map((i) => lineItems[i]);
     setSaving(true);
     try {
       let walkInClientId = null;
       if (recipientType === 'walk_in') {
-        const wicRes = await apiClient.createWalkInCustomer({
-          full_name: walkInClient.full_name.trim(),
-          email: walkInClient.email || undefined,
-          mobile_number: walkInClient.mobile_number.trim(),
-          gender: walkInClient.gender,
-          primary_address: walkInClient.primary_address || undefined,
-          city_id: walkInClient.city_id || undefined,
-          client_type: walkInClient.client_type || 'INDIVIDUAL',
-          honorific: walkInClient.honorific || undefined,
-          company_name: walkInClient.company_name || undefined,
-          display_name_source: walkInClient.client_type === 'CORPORATE_PROXY' && walkInClient.company_name
-            ? walkInClient.display_name_source
-            : 'FULL_NAME',
-        });
+        const wicRes = await apiClient.createWalkInCustomer(walkInPayload(walkInClient));
         walkInClientId = wicRes.data.client_profile_id;
       }
 
@@ -2254,12 +2741,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
         client_id: recipientType === 'client' ? selectedClientId : walkInClientId || undefined,
         line_items: validItems.map((it) => {
           if (it.isStandaloneDeposit) {
-            return {
-              item_type: 'DEPOSIT',
-              description: it.description,
-              quantity: 1,
-              unit_price: parseFloat(it.unit_price) || 0,
-            };
+            return { item_type: 'DEPOSIT', description: it.description, quantity: 1, unit_price: parseFloat(it.unit_price) || 0 };
           }
           const rental = isRentalLine(it);
           return {
@@ -2278,312 +2760,146 @@ function NewProductQuoteModal({ onClose, onCreated }) {
           };
         }),
       });
-
       onCreated();
     } catch (err) {
-      setError(err.message || 'Failed to create quotation');
+      setServerError(err?.message || 'Failed to create quotation');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+    <Drawer
+      title="New quotation"
+      subtitle="Add products and services for a client or a walk-in customer."
+      width={700}
+      dirty={dirty}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <span className="flex-1" />
+          <button type="submit" disabled={saving} className={btn('primary')}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Create quotation</button>
+        </>
+      )}
+    >
+      <ErrorBanner message={serverError} />
+      <ErrorBanner message={refError} onRetry={loadRefs} />
 
-      <form
-        onSubmit={handleSubmit}
-        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col bg-white shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 shrink-0">
-          <h3 className="text-sm font-semibold text-slate-800">New Product Quotation</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
+      <RecipientBlock
+        recipientType={recipientType}
+        onTypeChange={setRecipientType}
+        clientsState={clientsState}
+        search={clientSearch}
+        onSearch={setClientSearch}
+        selectedId={selectedClientId}
+        onSelect={setSelectedClientId}
+        walkIn={walkInClient}
+        onWalkIn={setWalkInClient}
+        errors={errors}
+      />
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-900">2. Line items</h3>
+          <span className="flex gap-2">
+            <button type="button" onClick={() => setLineItems((items) => [...items, emptyDepositLine()])} className={btn('secondary', 'sm')}>Add refundable deposit</button>
+            <button type="button" onClick={() => setLineItems((items) => [...items, emptyLineItem()])} className={btn('secondary', 'sm')}>Add line</button>
+          </span>
         </div>
-        <div className="flex-1 overflow-y-auto space-y-4 px-5 py-4">
-          <div>
-            <div className="flex gap-1 rounded-lg bg-slate-100 p-1 w-fit mb-3">
-              {[
-                { id: 'client', label: 'Existing Client' },
-                { id: 'walk_in', label: 'Walk-in Customer' },
-              ].map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setRecipientType(id)}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                    recipientType === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+        {errors.lines && <p role="alert" className="text-xs text-red-700">{errors.lines}</p>}
 
-            {recipientType === 'client' ? (
-              <div>
-                <div className="relative mb-2">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search clients…"
-                    value={clientSearch}
-                    onChange={(e) => setClientSearch(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 pl-8 pr-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
+        <div className="space-y-2.5">
+          {lineItems.map((it, idx) => {
+            const removeBtn = lineItems.length > 1 ? (
+              <button type="button" onClick={() => removeLineItem(idx)} aria-label={`Remove line ${idx + 1}`} className={`${iconBtn} hover:text-red-700`}><X className="h-4 w-4" /></button>
+            ) : <span />;
+
+            if (it.isStandaloneDeposit) {
+              return (
+                <div key={idx} className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+                  <div className="grid grid-cols-[1fr_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_140px_36px]">
+                    <input type="text" aria-label={`Deposit description, line ${idx + 1}`} placeholder="Description" value={it.description} onChange={(e) => updateLineItem(idx, { description: e.target.value })} className={`${inputCls(false)} col-span-2 sm:col-span-1`} />
+                    <input type="number" min="0" step="0.01" aria-label={`Deposit amount, line ${idx + 1}`} placeholder="Amount" value={it.unit_price} onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+                    {removeBtn}
+                  </div>
+                  <p className="text-xs text-amber-700">Refundable deposit — held by the company regardless of any rental item. Refund or forfeit it later from the Rentals tab.</p>
                 </div>
-                <div className="rounded-md border border-slate-300 divide-y divide-slate-100 overflow-hidden">
-                  {pagedClients.length === 0 ? (
-                    <p className="px-2.5 py-3 text-xs text-slate-400 text-center">No clients match your search.</p>
-                  ) : (
-                    pagedClients.map((c) => {
-                      const id = c.client_profile_id || c.client_id;
-                      const selected = selectedClientId === id;
-                      return (
-                        <button
-                          type="button"
-                          key={id}
-                          onClick={() => setSelectedClientId(id)}
-                          className={`w-full text-left px-2.5 py-1.5 text-sm transition-colors ${
-                            selected ? 'bg-blue-50 text-blue-700 font-medium' : 'bg-white text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          {withHonorific(c.honorific, c.full_name || c.client_name)} {c.mobile_number ? <span className="text-xs text-slate-400">· {formatMobileNumber(c.mobile_number)}</span> : ''}
-                        </button>
-                      );
-                    })
-                  )}
+              );
+            }
+
+            const rental = isRentalLine(it);
+            const product = productOf(it);
+            const overStock = product?.product_type === 'ITEM' && product.stock_quantity != null && Number(it.quantity) > Number(product.stock_quantity);
+            const freeUnits = rentalUnits.filter((u) => u.product_id === it.product_id);
+            return (
+              <div key={idx} className={`space-y-2.5 rounded-lg border p-2.5 ${rental ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
+                <div className={LINE_GRID}>
+                  <select aria-label={`Product, line ${idx + 1}`} value={it.product_id} onChange={(e) => selectProductForLine(idx, e.target.value)} className={`${inputCls(false)} col-span-3 sm:col-span-1`}>
+                    <option value="">Custom item…</option>
+                    {products.map((p) => (
+                      <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
+                    ))}
+                  </select>
+                  <input type="number" min="0" step="1" aria-label={`Quantity, line ${idx + 1}`} placeholder="Qty" value={it.quantity} onChange={(e) => updateLineItem(idx, { quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={`${inputCls(false)} tabular-nums`} />
+                  <input type="number" min="0" step="0.01" aria-label={`Unit price, line ${idx + 1}`} placeholder="Unit price" value={it.unit_price} onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })} onWheel={(e) => e.target.blur()} className={`${inputCls(false)} tabular-nums`} />
+                  <b className="text-right text-sm tabular-nums text-slate-900"><span className="sr-only">Line total </span>{formatMoney(lineTotal(it))}</b>
+                  {removeBtn}
                 </div>
-                {filteredClients.length > CLIENTS_PER_PAGE && (
-                  <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
-                    <button
-                      type="button"
-                      onClick={() => setClientPage((p) => Math.max(1, p - 1))}
-                      disabled={clientPage === 1}
-                      className="rounded px-2 py-1 font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent"
-                    >
-                      Prev
-                    </button>
-                    <span>Page {clientPage} of {clientTotalPages}</span>
-                    <button
-                      type="button"
-                      onClick={() => setClientPage((p) => Math.min(clientTotalPages, p + 1))}
-                      disabled={clientPage === clientTotalPages}
-                      className="rounded px-2 py-1 font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent"
-                    >
-                      Next
-                    </button>
+
+                {!it.product_id && (
+                  <input type="text" aria-label={`Description, line ${idx + 1}`} placeholder="Describe the custom item" value={it.description} onChange={(e) => updateLineItem(idx, { description: e.target.value })} className={inputCls(false)} />
+                )}
+                {overStock && <p role="alert" className="text-xs font-semibold text-amber-700">Only {product.stock_quantity} in stock — this line asks for {it.quantity}.</p>}
+
+                {rental && (
+                  <div className="space-y-3 border-t border-blue-100 pt-3">
+                    <b className="text-xs text-blue-700">Rental terms for this item</b>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <Field label="Unit" htmlFor={`ql-unit-${idx}`} error={it.product_id && freeUnits.length === 0 ? 'No units currently available for this product.' : ''}>
+                        <select id={`ql-unit-${idx}`} value={it.unit_id || ''} onChange={(e) => updateLineItem(idx, { unit_id: e.target.value })} className={inputCls(false)}>
+                          <option value="">Auto-assign next free unit</option>
+                          {freeUnits.map((u) => <option key={u.unit_id} value={u.unit_id}>{u.unit_code || u.unit_id.slice(0, 8)}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Billing" htmlFor={`ql-bill-${idx}`}>
+                        <select id={`ql-bill-${idx}`} value={it.rental_billing_type} onChange={(e) => updateLineItem(idx, { rental_billing_type: e.target.value })} className={inputCls(false)}>
+                          <option value="ONE_TIME">One-time (fixed period)</option>
+                          <option value="RECURRING">Monthly</option>
+                        </select>
+                      </Field>
+                      <Field label="Start date">
+                        <DateInput value={it.rental_start_date} onChange={(e) => updateLineItem(idx, { rental_start_date: e.target.value })} className={inputCls(false)} />
+                      </Field>
+                      {it.rental_billing_type === 'ONE_TIME' && (
+                        <Field label="End date *" error={errors.lineErrs?.[idx]}>
+                          <DateInput value={it.rental_end_date} onChange={(e) => updateLineItem(idx, { rental_end_date: e.target.value })} className={inputCls(!!errors.lineErrs?.[idx])} />
+                        </Field>
+                      )}
+                      <Field label="Refundable deposit (optional)" htmlFor={`ql-dep-${idx}`}>
+                        <input id={`ql-dep-${idx}`} type="number" min="0" step="0.01" placeholder="0.00" value={it.deposit_amount} onChange={(e) => updateLineItem(idx, { deposit_amount: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+                      </Field>
+                    </div>
                   </div>
                 )}
               </div>
-            ) : (
-              <WalkInClientFields value={walkInClient} onChange={setWalkInClient} />
-            )}
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-[11px] font-medium text-slate-500">Line Items</label>
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setLineItems((items) => [...items, emptyDepositLine()])} className="text-xs font-medium text-amber-600 hover:underline">
-                  + Add refundable deposit
-                </button>
-                <button type="button" onClick={addLineItem} className="text-xs font-medium text-blue-600 hover:underline">
-                  + Add line
-                </button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {lineItems.map((it, idx) => {
-                if (it.isStandaloneDeposit) {
-                  return (
-                    <div key={idx} className="rounded-lg border border-amber-100 bg-amber-50/40 p-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="w-40 shrink-0 text-[11px] font-semibold text-amber-700">Refundable Deposit</span>
-                        <input
-                          type="text"
-                          placeholder="Description"
-                          value={it.description}
-                          onChange={(e) => updateLineItem(idx, { description: e.target.value })}
-                          className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                        />
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="Amount"
-                          value={it.unit_price}
-                          onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })}
-                          onWheel={(e) => e.target.blur()}
-                          className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                        />
-                        {lineItems.length > 1 && (
-                          <button type="button" onClick={() => removeLineItem(idx)} className="text-slate-400 hover:text-red-500">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                      <p className="mt-1 pl-[10.5rem] text-[10px] text-amber-600">
-                        Held by the company regardless of any rental item; refund or forfeit later from the Deposits tab.
-                      </p>
-                    </div>
-                  );
-                }
-                const rental = isRentalLine(it);
-                return (
-                  <div key={idx} className={rental ? 'rounded-lg border border-purple-100 bg-purple-50/40 p-2.5 space-y-2' : ''}>
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={it.product_id}
-                        onChange={(e) => selectProductForLine(idx, e.target.value)}
-                        className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
-                      >
-                        <option value="">Custom item…</option>
-                        {products.map((p) => (
-                          <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        placeholder="Description"
-                        value={it.description}
-                        onChange={(e) => updateLineItem(idx, { description: e.target.value })}
-                        className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        placeholder="Qty"
-                        value={it.quantity}
-                        onChange={(e) => updateLineItem(idx, { quantity: e.target.value })}
-                        onWheel={(e) => e.target.blur()}
-                        className="w-16 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Unit price"
-                        value={it.unit_price}
-                        onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })}
-                        onWheel={(e) => e.target.blur()}
-                        className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                      />
-                      {lineItems.length > 1 && (
-                        <button type="button" onClick={() => removeLineItem(idx)} className="text-slate-400 hover:text-red-500">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-
-                    {rental && (
-                      <div className="pl-1 space-y-2">
-                        <p className="text-[11px] font-semibold text-purple-700">Rental Terms for this item</p>
-                        <div>
-                          <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Specific Unit</label>
-                          <select
-                            value={it.unit_id || ''}
-                            onChange={(e) => updateLineItem(idx, { unit_id: e.target.value })}
-                            className="w-56 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                          >
-                            <option value="">Auto-assign any available unit</option>
-                            {rentalUnits.filter((u) => u.product_id === it.product_id).map((u) => (
-                              <option key={u.unit_id} value={u.unit_id}>{u.unit_code || u.unit_id.slice(0, 8)}</option>
-                            ))}
-                          </select>
-                          {it.product_id && rentalUnits.filter((u) => u.product_id === it.product_id).length === 0 && (
-                            <p className="mt-0.5 text-[10px] text-amber-600">No units currently available for this product.</p>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div>
-                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Billing</label>
-                            <select
-                              value={it.rental_billing_type}
-                              onChange={(e) => updateLineItem(idx, { rental_billing_type: e.target.value })}
-                              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                            >
-                              <option value="ONE_TIME">One-time</option>
-                              <option value="RECURRING">Monthly</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Start Date</label>
-                            <DateInput
-                              value={it.rental_start_date}
-                              onChange={(e) => updateLineItem(idx, { rental_start_date: e.target.value })}
-                              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                            />
-                          </div>
-                          {it.rental_billing_type === 'ONE_TIME' && (
-                            <div>
-                              <label className="block text-[10px] font-medium text-slate-500 mb-0.5">End Date *</label>
-                              <DateInput
-                                value={it.rental_end_date}
-                                onChange={(e) => updateLineItem(idx, { rental_end_date: e.target.value })}
-                                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Refundable Deposit (optional)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={it.deposit_amount}
-                            onChange={(e) => updateLineItem(idx, { deposit_amount: e.target.value })}
-                            onWheel={(e) => e.target.blur()}
-                            className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-3 text-right text-sm font-semibold text-slate-800">
-              Total: {formatMoney(total)}
-              {totalDeposit > 0 && (
-                <span className="block text-xs font-normal text-slate-400">
-                  + {formatMoney(totalDeposit)} refundable deposit(s) = {formatMoney(total + totalDeposit)} across first invoice(s)
-                </span>
-              )}
-            </div>
-          </div>
-
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
+            );
+          })}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4 shrink-0">
-          <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Create Quotation
-          </button>
+        <div className="ml-auto w-full max-w-[340px] overflow-hidden rounded-lg border border-slate-200 text-[13px]">
+          <div className="flex justify-between px-3 py-2 text-slate-600"><span>Items and services</span><b className="tabular-nums text-slate-900">{formatMoney(itemsTotal)}</b></div>
+          <div className="flex justify-between px-3 py-2 text-slate-600"><span>Refundable deposits</span><b className="tabular-nums text-slate-900">{formatMoney(depositsTotal)}</b></div>
+          <div className="flex justify-between border-t border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900"><span>Due once accepted</span><span className="tabular-nums">{formatMoney(itemsTotal + depositsTotal)}</span></div>
         </div>
-      </form>
-    </>
+      </section>
+    </Drawer>
   );
 }
 
 export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
-  const [bankAccounts, setBankAccounts] = useState([]);
+  const bank = useBankAccounts();
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [bankAccountId, setBankAccountId] = useState('');
@@ -2593,29 +2909,19 @@ export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
   const [notes, setNotes] = useState('');
   const [slipFile, setSlipFile] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
-  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
-    if (!paymentDate) {
-      setError('Please enter the payment date');
-      return;
-    }
-
-    if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && !bankAccountId) {
-      setError('Please select a bank account');
-      return;
-    }
-    if (paymentMethod === 'CHEQUE' && (!chequeNumber || !chequeDate)) {
-      setError('Cheque number and date are required');
-      return;
-    }
+    const errs = {};
+    if (!paymentDate) errs.paymentDate = 'Please enter the payment date';
+    if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && !bankAccountId) errs.bank = 'Please select a bank account';
+    if (paymentMethod === 'CHEQUE' && !chequeNumber) errs.chequeNumber = 'Cheque number is required';
+    if (paymentMethod === 'CHEQUE' && !chequeDate) errs.chequeDate = 'Cheque date is required';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
 
     setSaving(true);
     try {
@@ -2630,167 +2936,101 @@ export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
           reference_number: referenceNumber || undefined,
           notes: notes || undefined,
         },
-        slipFile
+        slipFile,
       );
       onRecorded();
     } catch (err) {
-      setError(err.message || 'Failed to record payment');
+      setError(err?.message || 'Failed to record payment');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">
-            Record Payment — {invoice.invoice_code} ({formatMoney(invoice.amount)})
-          </h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-3 px-5 py-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Payment Date</label>
-            <DateInput
-              value={paymentDate}
-              max={todayISO()}
-              onChange={(e) => setPaymentDate(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Payment Method</label>
-            <select
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            >
-              {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
-            </select>
-          </div>
-
-          {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && (
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Bank Account</label>
-              <select
-                value={bankAccountId}
-                onChange={(e) => setBankAccountId(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="">Select…</option>
-                {bankAccounts.map((b) => (
-                  <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {paymentMethod === 'CHEQUE' && (
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                type="text"
-                placeholder="Cheque number"
-                value={chequeNumber}
-                onChange={(e) => setChequeNumber(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              />
-              <DateInput
-                value={chequeDate}
-                onChange={(e) => setChequeDate(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Reference Number</label>
-            <input
-              type="text"
-              value={referenceNumber}
-              onChange={(e) => setReferenceNumber(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Slip / Receipt (optional)</label>
-            <input type="file" onChange={(e) => setSlipFile(e.target.files?.[0] || null)} className="w-full text-sm text-slate-600" />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Notes</label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Record Payment
-            </button>
-          </div>
-        </form>
+    <Modal
+      title={`Record payment — ${invoice.invoice_code}`}
+      subtitle={`Invoice amount ${formatMoney(invoice.amount)}`}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="submit" disabled={saving} className={btn('success')}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Record payment</button>
+        </>
+      )}
+    >
+      <ErrorBanner message={error} />
+      <ErrorBanner message={bank.error} onRetry={bank.reload} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Payment date" error={errors.paymentDate}>
+          <DateInput value={paymentDate} max={todayISO()} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls(!!errors.paymentDate)} />
+        </Field>
+        <Field label="Payment method" htmlFor="rp-method">
+          <select id="rp-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputCls(false)}>
+            {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+          </select>
+        </Field>
       </div>
-    </div>
+      {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && (
+        <Field label="Bank account" htmlFor="rp-bank" error={errors.bank}>
+          <BankAccountSelect id="rp-bank" value={bankAccountId} onChange={setBankAccountId} accounts={bank.bankAccounts} invalid={!!errors.bank} />
+        </Field>
+      )}
+      {paymentMethod === 'CHEQUE' && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Cheque number" htmlFor="rp-chq" error={errors.chequeNumber}>
+            <input id="rp-chq" type="text" value={chequeNumber} onChange={(e) => setChequeNumber(e.target.value)} className={inputCls(!!errors.chequeNumber)} />
+          </Field>
+          <Field label="Cheque date" error={errors.chequeDate}>
+            <DateInput value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} className={inputCls(!!errors.chequeDate)} />
+          </Field>
+        </div>
+      )}
+      <Field label="Reference number" htmlFor="rp-ref">
+        <input id="rp-ref" type="text" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} className={inputCls(false)} />
+      </Field>
+      <Field label="Slip / receipt (optional)" htmlFor="rp-slip">
+        <input id="rp-slip" type="file" onChange={(e) => setSlipFile(e.target.files?.[0] || null)} className="w-full text-sm text-slate-600" />
+      </Field>
+      <Field label="Notes" htmlFor="rp-notes">
+        <textarea id="rp-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={textareaCls(false)} />
+      </Field>
+    </Modal>
   );
 }
 
 // ==================== RENTALS TAB ====================
 
-const RENTAL_AGREEMENT_STATUS_COLORS = {
-  ACTIVE: { dot: 'bg-emerald-500', text: 'text-emerald-700' },
-  COMPLETED: { dot: 'bg-slate-400', text: 'text-slate-500' },
-  CANCELLED: { dot: 'bg-red-400', text: 'text-red-600' },
+const AGREEMENT_STATUS = {
+  ACTIVE: { tone: 'green', label: 'Active' },
+  COMPLETED: { tone: 'slate', label: 'Completed' },
+  CANCELLED: { tone: 'red', label: 'Cancelled' },
 };
+const DEPOSIT_STATUS = {
+  HELD: { tone: 'amber', label: 'Held' },
+  REFUNDED: { tone: 'green', label: 'Refunded' },
+  PARTIALLY_REFUNDED: { tone: 'blue', label: 'Partially refunded' },
+  FORFEITED: { tone: 'red', label: 'Forfeited' },
+};
+const AGR_COLS = 'minmax(190px,1.5fr) minmax(160px,1.3fr) 110px 120px 190px 120px 170px 36px';
+const DEP_COLS = '100px minmax(170px,1.3fr) minmax(190px,1.5fr) 130px 150px 220px';
 
-const DEPOSIT_STATUS_DOT = {
-  HELD: { dot: 'bg-amber-400', text: 'text-amber-700' },
-  REFUNDED: { dot: 'bg-emerald-500', text: 'text-emerald-700' },
-  PARTIALLY_REFUNDED: { dot: 'bg-violet-500', text: 'text-violet-700' },
-  FORFEITED: { dot: 'bg-red-400', text: 'text-red-600' },
-};
+const dueDateOf = (a) => (a.billing_type === 'RECURRING' ? a.next_invoice_date : a.end_date);
+const depositPending = (a) => !a.deposit_id && Number(a.deposit_amount) > 0;
 
 // Shared refund modal — lets the admin pick which company bank account a
-// bank-transfer refund is paid from, so the debit shows up correctly against
-// that account's ledger/reconciliation (previously refunds were never linked
-// to any bank account at all).
-// Full amount is refunded by default; the admin can lower it to refund only
-// part of the deposit and keep ("forfeit") the rest as a charge — e.g. a
-// repair or transport fee deducted from the deposit before returning it.
+// bank-transfer refund is paid from. Full amount is refunded by default; the
+// admin can lower it to keep ("forfeit") part of the deposit as a charge.
 export function RefundDepositModal({ deposit, onClose, onRefunded }) {
   const totalAmount = parseFloat(deposit.amount) || 0;
-  const [bankAccounts, setBankAccounts] = useState([]);
+  const bank = useBankAccounts();
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [bankAccountId, setBankAccountId] = useState('');
   const [refundAmount, setRefundAmount] = useState(String(totalAmount));
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
-  }, []);
 
   const refundAmt = parseFloat(refundAmount) || 0;
   const retainedAmt = Math.max(0, Math.round((totalAmount - refundAmt) * 100) / 100);
@@ -2799,15 +3039,11 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
-    if (refundAmt <= 0 || refundAmt > totalAmount) {
-      setError(`Refund amount must be greater than 0 and at most ${formatMoney(totalAmount)}`);
-      return;
-    }
-    if (paymentMethod === 'BANK_TRANSFER' && !bankAccountId) {
-      setError('Please select a bank account');
-      return;
-    }
+    const errs = {};
+    if (refundAmt <= 0 || refundAmt > totalAmount) errs.amount = `Refund amount must be greater than 0 and at most ${formatMoney(totalAmount)}`;
+    if (paymentMethod === 'BANK_TRANSFER' && !bankAccountId) errs.bank = 'Please select a bank account';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
 
     setSaving(true);
     try {
@@ -2819,123 +3055,69 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
       });
       onRefunded();
     } catch (err) {
-      setError(err.message || 'Failed to refund deposit');
+      setError(err?.message || 'Failed to refund deposit');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Refund Deposit — {formatMoney(totalAmount)} held</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
+    <Modal
+      title="Refund deposit"
+      subtitle={`${formatMoney(totalAmount)} held`}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="submit" disabled={saving} className={btn('success')}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isPartial ? 'Confirm partial refund' : 'Confirm refund'}
           </button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-3 px-5 py-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Amount to Refund</label>
-            <input
-              type="number"
-              min="0.01"
-              max={totalAmount}
-              step="0.01"
-              value={refundAmount}
-              onChange={(e) => setRefundAmount(e.target.value)}
-              onWheel={(e) => e.target.blur()}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-            {isPartial && (
-              <p className="mt-1 text-[11px] text-amber-600">
-                {formatMoney(retainedAmt)} will be kept by the company as a charge instead of returned.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund Via</label>
-            <select
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            >
-              <option value="CASH">Cash</option>
-              <option value="CHEQUE">Cheque</option>
-              <option value="BANK_TRANSFER">Bank Transfer</option>
-            </select>
-          </div>
-
-          {paymentMethod === 'BANK_TRANSFER' && (
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund From (Company Bank Account)</label>
-              <select
-                value={bankAccountId}
-                onChange={(e) => setBankAccountId(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="">Select…</option>
-                {bankAccounts.map((b) => (
-                  <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Notes{isPartial ? ' (reason for withheld amount)' : ''}</label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={isPartial ? 'e.g. repair fee, transport fee' : undefined}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isPartial ? 'Confirm Partial Refund' : 'Confirm Refund'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </>
+      )}
+    >
+      <ErrorBanner message={error} />
+      <ErrorBanner message={bank.error} onRetry={bank.reload} />
+      <Field
+        label="Amount to refund"
+        htmlFor="rf-amount"
+        error={errors.amount}
+        hint={isPartial ? `${formatMoney(retainedAmt)} will be kept by the company as a charge instead of returned.` : undefined}
+      >
+        <input id="rf-amount" type="number" min="0.01" max={totalAmount} step="0.01" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(!!errors.amount)} />
+      </Field>
+      <Field label="Refund via" htmlFor="rf-method">
+        <select id="rf-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputCls(false)}>
+          <option value="CASH">Cash</option>
+          <option value="CHEQUE">Cheque</option>
+          <option value="BANK_TRANSFER">Bank transfer</option>
+        </select>
+      </Field>
+      {paymentMethod === 'BANK_TRANSFER' && (
+        <Field label="Refund from (company bank account)" htmlFor="rf-bank" error={errors.bank}>
+          <BankAccountSelect id="rf-bank" value={bankAccountId} onChange={setBankAccountId} accounts={bank.bankAccounts} invalid={!!errors.bank} />
+        </Field>
+      )}
+      <Field label={`Notes${isPartial ? ' (reason for withheld amount)' : ''}`} htmlFor="rf-notes">
+        <textarea id="rf-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={isPartial ? 'e.g. repair fee, transport fee' : undefined} className={textareaCls(false)} />
+      </Field>
+    </Modal>
   );
 }
 
-// Mirror of RefundDepositModal for the forfeit direction: full amount is
-// kept by default, but the admin can lower it to keep only part and refund
-// the rest back to the client (which then needs a payment method/account,
-// same as a regular refund).
+// Mirror of RefundDepositModal for the forfeit direction: the full amount is
+// kept by default, but the admin can lower it and refund the rest to the client.
 export function ForfeitDepositModal({ deposit, onClose, onForfeited }) {
   const totalAmount = parseFloat(deposit.amount) || 0;
-  const [bankAccounts, setBankAccounts] = useState([]);
+  const bank = useBankAccounts();
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [bankAccountId, setBankAccountId] = useState('');
   const [forfeitAmount, setForfeitAmount] = useState(String(totalAmount));
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
-  }, []);
 
   const forfeitAmt = parseFloat(forfeitAmount) || 0;
   const refundAmt = Math.max(0, Math.round((totalAmount - forfeitAmt) * 100) / 100);
@@ -2944,15 +3126,11 @@ export function ForfeitDepositModal({ deposit, onClose, onForfeited }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
-    if (forfeitAmt <= 0 || forfeitAmt > totalAmount) {
-      setError(`Forfeit amount must be greater than 0 and at most ${formatMoney(totalAmount)}`);
-      return;
-    }
-    if (isPartial && paymentMethod === 'BANK_TRANSFER' && !bankAccountId) {
-      setError('Please select a bank account');
-      return;
-    }
+    const errs = {};
+    if (forfeitAmt <= 0 || forfeitAmt > totalAmount) errs.amount = `Forfeit amount must be greater than 0 and at most ${formatMoney(totalAmount)}`;
+    if (isPartial && paymentMethod === 'BANK_TRANSFER' && !bankAccountId) errs.bank = 'Please select a bank account';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
 
     setSaving(true);
     try {
@@ -2964,121 +3142,89 @@ export function ForfeitDepositModal({ deposit, onClose, onForfeited }) {
       });
       onForfeited();
     } catch (err) {
-      setError(err.message || 'Failed to forfeit deposit');
+      setError(err?.message || 'Failed to forfeit deposit');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Forfeit Deposit — {formatMoney(totalAmount)} held</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
+    <Modal
+      title="Forfeit deposit"
+      subtitle={`${formatMoney(totalAmount)} held`}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <button type="submit" disabled={saving} className={btn('dangerSolid')}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isPartial ? 'Confirm partial forfeit' : 'Confirm forfeit'}
           </button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-3 px-5 py-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
+        </>
+      )}
+    >
+      <ErrorBanner message={error} />
+      <ErrorBanner message={bank.error} onRetry={bank.reload} />
+      <Field
+        label="Amount to keep (forfeit)"
+        htmlFor="ff-amount"
+        error={errors.amount}
+        hint={isPartial
+          ? `The remaining ${formatMoney(refundAmt)} will be refunded back to the client.`
+          : 'The full deposit stays with the company — no refund transaction is created.'}
+      >
+        <input id="ff-amount" type="number" min="0.01" max={totalAmount} step="0.01" value={forfeitAmount} onChange={(e) => setForfeitAmount(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(!!errors.amount)} />
+      </Field>
+      {isPartial && (
+        <>
+          <Field label="Refund remainder via" htmlFor="ff-method">
+            <select id="ff-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputCls(false)}>
+              <option value="CASH">Cash</option>
+              <option value="CHEQUE">Cheque</option>
+              <option value="BANK_TRANSFER">Bank transfer</option>
+            </select>
+          </Field>
+          {paymentMethod === 'BANK_TRANSFER' && (
+            <Field label="Refund from (company bank account)" htmlFor="ff-bank" error={errors.bank}>
+              <BankAccountSelect id="ff-bank" value={bankAccountId} onChange={setBankAccountId} accounts={bank.bankAccounts} invalid={!!errors.bank} />
+            </Field>
           )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Amount to Keep (Forfeit)</label>
-            <input
-              type="number"
-              min="0.01"
-              max={totalAmount}
-              step="0.01"
-              value={forfeitAmount}
-              onChange={(e) => setForfeitAmount(e.target.value)}
-              onWheel={(e) => e.target.blur()}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-            <p className="mt-1 text-[11px] text-slate-500">
-              {isPartial
-                ? `The remaining ${formatMoney(refundAmt)} will be refunded back to the client.`
-                : 'The full deposit stays with the company — no refund transaction is created.'}
-            </p>
-          </div>
-
-          {isPartial && (
-            <>
-              <div>
-                <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund Remainder Via</label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                >
-                  <option value="CASH">Cash</option>
-                  <option value="CHEQUE">Cheque</option>
-                  <option value="BANK_TRANSFER">Bank Transfer</option>
-                </select>
-              </div>
-
-              {paymentMethod === 'BANK_TRANSFER' && (
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund From (Company Bank Account)</label>
-                  <select
-                    value={bankAccountId}
-                    onChange={(e) => setBankAccountId(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                  >
-                    <option value="">Select…</option>
-                    {bankAccounts.map((b) => (
-                      <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Reason{isPartial ? ' (for withheld amount)' : ' (optional)'}</label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={isPartial ? 'e.g. repair fee, transport fee' : undefined}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isPartial ? 'Confirm Partial Forfeit' : 'Confirm Forfeit'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </>
+      )}
+      <Field label={`Reason${isPartial ? ' (for withheld amount)' : ' (optional)'}`} htmlFor="ff-notes">
+        <textarea id="ff-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={isPartial ? 'e.g. repair fee, transport fee' : undefined} className={textareaCls(false)} />
+      </Field>
+    </Modal>
   );
 }
 
-function RentalsTab() {
-  const [subTab, setSubTab] = useState('agreements'); // 'agreements' | 'deposits'
+function DepositChip({ a }) {
+  if (a.deposit_id) {
+    const cfg = DEPOSIT_STATUS[a.deposit_status] || { tone: 'slate', label: a.deposit_status || 'Deposit' };
+    return <StatusChip tone={cfg.tone}>{cfg.label} · {formatMoney(a.deposit_collected_amount)}</StatusChip>;
+  }
+  if (Number(a.deposit_amount) > 0) return <StatusChip tone="slate">Pending payment</StatusChip>;
+  return <span className="text-[13px] text-slate-500">None</span>;
+}
+
+function RentalsTab({ createTick, onCount }) {
+  const { toast } = useUi();
+  const [sp, update] = useUrlParams();
+  const subTab = sp.get('view') === 'deposits' ? 'deposits' : 'agreements';
+  const search = sp.get('search') || '';
+  const filter = ['ending', 'overdue', 'recurring', 'deposit'].includes(sp.get('filter')) ? sp.get('filter') : '';
+
   const [rentalProducts, setRentalProducts] = useState([]);
   const [agreements, setAgreements] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [agreementModalOpen, setAgreementModalOpen] = useState(false);
-  const [detailAgreementId, setDetailAgreementId] = useState(null);
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [prodRes, agrRes] = await Promise.all([
         apiClient.getProducts({ product_type: 'RENTAL', include_unavailable: 'true' }),
@@ -3086,315 +3232,422 @@ function RentalsTab() {
       ]);
       setRentalProducts(Array.isArray(prodRes?.data) ? prodRes.data : []);
       setAgreements(Array.isArray(agrRes?.data) ? agrRes.data : []);
-    } catch {
-      setRentalProducts([]);
-      setAgreements([]);
+    } catch (err) {
+      setLoadError(err?.message || 'Failed to load rentals.');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (!loading && !loadError) onCount('rentals', agreements.length); }, [loading, loadError, agreements.length, onCount]);
+
+  const openCreate = useCallback(() => {
+    if (loading) { toast('Rentals are still loading — try again in a moment.'); return; }
+    if (rentalProducts.length === 0) { toast('Create a rental product in the Catalog tab first.'); return; }
+    setDrawerOpen(true);
+  }, [loading, rentalProducts.length, toast]);
+  useCreateSignal(createTick, openCreate);
 
   const recipientName = (a) => a.client_name || a.walk_in_name || '—';
+  const isActive = (a) => a.status === 'ACTIVE';
+  const daysOf = (a) => daysRemaining(dueDateOf(a));
+
+  const matchesSearch = (a) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [a.product_name, a.unit_code, a.client_name, a.walk_in_name].filter(Boolean).join(' ').toLowerCase().includes(q);
+  };
+  const base = agreements.filter(matchesSearch);
+  const predicates = {
+    ending: (a) => isActive(a) && daysOf(a) !== null && daysOf(a) >= 0 && daysOf(a) <= 7,
+    overdue: (a) => isActive(a) && daysOf(a) !== null && daysOf(a) < 0,
+    recurring: (a) => isActive(a) && a.billing_type === 'RECURRING',
+    deposit: (a) => isActive(a) && depositPending(a),
+  };
+  const shown = filter ? base.filter(predicates[filter]) : base;
+  const chipCount = (key) => base.filter(predicates[key]).length;
+
+  const activeCount = agreements.filter(isActive).length;
+  const endingCount = agreements.filter(predicates.ending).length;
+  const overdueCount = agreements.filter(predicates.overdue).length;
+  const monthlyRecurring = agreements.filter(predicates.recurring).reduce((s, a) => s + (parseFloat(a.rate) || 0), 0);
+
+  const setFilter = (v) => update({ filter: v });
 
   return (
     <>
-      <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 w-fit">
-        {[
-          { id: 'agreements', label: 'Agreements' },
-          { id: 'deposits', label: 'Refundable Deposits' },
-        ].map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setSubTab(id)}
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
-              subTab === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        ariaLabel="Rentals view"
+        value={subTab}
+        onChange={(v) => update({ view: v === 'deposits' ? 'deposits' : '', search: '', filter: '', dstatus: '' })}
+        options={[{ value: 'agreements', label: 'Agreements' }, { value: 'deposits', label: 'Refundable deposits' }]}
+      />
 
       {subTab === 'deposits' ? (
         <DepositsPanel />
-      ) : rentalProducts.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
-          No RENTAL-type products yet. Create one in the Catalog tab first, then come back here to add rental units and agreements.
-        </div>
       ) : (
         <>
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-              <AlertCircle className="h-4 w-4 shrink-0" /> {error}
-            </div>
-          )}
+          <ErrorBanner message={loadError} onRetry={fetchAll} />
 
-          <div className="flex justify-end">
-            <button type="button" onClick={() => setAgreementModalOpen(true)} className={primaryBtnCls}>
-              <Plus className="h-4 w-4" /> New Rental Agreement
-            </button>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
+            <Kpi label="Active agreements" value={activeCount} sub={`${agreements.length - activeCount} completed or cancelled`} active={filter === ''} onClick={() => setFilter('')} />
+            <Kpi label="Ending in 7 days" value={endingCount} tone="amber" sub="Plan returns or renewals" active={filter === 'ending'} onClick={() => setFilter(filter === 'ending' ? '' : 'ending')} />
+            <Kpi label="Overdue returns" value={overdueCount} tone="red" sub="Past the end date" active={filter === 'overdue'} onClick={() => setFilter(filter === 'overdue' ? '' : 'overdue')} />
+            <Kpi label="Monthly recurring" value={formatMoney(monthlyRecurring)} tone="green" sub="From active recurring rentals" active={filter === 'recurring'} onClick={() => setFilter(filter === 'recurring' ? '' : 'recurring')} />
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading rental agreements…
-              </div>
-            ) : agreements.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
-                <Repeat className="h-8 w-8" />
-                <p className="text-sm font-medium">No rental agreements yet</p>
-              </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <SearchBox value={search} onChange={(v) => update({ search: v })} placeholder="Search product, unit or recipient…" />
+            <Segmented
+              ariaLabel="Quick filter"
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: '', label: 'All', count: base.length },
+                { value: 'ending', label: 'Ending in 7 days', count: chipCount('ending') },
+                { value: 'overdue', label: 'Overdue', count: chipCount('overdue') },
+                { value: 'recurring', label: 'Recurring', count: chipCount('recurring') },
+                { value: 'deposit', label: 'Deposit pending', count: chipCount('deposit') },
+              ]}
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            {loading && agreements.length === 0 ? (
+              <SkeletonRows rows={5} />
+            ) : !loading && !loadError && rentalProducts.length === 0 ? (
+              <EmptyState title="No rental products yet" body="Create a rental product in the Catalog tab first, then come back here to add units and agreements." />
+            ) : shown.length === 0 && !loadError ? (
+              <EmptyState
+                title={agreements.length === 0 ? 'No rental agreements yet' : 'No agreements match your filters'}
+                body={agreements.length === 0 ? 'Use New rental agreement above to create the first one.' : undefined}
+                action={agreements.length > 0 && (search || filter) ? <button type="button" onClick={() => update({ search: '', filter: '' })} className={btn('secondary')}>Clear filters</button> : null}
+              />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product / Unit</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Recipient</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Billing</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rate</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Deposit</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Next / End</th>
-                      <th className="px-4 py-3" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {agreements.map((a) => (
-                      <tr key={a.rental_agreement_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3">
-                          <span className="font-semibold text-slate-900">{a.product_name}</span>
-                          <span className="block text-xs text-slate-400">{a.unit_code || '—'}</span>
-                        </td>
-                        <td className="px-4 py-3 text-slate-700">
-                          {a.client_name ? <ClientLink id={a.client_id}>{a.client_name}</ClientLink> : recipientName(a)}
-                          {a.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${a.billing_type === 'RECURRING' ? 'text-violet-700' : 'text-blue-700'}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${a.billing_type === 'RECURRING' ? 'bg-violet-500' : 'bg-blue-400'}`} />
-                            {a.billing_type === 'RECURRING' ? 'Monthly' : 'One-time'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(a.rate)}</td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          {a.deposit_id ? (
-                            (() => {
-                              const cfg = DEPOSIT_STATUS_DOT[a.deposit_status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
-                              return (
-                                <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                                  {formatMoney(a.deposit_collected_amount)} · {a.deposit_status}
-                                </span>
-                              );
-                            })()
-                          ) : Number(a.deposit_amount) > 0 ? (
-                            <span className="text-xs text-slate-400">Pending payment</span>
-                          ) : (
-                            <span className="text-xs text-slate-300">None</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          {(() => {
-                            const cfg = RENTAL_AGREEMENT_STATUS_COLORS[a.status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
-                            return (
-                              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                                {a.status}
-                              </span>
-                            );
-                          })()}
-                        </td>
-                        <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
-                          {formatDate(a.billing_type === 'RECURRING' ? a.next_invoice_date : a.end_date)}
-                          {a.status === 'ACTIVE' && (
-                            <DaysRemainingBadge date={a.billing_type === 'RECURRING' ? a.next_invoice_date : a.end_date} />
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button type="button" onClick={() => setDetailAgreementId(a.rental_agreement_id)} className={ghostBtnCls}>
-                            Manage
+              <TableShell minWidth={1060}>
+                <HeadRow cols={AGR_COLS}>
+                  <HCell>Product / unit</HCell><HCell>Recipient</HCell><HCell>Billing</HCell><HCell right>Rate</HCell><HCell>Deposit</HCell><HCell>Status</HCell><HCell>Next / end</HCell><HCell><span className="sr-only">Details</span></HCell>
+                </HeadRow>
+                {shown.map((a) => {
+                  const open = expandedId === a.rental_agreement_id;
+                  const st = AGREEMENT_STATUS[a.status] || { tone: 'slate', label: a.status };
+                  const due = dueDateOf(a);
+                  return (
+                    <React.Fragment key={a.rental_agreement_id}>
+                      <BodyRow cols={AGR_COLS}>
+                        <Cell>
+                          <div className="truncate font-semibold text-slate-900">{a.product_name}</div>
+                          <div className="font-mono text-xs text-slate-500">{a.unit_code || '—'}</div>
+                        </Cell>
+                        <Cell>
+                          <div className="truncate">{a.client_name ? <ClientLink id={a.client_id}>{a.client_name}</ClientLink> : recipientName(a)}</div>
+                          {a.walk_in_name && <div className="text-xs font-semibold text-amber-700">Walk-in</div>}
+                        </Cell>
+                        <Cell><StatusChip tone={a.billing_type === 'RECURRING' ? 'blue' : 'slate'}>{a.billing_type === 'RECURRING' ? 'Monthly' : 'One-time'}</StatusChip></Cell>
+                        <Cell right className="font-semibold text-slate-900">{formatMoney(a.rate)}</Cell>
+                        <Cell><DepositChip a={a} /></Cell>
+                        <Cell><StatusChip tone={st.tone}>{st.label}</StatusChip></Cell>
+                        <Cell>
+                          <div className="text-[13px] text-slate-600">{a.billing_type === 'RECURRING' ? 'Next invoice ' : 'Ends '}{formatDate(due)}</div>
+                          {isActive(a) && <DaysRemainingBadge date={due} />}
+                        </Cell>
+                        <Cell>
+                          <button
+                            type="button"
+                            aria-expanded={open}
+                            aria-label={`${open ? 'Hide' : 'Show'} details for ${a.product_name} ${a.unit_code || ''}`}
+                            onClick={() => setExpandedId(open ? null : a.rental_agreement_id)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                          >
+                            <ChevronDown className={`h-4 w-4 transition-transform motion-reduce:transition-none ${open ? 'rotate-180 text-blue-600' : ''}`} />
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </Cell>
+                      </BodyRow>
+                      {open && (
+                        <ExpandRow>
+                          <AgreementDetail agreementId={a.rental_agreement_id} onChanged={fetchAll} />
+                        </ExpandRow>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </TableShell>
+            )}
+            {shown.length > 0 && (
+              <div className="border-t border-slate-200 px-4 py-3 text-[13px] text-slate-500">
+                Showing {shown.length} of {agreements.length} agreement{agreements.length === 1 ? '' : 's'}
               </div>
             )}
           </div>
         </>
       )}
 
-      {agreementModalOpen && (
-        <NewRentalAgreementModal
+      {drawerOpen && (
+        <NewRentalAgreementDrawer
           rentalProducts={rentalProducts}
-          onClose={() => setAgreementModalOpen(false)}
-          onCreated={() => { setAgreementModalOpen(false); fetchAll(); }}
-        />
-      )}
-
-      {detailAgreementId && (
-        <RentalAgreementDetailModal
-          rentalAgreementId={detailAgreementId}
-          onClose={() => setDetailAgreementId(null)}
-          onChanged={fetchAll}
+          onClose={() => setDrawerOpen(false)}
+          onCreated={() => { setDrawerOpen(false); fetchAll(); toast('Rental agreement created.'); }}
         />
       )}
     </>
   );
 }
 
-// Flat, global view of every deposit across all rental agreements — the admin
-// doesn't have to drill into each agreement individually to see what's held,
-// refund it, or write it off. Defaults to HELD since that's the actionable set;
-// a status filter reveals the REFUNDED/FORFEITED history for audit purposes.
-function DepositsPanel() {
-  const [deposits, setDeposits] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('HELD');
-  const [forfeitTarget, setForfeitTarget] = useState(null);
-  const [refundTarget, setRefundTarget] = useState(null);
+// Expanded row content: timeline, invoices and the actions for one agreement.
+function AgreementDetail({ agreementId, onChanged }) {
+  const { toast, confirm } = useUi();
+  const [agreement, setAgreement] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [paymentInvoice, setPaymentInvoice] = useState(null);
+  const [showRefund, setShowRefund] = useState(false);
+  const [showForfeit, setShowForfeit] = useState(false);
 
-  const fetchDeposits = useCallback(async () => {
+  const fetchDetail = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const res = await apiClient.getDeposits(statusFilter ? { status: statusFilter } : {});
-      setDeposits(Array.isArray(res?.data) ? res.data : []);
-    } catch {
-      setDeposits([]);
+      const res = await apiClient.getRentalAgreement(agreementId);
+      setAgreement(res?.data || null);
+    } catch (err) {
+      setLoadError(err?.message || 'Failed to load rental agreement.');
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [agreementId]);
+  useEffect(() => { fetchDetail(); }, [fetchDetail]);
 
+  const handleReturn = async () => {
+    const ok = await confirm({
+      title: 'Mark this unit as returned?',
+      body: 'This ends the rental agreement.',
+      confirmLabel: 'Mark as returned',
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError('');
+    try {
+      await apiClient.returnRentalUnit(agreementId);
+      await fetchDetail();
+      onChanged();
+      toast('Unit marked as returned.');
+    } catch (err) {
+      setError(err?.message || 'Failed to mark as returned');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loadError) return <ErrorBanner message={loadError} onRetry={fetchDetail} />;
+  if (loading && !agreement) return <div className="h-24 animate-pulse rounded-lg bg-slate-100" role="status" aria-label="Loading agreement" />;
+  if (!agreement) return null;
+
+  const invoices = Array.isArray(agreement.invoices) ? agreement.invoices : [];
+  const firstUnpaid = invoices.find((i) => i.status !== 'PAID');
+  const isActive = agreement.status === 'ACTIVE';
+  const hasDeposit = !!agreement.deposit_id || Number(agreement.deposit_amount) > 0;
+  const due = dueDateOf(agreement);
+  const depositDone = !!agreement.deposit_id;
+  const depositSettled = ['REFUNDED', 'PARTIALLY_REFUNDED', 'FORFEITED'].includes(agreement.deposit_status);
+
+  return (
+    <div className="space-y-4">
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
+      <div className="flex flex-wrap gap-8">
+        <div className="min-w-[260px] flex-1 basis-[300px]">
+          <div className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">Timeline</div>
+          <div className="space-y-2">
+            <Step done sub={formatDate(agreement.created_at || agreement.start_date)}>Agreement created</Step>
+            {invoices.map((inv) => (
+              <Step key={inv.invoice_id} done={inv.status === 'PAID'} sub={inv.paid_at ? formatDate(inv.paid_at) : formatMoney(inv.amount)}>
+                Invoice {inv.invoice_code} {inv.status === 'PAID' ? 'paid' : 'awaiting payment'}
+              </Step>
+            ))}
+            {hasDeposit && (
+              <Step done={depositDone} sub={formatMoney(depositDone ? agreement.deposit_collected_amount : agreement.deposit_amount)}>
+                {depositSettled ? `Deposit ${(DEPOSIT_STATUS[agreement.deposit_status]?.label || '').toLowerCase()}` : depositDone ? 'Deposit held' : 'Deposit not yet collected'}
+              </Step>
+            )}
+            {isActive ? (
+              <Step done={false} sub={formatDate(due)}>{agreement.billing_type === 'RECURRING' ? 'Next invoice due' : 'Return due'}</Step>
+            ) : (
+              <Step done>Rental {agreement.status === 'CANCELLED' ? 'cancelled' : 'completed'}</Step>
+            )}
+          </div>
+        </div>
+
+        <div className="min-w-[280px] flex-1 basis-[320px]">
+          <div className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">Invoices</div>
+          {invoices.length === 0 ? (
+            <p className="text-[13px] text-slate-500">No invoices yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {invoices.map((inv) => (
+                <div key={inv.invoice_id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <span>
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono text-[13px] text-slate-600">{inv.invoice_code}</span>
+                      <StatusChip tone={invoiceTone(inv.status)}>{invoiceLabel(inv.status)}</StatusChip>
+                    </span>
+                    <span className="text-xs text-slate-500">{formatDate(inv.billing_period_start)} – {formatDate(inv.billing_period_end)}</span>
+                  </span>
+                  <span className="flex items-center gap-3">
+                    <b className="tabular-nums text-slate-900">{formatMoney(inv.amount)}</b>
+                    {inv.status !== 'PAID' && <button type="button" onClick={() => setPaymentInvoice(inv)} className={btn('primary', 'sm')}>Pay</button>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {firstUnpaid && <button type="button" onClick={() => setPaymentInvoice(firstUnpaid)} className={btn('primary', 'sm')}>Record payment</button>}
+        {isActive && <button type="button" disabled={busy} onClick={handleReturn} className={btn('secondary', 'sm')}>{busy && <Loader2 className="h-3 w-3 animate-spin" />} Mark unit as returned</button>}
+        {agreement.deposit_id && agreement.deposit_status === 'HELD' && (
+          <>
+            <button type="button" onClick={() => setShowRefund(true)} className={btn('success', 'sm')}>Refund deposit</button>
+            <button type="button" onClick={() => setShowForfeit(true)} className={btn('danger', 'sm')}>Forfeit deposit</button>
+          </>
+        )}
+      </div>
+
+      {paymentInvoice && (
+        <RecordInvoicePaymentModal
+          invoice={paymentInvoice}
+          onClose={() => setPaymentInvoice(null)}
+          onRecorded={() => { toast(`Payment recorded for ${paymentInvoice.invoice_code}.`); setPaymentInvoice(null); fetchDetail(); onChanged(); }}
+        />
+      )}
+      {showRefund && agreement.deposit_id && (
+        <RefundDepositModal
+          deposit={{ deposit_id: agreement.deposit_id, amount: agreement.deposit_collected_amount }}
+          onClose={() => setShowRefund(false)}
+          onRefunded={() => { setShowRefund(false); fetchDetail(); onChanged(); toast('Deposit refunded.'); }}
+        />
+      )}
+      {showForfeit && agreement.deposit_id && (
+        <ForfeitDepositModal
+          deposit={{ deposit_id: agreement.deposit_id, amount: agreement.deposit_collected_amount }}
+          onClose={() => setShowForfeit(false)}
+          onForfeited={() => { setShowForfeit(false); fetchDetail(); onChanged(); toast('Deposit forfeited.'); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Flat, global view of every deposit across all rental agreements. Defaults to
+// HELD since that's the actionable set; the status filter reveals history.
+function DepositsPanel() {
+  const { toast } = useUi();
+  const [sp, update] = useUrlParams();
+  const statusFilter = ['REFUNDED', 'PARTIALLY_REFUNDED', 'FORFEITED', 'ALL'].includes(sp.get('dstatus')) ? sp.get('dstatus') : 'HELD';
+
+  const [deposits, setDeposits] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [forfeitTarget, setForfeitTarget] = useState(null);
+  const [refundTarget, setRefundTarget] = useState(null);
+
+  const fetchDeposits = useCallback(async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const res = await apiClient.getDeposits({});
+      setDeposits(Array.isArray(res?.data) ? res.data : []);
+    } catch (err) {
+      setLoadError(err?.message || 'Failed to load deposits.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
   useEffect(() => { fetchDeposits(); }, [fetchDeposits]);
 
   const recipientName = (d) => d.client_name || d.walk_in_name || '—';
+  const countOf = (s) => deposits.filter((d) => d.status === s).length;
+  const held = deposits.filter((d) => d.status === 'HELD');
+  const heldTotal = held.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+  const shown = statusFilter === 'ALL' ? deposits : deposits.filter((d) => d.status === statusFilter);
 
   return (
     <>
-      <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 w-fit">
-        {[
-          { id: 'HELD', label: 'Held' },
-          { id: 'REFUNDED', label: 'Refunded' },
-          { id: 'PARTIALLY_REFUNDED', label: 'Partially Refunded' },
-          { id: 'FORFEITED', label: 'Forfeited' },
-          { id: '', label: 'All' },
-        ].map(({ id, label }) => (
-          <button
-            key={id || 'ALL'}
-            type="button"
-            onClick={() => setStatusFilter(id)}
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
-              statusFilter === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <ErrorBanner message={loadError} onRetry={fetchDeposits} />
+
+      <div className="flex flex-wrap items-stretch gap-3">
+        <div className="w-full sm:w-60"><Kpi label="Deposits · Total held" value={formatMoney(heldTotal)} tone="amber" sub={`${held.length} deposit${held.length === 1 ? '' : 's'} held`} /></div>
+        <div className="flex items-end">
+          <Segmented
+            ariaLabel="Deposit status"
+            value={statusFilter}
+            onChange={(v) => update({ dstatus: v === 'HELD' ? '' : v })}
+            options={[
+              { value: 'HELD', label: 'Held', count: countOf('HELD') },
+              { value: 'REFUNDED', label: 'Refunded', count: countOf('REFUNDED') },
+              { value: 'PARTIALLY_REFUNDED', label: 'Partially refunded', count: countOf('PARTIALLY_REFUNDED') },
+              { value: 'FORFEITED', label: 'Forfeited', count: countOf('FORFEITED') },
+              { value: 'ALL', label: 'All', count: deposits.length },
+            ]}
+          />
+        </div>
       </div>
 
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" /> {error}
-        </div>
-      )}
-
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading deposits…
-          </div>
-        ) : deposits.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
-            <Wallet className="h-8 w-8" />
-            <p className="text-sm font-medium">No {statusFilter ? statusFilter.toLowerCase() : ''} deposits</p>
-          </div>
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {loading && deposits.length === 0 ? (
+          <SkeletonRows rows={4} />
+        ) : shown.length === 0 && !loadError ? (
+          <EmptyState title={`No ${statusFilter === 'ALL' ? '' : (DEPOSIT_STATUS[statusFilter]?.label || '').toLowerCase() + ' '}deposits`.replace('  ', ' ')} />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Held Since</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Recipient</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Product / Unit</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {deposits.map((d) => {
-                  const cfg = DEPOSIT_STATUS_DOT[d.status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
-                  return (
-                    <tr key={d.deposit_id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 whitespace-nowrap text-slate-500">{formatDate(d.held_at)}</td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {d.client_name ? <ClientLink id={d.client_id}>{d.client_name}</ClientLink> : recipientName(d)}
-                        {d.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        {d.product_name ? (
-                          <>
-                            <span className="font-medium text-slate-800">{d.product_name}</span>
-                            <span className="block text-xs text-slate-400">{d.unit_code || '—'}</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> General Deposit
-                            </span>
-                            <span className="block text-xs text-slate-400 mt-0.5">{d.description || '—'}{d.estimate_number ? ` · ${d.estimate_number}` : ''}</span>
-                          </>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(d.amount)}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                          {d.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {d.status === 'HELD' ? (
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setRefundTarget(d)}
-                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
-                            >
-                              <RotateCcw className="h-3 w-3" /> Refund
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setForfeitTarget(d)}
-                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors"
-                            >
-                              Forfeit
-                            </button>
-                          </div>
-                        ) : d.status === 'REFUNDED' ? (
-                          <span className="text-emerald-600 text-xs font-medium">Refunded {formatDate(d.refunded_at)}</span>
-                        ) : d.status === 'PARTIALLY_REFUNDED' ? (
-                          <span className="text-violet-600 text-xs font-medium">
-                            Refunded {formatMoney(d.refunded_amount)}, kept {formatMoney(d.forfeited_amount)}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 text-xs">Forfeited{d.notes ? ` — ${d.notes}` : ''}</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <TableShell minWidth={880}>
+            <HeadRow cols={DEP_COLS}>
+              <HCell>Held since</HCell><HCell>Recipient</HCell><HCell>Product / unit</HCell><HCell right>Amount</HCell><HCell>Status</HCell><HCell right>Action</HCell>
+            </HeadRow>
+            {shown.map((d) => {
+              const cfg = DEPOSIT_STATUS[d.status] || { tone: 'slate', label: d.status };
+              return (
+                <BodyRow key={d.deposit_id} cols={DEP_COLS}>
+                  <Cell className="text-[13px] text-slate-500">{formatDate(d.held_at)}</Cell>
+                  <Cell>
+                    <div className="truncate font-semibold text-slate-900">{d.client_name ? <ClientLink id={d.client_id}>{d.client_name}</ClientLink> : recipientName(d)}</div>
+                    {d.walk_in_name && <div className="text-xs font-semibold text-amber-700">Walk-in</div>}
+                  </Cell>
+                  <Cell>
+                    {d.product_name ? (
+                      <>
+                        <div className="font-medium text-slate-900">{d.product_name}</div>
+                        <div className="font-mono text-xs text-slate-500">{d.unit_code || '—'}</div>
+                      </>
+                    ) : (
+                      <>
+                        <StatusChip tone="amber">General deposit</StatusChip>
+                        <div className="mt-0.5 text-xs text-slate-500">{d.description || '—'}{d.estimate_number ? ` · ${d.estimate_number}` : ''}</div>
+                      </>
+                    )}
+                  </Cell>
+                  <Cell right className="font-semibold text-slate-900">{formatMoney(d.amount)}</Cell>
+                  <Cell><StatusChip tone={cfg.tone}>{cfg.label}</StatusChip></Cell>
+                  <Cell right>
+                    {d.status === 'HELD' ? (
+                      <div className="flex items-center justify-end gap-2">
+                        <button type="button" onClick={() => setRefundTarget(d)} className={btn('success', 'sm')}>Refund</button>
+                        <button type="button" onClick={() => setForfeitTarget(d)} className={btn('danger', 'sm')}>Forfeit</button>
+                      </div>
+                    ) : d.status === 'REFUNDED' ? (
+                      <span className="text-xs text-slate-500">Refunded {formatDate(d.refunded_at)}</span>
+                    ) : d.status === 'PARTIALLY_REFUNDED' ? (
+                      <span className="text-xs text-slate-500">Refunded {formatMoney(d.refunded_amount)}, kept {formatMoney(d.forfeited_amount)}</span>
+                    ) : (
+                      <span className="text-xs text-slate-500">Forfeited{d.notes ? ` — ${d.notes}` : ''}</span>
+                    )}
+                  </Cell>
+                </BodyRow>
+              );
+            })}
+          </TableShell>
         )}
       </div>
 
@@ -3402,25 +3655,27 @@ function DepositsPanel() {
         <ForfeitDepositModal
           deposit={forfeitTarget}
           onClose={() => setForfeitTarget(null)}
-          onForfeited={() => { setForfeitTarget(null); fetchDeposits(); }}
+          onForfeited={() => { setForfeitTarget(null); fetchDeposits(); toast('Deposit forfeited.'); }}
         />
       )}
-
       {refundTarget && (
         <RefundDepositModal
           deposit={refundTarget}
           onClose={() => setRefundTarget(null)}
-          onRefunded={() => { setRefundTarget(null); fetchDeposits(); }}
+          onRefunded={() => { setRefundTarget(null); fetchDeposits(); toast('Deposit refunded.'); }}
         />
       )}
     </>
   );
 }
 
-function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
+function NewRentalAgreementDrawer({ rentalProducts, onClose, onCreated }) {
+  const clientsState = useClientsList();
+  const bank = useBankAccounts();
+  const [units, setUnits] = useState([]);
+  const [unitsError, setUnitsError] = useState('');
   const [productId, setProductId] = useState(rentalProducts[0]?.product_id || '');
   const [recipientType, setRecipientType] = useState('client');
-  const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
   const [walkInClient, setWalkInClient] = useState(emptyWalkInClient());
@@ -3429,74 +3684,66 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState('');
   const [depositAmount, setDepositAmount] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const selectedProduct = rentalProducts.find((p) => p.product_id === productId);
-  const [bankAccounts, setBankAccounts] = useState([]);
   const [vendorPayNow, setVendorPayNow] = useState(false);
-  const [vendorAmount, setVendorAmount] = useState('');
+  const [vendorAmount, setVendorAmount] = useState(rentalProducts[0]?.cost_price || '');
   const [vendorPaymentMethod, setVendorPaymentMethod] = useState('CASH');
   const [vendorBankAccountId, setVendorBankAccountId] = useState('');
   const [vendorChequeNumber, setVendorChequeNumber] = useState('');
   const [vendorChequeDate, setVendorChequeDate] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [serverError, setServerError] = useState('');
 
-  useEffect(() => {
-    apiClient.getAllClients().then((res) => setClients(Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []))).catch(() => setClients([]));
-    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
+  const snap = () => JSON.stringify([productId, recipientType, selectedClientId, walkInClient, billingType, rate, startDate, endDate, depositAmount, vendorPayNow, vendorAmount, vendorPaymentMethod, vendorBankAccountId, vendorChequeNumber, vendorChequeDate]);
+  const baseline = useRef(null);
+  if (baseline.current === null) baseline.current = snap();
+  const dirty = snap() !== baseline.current;
+
+  const loadUnits = useCallback(async () => {
+    setUnitsError('');
+    try {
+      const res = await apiClient.getRentalUnits({});
+      setUnits(Array.isArray(res?.data) ? res.data : []);
+    } catch (err) {
+      setUnitsError(err?.message || 'Failed to load rental units.');
+    }
   }, []);
+  useEffect(() => { loadUnits(); }, [loadUnits]);
 
-  useEffect(() => {
-    setVendorAmount(selectedProduct?.cost_price || '');
-    setVendorPayNow(false);
-  }, [productId]);
-
-  const filteredClients = clients.filter((c) => (c.full_name || c.client_name || '').toLowerCase().includes(clientSearch.toLowerCase()));
+  const selectedProduct = rentalProducts.find((p) => p.product_id === productId);
+  const freeOf = (pid) => units.filter((u) => u.product_id === pid && u.status === 'AVAILABLE').length;
+  const totalOf = (pid) => units.filter((u) => u.product_id === pid).length;
 
   const handleProductChange = (id) => {
     setProductId(id);
     const product = rentalProducts.find((p) => p.product_id === id);
     if (product) setRate(product.price);
+    setVendorAmount(product?.cost_price || '');
+    setVendorPayNow(false);
   };
+
+  const rateN = parseFloat(rate) || 0;
+  const depositN = parseFloat(depositAmount) || 0;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
-
-    if (!productId) { setError('Please select a rental product'); return; }
-    if (recipientType === 'client' && !selectedClientId) { setError('Please select a client'); return; }
-    if (recipientType === 'walk_in' && !walkInClient.full_name.trim()) { setError('Please enter the walk-in customer\'s full name'); return; }
-    if (recipientType === 'walk_in' && !walkInClient.gender) { setError('Please select the walk-in customer\'s gender'); return; }
-    if (recipientType === 'walk_in' && !walkInClient.mobile_number.trim()) { setError('Please enter the walk-in customer\'s mobile number — it registers them as a client'); return; }
-    if (!rate || parseFloat(rate) <= 0) { setError('Rate must be greater than zero'); return; }
-    if (billingType === 'ONE_TIME' && !endDate) { setError('End date is required for a one-time rental'); return; }
+    setServerError('');
+    const errs = validateRecipient(recipientType, selectedClientId, walkInClient);
+    if (!productId) errs.product = 'Please select a rental product';
+    if (!rate || parseFloat(rate) <= 0) errs.rate = 'Rate must be greater than zero';
+    if (billingType === 'ONE_TIME' && !endDate) errs.endDate = 'End date is required for a one-time rental';
     if (selectedProduct?.vendor_id && vendorPayNow) {
-      if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(vendorPaymentMethod) && !vendorBankAccountId) {
-        setError('Please select a bank account for the vendor payment'); return;
-      }
-      if (vendorPaymentMethod === 'CHEQUE' && (!vendorChequeNumber || !vendorChequeDate)) {
-        setError('Cheque number and date are required for the vendor payment'); return;
-      }
+      if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(vendorPaymentMethod) && !vendorBankAccountId) errs.vendorBank = 'Please select a bank account for the vendor payment';
+      if (vendorPaymentMethod === 'CHEQUE' && (!vendorChequeNumber || !vendorChequeDate)) errs.vendorCheque = 'Cheque number and date are required for the vendor payment';
     }
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
 
     setSaving(true);
     try {
       let walkInClientId = null;
       if (recipientType === 'walk_in') {
-        const wicRes = await apiClient.createWalkInCustomer({
-          full_name: walkInClient.full_name.trim(),
-          email: walkInClient.email || undefined,
-          mobile_number: walkInClient.mobile_number.trim(),
-          gender: walkInClient.gender,
-          primary_address: walkInClient.primary_address || undefined,
-          city_id: walkInClient.city_id || undefined,
-          client_type: walkInClient.client_type || 'INDIVIDUAL',
-          honorific: walkInClient.honorific || undefined,
-          company_name: walkInClient.company_name || undefined,
-          display_name_source: walkInClient.client_type === 'CORPORATE_PROXY' && walkInClient.company_name
-            ? walkInClient.display_name_source
-            : 'FULL_NAME',
-        });
+        const wicRes = await apiClient.createWalkInCustomer(walkInPayload(walkInClient));
         walkInClientId = wicRes.data.client_profile_id;
       }
 
@@ -3517,469 +3764,144 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
           cheque_date: vendorChequeDate || undefined,
         } : undefined,
       });
-
       onCreated();
     } catch (err) {
-      setError(err.message || 'Failed to create rental agreement');
+      setServerError(err?.message || 'Failed to create rental agreement');
     } finally {
       setSaving(false);
     }
   };
 
+  const free = productId ? freeOf(productId) : 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">New Rental Agreement</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
+    <Drawer
+      title="New rental agreement"
+      subtitle="Rent a unit to a client or a walk-in customer."
+      width={700}
+      dirty={dirty}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
+          <span className="flex-1" />
+          <button type="submit" disabled={saving} className={btn('primary')}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Create agreement</button>
+        </>
+      )}
+    >
+      <ErrorBanner message={serverError} />
+      <ErrorBanner message={unitsError} onRetry={loadUnits} />
+
+      <RecipientBlock
+        recipientType={recipientType}
+        onTypeChange={setRecipientType}
+        clientsState={clientsState}
+        search={clientSearch}
+        onSearch={setClientSearch}
+        selectedId={selectedClientId}
+        onSelect={setSelectedClientId}
+        walkIn={walkInClient}
+        onWalkIn={setWalkInClient}
+        errors={errors}
+      />
+
+      <section className="space-y-4">
+        <h3 className="text-sm font-semibold text-slate-900">2. Rental terms</h3>
+
+        <Field
+          label="Rental product"
+          htmlFor="ra-product"
+          error={errors.product}
+          hint={productId && units.length > 0 ? 'The next free unit for this product is assigned automatically.' : undefined}
+        >
+          <select id="ra-product" value={productId} onChange={(e) => handleProductChange(e.target.value)} className={inputCls(!!errors.product)}>
+            {rentalProducts.map((p) => (
+              <option key={p.product_id} value={p.product_id}>
+                {p.name}{units.length > 0 ? ` — ${freeOf(p.product_id)} of ${totalOf(p.product_id)} units free` : ''}
+              </option>
+            ))}
+          </select>
+          {productId && units.length > 0 && free === 0 && (
+            <p role="alert" className="mt-1 text-xs font-semibold text-amber-700">No units are free for this product right now.</p>
           )}
+        </Field>
 
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Rental Product</label>
-            <select
-              value={productId}
-              onChange={(e) => handleProductChange(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            >
-              {rentalProducts.map((p) => (
-                <option key={p.product_id} value={p.product_id}>{p.name}</option>
-              ))}
-            </select>
-            <p className="mt-1 text-[11px] text-slate-400">The next available unit for this product will be assigned automatically.</p>
-          </div>
+        <div>
+          <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Billing</span>
+          <Segmented
+            ariaLabel="Billing type"
+            value={billingType}
+            onChange={setBillingType}
+            options={[{ value: 'ONE_TIME', label: 'One-time (fixed period)' }, { value: 'RECURRING', label: 'Monthly (recurring)' }]}
+          />
+        </div>
 
-          <div>
-            <div className="flex gap-1 rounded-lg bg-slate-100 p-1 w-fit mb-3">
-              {[{ id: 'client', label: 'Existing Client' }, { id: 'walk_in', label: 'Walk-in Customer' }].map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setRecipientType(id)}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${recipientType === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label={billingType === 'RECURRING' ? 'Rate per month (LKR) *' : 'Total rate (LKR) *'} htmlFor="ra-rate" error={errors.rate}>
+            <input id="ra-rate" type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(!!errors.rate)} />
+          </Field>
+          <Field label="Refundable deposit (optional)" htmlFor="ra-deposit" hint="Bundled into the first invoice and held once it is paid.">
+            <input id="ra-deposit" type="number" min="0" step="0.01" placeholder="0.00" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+          </Field>
+          <Field label="Start date">
+            <DateInput value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls(false)} />
+          </Field>
+          {billingType === 'ONE_TIME' && (
+            <Field label="End date *" error={errors.endDate}>
+              <DateInput value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputCls(!!errors.endDate)} />
+            </Field>
+          )}
+        </div>
 
-            {recipientType === 'client' ? (
-              <div>
-                <div className="relative mb-2">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search clients…"
-                    value={clientSearch}
-                    onChange={(e) => setClientSearch(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 pl-8 pr-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                  />
-                </div>
-                <select
-                  size={4}
-                  value={selectedClientId}
-                  onChange={(e) => setSelectedClientId(e.target.value)}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                >
-                  {filteredClients.map((c) => (
-                    <option key={c.client_profile_id || c.client_id} value={c.client_profile_id || c.client_id}>
-                      {withHonorific(c.honorific, c.full_name || c.client_name)} {c.mobile_number ? `· ${formatMobileNumber(c.mobile_number)}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <WalkInClientFields value={walkInClient} onChange={setWalkInClient} />
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Billing</label>
-              <select
-                value={billingType}
-                onChange={(e) => setBillingType(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="ONE_TIME">One-time (fixed period)</option>
-                <option value="RECURRING">Recurring (monthly)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">
-                {billingType === 'RECURRING' ? 'Rate / month *' : 'Total Rate *'}
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={rate}
-                onChange={(e) => setRate(e.target.value)}
-                onWheel={(e) => e.target.blur()}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Start Date</label>
-              <DateInput
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-            {billingType === 'ONE_TIME' && (
-              <div>
-                <label className="block text-[11px] font-medium text-slate-500 mb-1">End Date *</label>
-                <DateInput
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-            )}
-          </div>
-
-          {selectedProduct?.vendor_id && (
-            <div className="rounded-lg border border-slate-200 p-3 space-y-2.5">
-              <p className="text-xs font-medium text-slate-700">
-                This unit is sourced from vendor <span className="font-semibold">{selectedProduct.vendor_name}</span>. How will you pay them?
-              </p>
-
-              <div className="flex items-center gap-3">
-                <label className="block text-[11px] font-medium text-slate-500">Amount owed</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={vendorAmount}
-                  onChange={(e) => setVendorAmount(e.target.value)}
-                  onWheel={(e) => e.target.blur()}
-                  className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setVendorPayNow(false)}
-                  className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                    !vendorPayNow ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                  }`}
-                >
-                  Leave Unpaid
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVendorPayNow(true)}
-                  className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                    vendorPayNow ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                  }`}
-                >
-                  Pay Now
-                </button>
-              </div>
-
-              {vendorPayNow && (
-                <div className="space-y-2 border-t border-slate-100 pt-2.5">
-                  <select
-                    value={vendorPaymentMethod}
-                    onChange={(e) => setVendorPaymentMethod(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                  >
+        {selectedProduct?.vendor_id && (
+          <div className="space-y-3 rounded-lg border border-slate-200 p-3">
+            <p className="text-[13px] text-slate-700">
+              This unit is sourced from vendor <b>{selectedProduct.vendor_name}</b>. How will you pay them?
+            </p>
+            <ErrorBanner message={bank.error} onRetry={bank.reload} />
+            <Field label="Amount owed" htmlFor="ra-vamt" className="max-w-[200px]">
+              <input id="ra-vamt" type="number" min="0" step="0.01" value={vendorAmount} onChange={(e) => setVendorAmount(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+            </Field>
+            <Segmented
+              ariaLabel="Vendor settlement"
+              value={vendorPayNow ? 'now' : 'later'}
+              onChange={(v) => setVendorPayNow(v === 'now')}
+              options={[{ value: 'later', label: 'Leave unpaid' }, { value: 'now', label: 'Pay now' }]}
+            />
+            {vendorPayNow && (
+              <div className="space-y-3 border-t border-slate-100 pt-3">
+                <Field label="Payment method" htmlFor="ra-vm">
+                  <select id="ra-vm" value={vendorPaymentMethod} onChange={(e) => setVendorPaymentMethod(e.target.value)} className={inputCls(false)}>
                     {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
                   </select>
-
-                  {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(vendorPaymentMethod) && (
-                    <select
-                      value={vendorBankAccountId}
-                      onChange={(e) => setVendorBankAccountId(e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                    >
-                      <option value="">Select bank account…</option>
-                      {bankAccounts.map((b) => (
-                        <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
-                      ))}
-                    </select>
-                  )}
-
-                  {vendorPaymentMethod === 'CHEQUE' && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        placeholder="Cheque number"
-                        value={vendorChequeNumber}
-                        onChange={(e) => setVendorChequeNumber(e.target.value)}
-                        className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                      />
-                      <DateInput
-                        value={vendorChequeDate}
-                        onChange={(e) => setVendorChequeDate(e.target.value)}
-                        className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Refundable Deposit (optional)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0.00"
-              value={depositAmount}
-              onChange={(e) => setDepositAmount(e.target.value)}
-              onWheel={(e) => e.target.blur()}
-              className="w-48 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-            <p className="mt-1 text-[11px] text-slate-400">Bundled into the first invoice and held once that invoice is paid.</p>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Create Agreement
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function RentalAgreementDetailModal({ rentalAgreementId, onClose, onChanged }) {
-  const [agreement, setAgreement] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
-  const [showForfeitModal, setShowForfeitModal] = useState(false);
-  const [showRefundModal, setShowRefundModal] = useState(false);
-
-  const fetchDetail = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiClient.getRentalAgreement(rentalAgreementId);
-      setAgreement(res?.data || null);
-    } catch {
-      setError('Failed to load rental agreement');
-    } finally {
-      setLoading(false);
-    }
-  }, [rentalAgreementId]);
-
-  useEffect(() => { fetchDetail(); }, [fetchDetail]);
-
-  const handleReturn = async () => {
-    if (!window.confirm('Mark this unit as returned? This ends the rental agreement.')) return;
-    setBusy(true);
-    setError('');
-    try {
-      await apiClient.returnRentalUnit(rentalAgreementId);
-      await fetchDetail();
-      onChanged();
-    } catch (err) {
-      setError(err.message || 'Failed to mark as returned');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-lg bg-white shadow-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Rental Agreement</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="px-5 py-4 space-y-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
-
-          {loading || !agreement ? (
-            <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-[11px] font-medium text-slate-400">Product / Unit</p>
-                  <p className="font-medium text-slate-800">{agreement.product_name} — {agreement.unit_code || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-slate-400">Recipient</p>
-                  <p className="font-medium text-slate-800">{agreement.client_name ? <ClientLink id={agreement.client_id}>{agreement.client_name}</ClientLink> : (agreement.walk_in_name || '—')}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-slate-400">Billing</p>
-                  <p className="font-medium text-slate-800">{agreement.billing_type === 'RECURRING' ? `${formatMoney(agreement.rate)} / month` : `${formatMoney(agreement.rate)} one-time`}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-slate-400">Status</p>
-                  {(() => {
-                    const cfg = RENTAL_AGREEMENT_STATUS_COLORS[agreement.status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
-                    return (
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                        {agreement.status}
-                      </span>
-                    );
-                  })()}
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-slate-400">Start Date</p>
-                  <p className="text-slate-700">{formatDate(agreement.start_date)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-slate-400">{agreement.billing_type === 'RECURRING' ? 'Next Invoice' : 'End Date'}</p>
-                  <p className="text-slate-700">{formatDate(agreement.billing_type === 'RECURRING' ? agreement.next_invoice_date : agreement.end_date)}</p>
-                </div>
-              </div>
-
-              {agreement.status === 'ACTIVE' && (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleReturn}
-                  className="inline-flex items-center gap-1.5 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <Undo2 className="h-3.5 w-3.5" /> Mark Unit as Returned
-                </button>
-              )}
-
-              {/* Deposit */}
-              {(agreement.deposit_id || Number(agreement.deposit_amount) > 0) && (
-                <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-                      <Wallet className="h-3.5 w-3.5 text-slate-400" /> Refundable Deposit
-                    </p>
-                    {agreement.deposit_status && (() => {
-                      const cfg = DEPOSIT_STATUS_DOT[agreement.deposit_status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
-                      return (
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                          {agreement.deposit_status}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <p className="text-sm text-slate-600 mt-1">
-                    {agreement.deposit_id ? formatMoney(agreement.deposit_collected_amount) : `${formatMoney(agreement.deposit_amount)} (not yet collected)`}
-                  </p>
-
-                  {agreement.deposit_id && agreement.deposit_status === 'HELD' && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => setShowRefundModal(true)}
-                        className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        <RotateCcw className="h-3 w-3" /> Refund Deposit
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => setShowForfeitModal(true)}
-                        className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
-                      >
-                        Forfeit Deposit
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Invoices */}
-              <div>
-                <p className="text-sm font-semibold text-slate-800 mb-2">Invoices</p>
-                {agreement.invoices?.length === 0 ? (
-                  <p className="text-sm text-slate-400">No invoices yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {agreement.invoices.map((inv) => (
-                      <div key={inv.invoice_id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
-                        <div>
-                          <p className="text-sm font-medium text-slate-800">{inv.invoice_code}</p>
-                          <p className="text-[11px] text-slate-400">
-                            {formatDate(inv.billing_period_start)} – {formatDate(inv.billing_period_end)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-slate-800">{formatMoney(inv.amount)}</span>
-                          {inv.status === 'PAID' ? (
-                            <span className="text-emerald-600 text-xs font-medium">Paid</span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setPaymentModalInvoice(inv)}
-                              className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700"
-                            >
-                              <CreditCard className="h-3 w-3" /> Record Payment
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                </Field>
+                {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(vendorPaymentMethod) && (
+                  <Field label="Bank account" htmlFor="ra-vb" error={errors.vendorBank}>
+                    <BankAccountSelect id="ra-vb" value={vendorBankAccountId} onChange={setVendorBankAccountId} accounts={bank.bankAccounts} invalid={!!errors.vendorBank} />
+                  </Field>
+                )}
+                {vendorPaymentMethod === 'CHEQUE' && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label="Cheque number" htmlFor="ra-vcn" error={errors.vendorCheque}>
+                      <input id="ra-vcn" type="text" value={vendorChequeNumber} onChange={(e) => setVendorChequeNumber(e.target.value)} className={inputCls(!!errors.vendorCheque)} />
+                    </Field>
+                    <Field label="Cheque date">
+                      <DateInput value={vendorChequeDate} onChange={(e) => setVendorChequeDate(e.target.value)} className={inputCls(!!errors.vendorCheque)} />
+                    </Field>
                   </div>
                 )}
               </div>
-            </>
-          )}
+            )}
+          </div>
+        )}
+
+        <div className="ml-auto w-full max-w-[340px] overflow-hidden rounded-lg border border-slate-200 text-[13px]">
+          <div className="flex justify-between px-3 py-2 text-slate-600"><span>{billingType === 'RECURRING' ? 'Rate per month' : 'Rental rate'}</span><b className="tabular-nums text-slate-900">{formatMoney(rateN)}</b></div>
+          <div className="flex justify-between px-3 py-2 text-slate-600"><span>Refundable deposit</span><b className="tabular-nums text-slate-900">{formatMoney(depositN)}</b></div>
+          <div className="flex justify-between border-t border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900"><span>First invoice</span><span className="tabular-nums">{formatMoney(rateN + depositN)}</span></div>
         </div>
-      </div>
-
-      {paymentModalInvoice && (
-        <RecordInvoicePaymentModal
-          invoice={paymentModalInvoice}
-          onClose={() => setPaymentModalInvoice(null)}
-          onRecorded={() => { setPaymentModalInvoice(null); fetchDetail(); onChanged(); }}
-        />
-      )}
-
-      {showRefundModal && agreement?.deposit_id && (
-        <RefundDepositModal
-          deposit={{ deposit_id: agreement.deposit_id, amount: agreement.deposit_collected_amount }}
-          onClose={() => setShowRefundModal(false)}
-          onRefunded={() => { setShowRefundModal(false); fetchDetail(); onChanged(); }}
-        />
-      )}
-
-      {showForfeitModal && agreement?.deposit_id && (
-        <ForfeitDepositModal
-          deposit={{ deposit_id: agreement.deposit_id, amount: agreement.deposit_collected_amount }}
-          onClose={() => setShowForfeitModal(false)}
-          onForfeited={() => { setShowForfeitModal(false); fetchDetail(); onChanged(); }}
-        />
-      )}
-    </div>
+      </section>
+    </Drawer>
   );
 }
