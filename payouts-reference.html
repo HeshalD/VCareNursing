@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Staff payouts — reference</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- REFERENCE ONLY: visual + behaviour spec for StaffPayoutsTab. Re-implement in React + Tailwind keeping the existing props contract.
+     PAY / account lists below are sample data; map from `payouts`, `payoutsSummary`, `companyBankAccounts`, `bankAccounts`. -->
+<style>
+body{margin:0;background:#f8fafc;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;font-size:14px}
+*{box-sizing:border-box}button,input{font-family:inherit}button{cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.btn{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:14px;font-weight:600;white-space:nowrap}.btn:hover{background:#f1f5f9}
+.btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}.btn.pri:hover{background:#1d4ed8}.btn.ghost{border-color:transparent;background:transparent;color:#2563eb}.btn.ghost:hover{background:#eff6ff}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px}
+.field{height:40px;width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:0 12px;font-size:14px;background:#fff;outline:none}.field:focus{border-color:#2563eb;box-shadow:0 0 0 3px #dbeafe}.field.err{border-color:#dc2626}
+.chip{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:600}.chip.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.g{display:grid;grid-template-columns:120px minmax(160px,1fr) 140px 120px 150px;column-gap:16px;align-items:center;padding:0 20px}
+.hd{min-height:38px;background:#f8fafc;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.row{width:100%;min-height:56px;border:0;border-bottom:1px solid #f1f5f9;background:#fff;text-align:left;font-size:14px;color:#334155;transition:background .3s}.row:hover{background:#f8fafc}.row.hl{background:#eff6ff}
+.mh{min-height:40px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#475569}
+.ok{background:#ecfdf5;color:#047857}.bad{background:#fef2f2;color:#b91c1c}.warn{background:#fffbeb;color:#b45309}
+.pill{display:inline-flex;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.lbl{font-size:13px;font-weight:600;color:#475569}.cap{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}.sub{font-size:13px;color:#64748b}.num{font-variant-numeric:tabular-nums}
+.acc{display:block;width:100%;text-align:left;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:10px 14px}.acc:hover{background:#f8fafc}.acc.on{border-color:#2563eb;background:#eff6ff}
+.scrim{position:fixed;inset:0;z-index:40;background:rgba(15,23,42,.35);border:0;display:none}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100%);z-index:50;background:#fff;box-shadow:-12px 0 32px rgba(15,23,42,.18);display:none;flex-direction:column;animation:sl .2s ease-out}
+.dh{padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center}.df{margin-top:auto;padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;gap:10px;justify-content:flex-end}.db{padding:20px;display:flex;flex-direction:column;gap:18px;overflow-y:auto}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:#0f172a;color:#f8fafc;border-radius:8px;padding:10px 16px;display:none}
+@keyframes sl{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+</style></head>
+<body>
+<div style="max-width:1240px;margin:0 auto;padding:20px 28px 64px;display:flex;flex-direction:column;gap:18px">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+    <div><h1 style="margin:0;font-size:22px;font-weight:600">Payouts</h1><div class="sub" style="margin-top:2px">Kamani Silva · ST-0142 · everything paid to this staff member</div></div>
+    <div style="display:flex;gap:10px"><button class="btn" id="export">Export CSV</button><button class="btn pri" data-rec>Record payout</button></div></div>
+  <div id="summary" class="card" style="padding:20px 24px"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1 1 240px;max-width:340px"><input id="q" class="field" aria-label="Search payouts" placeholder="Search reference, notes, method…"></div><span id="chips" style="display:contents"></span></div>
+  <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><div style="min-width:760px">
+    <div class="g hd"><div>Date</div><div>Reference</div><div>Method</div><div>Status</div><div style="text-align:right">Amount (LKR)</div></div><div id="rows"></div></div></div></div>
+</div>
+<button class="scrim" id="s1" aria-label="Close"></button><div class="drawer" id="d1" role="dialog" aria-label="Payout details"></div>
+<button class="scrim" id="s2" aria-label="Close"></button><div class="drawer" id="d2" role="dialog" aria-label="Record payout"></div><div id="toast" role="status"></div>
+
+<script>
+/* ---------- SAMPLE DATA ----------
+   payout: staff_payment_id→id, paid_at→iso+time, payment_method→method, status, amount_paid→amt, reference_number→ref, notes, company/staff account labels.
+   Accounts: show bank name as main line, masked number as second line (never the full number). */
+const C1='Commercial Bank •••• 2211',S1='Sampath Bank •••• 4412';
+const P=(id,iso,time,method,status,amt,ref,notes,comp,st)=>({id,iso,time,method,status,amt,ref,notes,comp,st,by:'Tharindu Admin'});
+let PAY=[P('SP-1051','2026-11-20','10:05','Bank transfer','Pending',10000,'TRF-88902','Advance request, awaiting bank confirmation.',C1,S1),P('SP-1048','2026-11-12','14:32','Bank transfer','Paid',45000,'TRF-88213','October salary.',C1,S1),P('SP-1046','2026-11-02','09:12','Bank transfer','Failed',20000,'TRF-87740','Bank rejected the transfer. Account details were out of date.',C1,'BOC •••• 9081'),P('SP-1039','2026-10-28','16:45','Bank transfer','Paid',40500,'TRF-87102','Pay for 20–29 Oct.',C1,S1),P('SP-1033','2026-10-15','11:20','Cash','Paid',36000,'Receipt 0417','Handed over at the office.','Petty cash','Cash'),P('SP-1027','2026-09-30','15:08','Bank transfer','Paid',45000,'TRF-86455','September salary.',C1,S1),P('SP-1019','2026-09-09','12:40','Bank transfer','Paid',36000,'TRF-85981','',C1,S1)];
+const COMP=[{id:'c1',bank:'Commercial Bank',line:'Operations · •••• 2211'},{id:'c2',bank:'Sampath Bank',line:'Payroll reserve · •••• 7730'}];
+const STF=[{id:'s1',bank:'Sampath Bank',line:'K. Silva · •••• 4412'},{id:'s2',bank:'BOC',line:'K. Silva · •••• 9081'}];
+const BASE_OUT=49500; /* = payoutsSummary.outstanding */
+const S={q:'',fl:'All',all:false,hl:null,f:null,step:'form',err:''};
+const $=id=>document.getElementById(id),F=n=>Math.round(n).toLocaleString('en-US'),RS=n=>'Rs. '+F(n);
+const dd=iso=>new Date(iso+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+let tt;const toast=m=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(tt);tt=setTimeout(()=>t.style.display='none',2600)};
+const outstanding=()=>Math.max(BASE_OUT-PAY.filter(p=>p.isNew).reduce((n,p)=>n+p.amt,0),0);
+const cls=s=>s==='Paid'?'ok':s==='Pending'?'warn':'bad';
+
+function render(){
+  const paid=PAY.filter(p=>p.status==='Paid'),out=outstanding(),month=paid.filter(p=>p.iso.slice(0,7)==='2026-11').reduce((n,p)=>n+p.amt,0);
+  const last=paid.slice().sort((a,b)=>(b.iso+b.time).localeCompare(a.iso+a.time))[0];
+  /* summary: one strip; Outstanding is amber only when > 0 */
+  $('summary').innerHTML=`<div style="display:flex;flex-wrap:wrap;gap:20px 56px"><div><div class="cap">All-time paid</div><div class="num" style="font-size:24px;font-weight:700;margin-top:4px">${RS(paid.reduce((n,p)=>n+p.amt,0))}</div></div>
+  <div><div class="cap">Paid this month</div><div class="num" style="font-size:24px;font-weight:700;margin-top:4px">${RS(month)}</div></div>
+  <div><div class="cap">Outstanding</div><div style="display:flex;align-items:center;gap:10px;margin-top:4px"><span class="num" style="font-size:24px;font-weight:700;${out?'color:#b45309':''}">${RS(out)}</span>${out?'<button class="btn ghost" data-rec style="height:28px;padding:0 8px">Pay now</button>':'<span class="pill ok">All paid up</span>'}</div></div></div>
+  <div class="sub" style="margin-top:12px">${last?'Last payout: '+dd(last.iso).slice(0,6)+' · '+RS(last.amt):'No payouts yet'}</div>`;
+  const cnt=k=>PAY.filter(p=>k==='All'||p.status===k).length;
+  $('chips').innerHTML=['All','Paid','Pending','Failed'].map(k=>`<button class="chip ${S.fl===k?'on':''}" data-fl="${k}">${k} · ${cnt(k)}</button>`).join('');
+  const q=S.q.trim().toLowerCase(),list=PAY.slice().sort((a,b)=>(b.iso+b.time).localeCompare(a.iso+a.time)).filter(p=>(S.fl==='All'||p.status===S.fl)&&(!q||(p.ref+' '+p.notes+' '+p.method+' '+p.id).toLowerCase().includes(q)));
+  const LIM=5,shown=S.all||q||S.fl!=='All'?list:list.slice(0,LIM);let mk='',h='';
+  shown.forEach(p=>{const k=p.iso.slice(0,7);
+    if(k!==mk){mk=k;const inM=list.filter(x=>x.iso.slice(0,7)===k&&x.status==='Paid').reduce((n,x)=>n+x.amt,0);/* month sub-header with paid subtotal */
+      h+=`<div class="g mh"><div style="grid-column:1/5">${new Date(k+'-01T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'})}</div><div class="num" style="text-align:right;font-weight:600">Paid ${F(inM)}</div></div>`}
+    h+=`<button class="row g ${S.hl===p.id?'hl':''}" data-open="${p.id}"><div>${dd(p.iso)}</div><div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#0f172a">${p.ref}${p.notes?' · '+p.notes:''}</div><div>${p.method}</div><div><span class="pill ${cls(p.status)}">${p.status}</span></div><div class="num" style="text-align:right;font-weight:600;color:#0f172a">${F(p.amt)}</div></button>`});
+  if(!list.length)h+='<div style="padding:40px;text-align:center;color:#64748b">No payouts match. <button class="btn" data-clear style="margin-left:8px">Clear filters</button></div>';
+  if(!S.all&&!q&&S.fl==='All'&&list.length>LIM)h+=`<div style="padding:14px;text-align:center;border-top:1px solid #f1f5f9"><button class="btn" data-more>Show ${list.length-LIM} more</button></div>`;
+  $('rows').innerHTML=h}
+
+function detail(id){const p=PAY.find(x=>x.id===id);if(!p){$('d1').style.display=$('s1').style.display='none';return}
+  $('d1').innerHTML=`<div class="dh"><div><div style="font-size:16px;font-weight:600">Payout details</div><div class="sub">${p.id}</div></div><button class="btn" data-x1>Close</button></div>
+  <div class="db"><div><div class="cap">Amount</div><div class="num" style="font-size:28px;font-weight:700;margin-top:2px">${RS(p.amt)}</div><span class="pill ${cls(p.status)}" style="margin-top:6px">${p.status}</span></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px"><div><div class="cap">Paid on</div>${dd(p.iso)}, ${p.time}</div><div><div class="cap">Method</div>${p.method}</div><div><div class="cap">Recorded by</div>${p.by}</div><div><div class="cap">Reference</div>${p.ref||'—'}</div></div>
+  <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden"><div style="padding:12px 14px;border-bottom:1px solid #f1f5f9"><div class="cap">From (company)</div><b>${p.comp}</b></div><div style="padding:12px 14px"><div class="cap">To (staff)</div><b>${p.st}</b></div></div>
+  <div><div class="cap">Notes</div><div style="line-height:1.5;color:#334155">${p.notes||'No notes.'}</div></div></div><div class="df"><button class="btn" data-slip>Download slip</button></div>`;
+  $('d1').style.display='flex';$('s1').style.display='block'}
+
+/* ---- record payout: form → review → confirm ---- */
+function openRec(){S.f={amount:String(outstanding()),date:'2026-11-22',comp:'c1',staff:'s1',ref:'',notes:'',more:false};S.step='form';S.err='';rec()}
+function rec(){
+  if(!S.f){$('d2').style.display=$('s2').style.display='none';return}
+  const f=S.f,out=outstanding(),amt=parseFloat(f.amount)||0,after=Math.max(out-amt,0),comp=COMP.find(c=>c.id===f.comp),stf=STF.find(c=>c.id===f.staff);
+  if(S.step==='form'){
+    const dup=amt>0&&PAY.some(p=>p.iso===f.date&&p.amt===amt&&p.status!=='Failed');
+    const accs=(L,k,a)=>L.map(x=>`<button class="acc ${f[k]===x.id?'on':''}" data-acc="${k}:${x.id}" aria-pressed="${f[k]===x.id}"><b>${x.bank}</b><span class="sub" style="display:block">${x.line}</span></button>`).join('');
+    $('d2').innerHTML=`<div class="dh"><div><div style="font-size:16px;font-weight:600">Record payout</div><div class="sub">Kamani Silva · writes to the payroll ledger</div></div><button class="btn" data-x2>Close</button></div>
+    <div class="db" style="gap:20px"><div><label for="amt" class="lbl">Amount (LKR)</label><input id="amt" class="field ${S.err?'err':''}" style="margin-top:6px;font-size:18px;font-weight:600" type="number" min="0" step="0.01" value="${f.amount}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span id="after" class="sub">${amt>0?'Outstanding after this payout: '+RS(after):'Outstanding now: '+RS(out)}</span><button class="btn ghost" data-full style="height:26px;padding:0 6px">Pay full outstanding</button></div>
+      ${S.err?`<div style="color:#b91c1c;font-size:13px;margin-top:4px">${S.err}</div>`:''}
+      <div id="warns">${warns(amt,out,dup)}</div></div>
+    <div><label for="dt" class="lbl">Payment date</label><input id="dt" class="field" style="margin-top:6px" type="date" max="2026-11-22" value="${f.date}"></div>
+    <div><div class="lbl" style="margin-bottom:6px">Pay from (company account)</div><div style="display:flex;flex-direction:column;gap:8px">${accs(COMP,'comp')}</div></div>
+    <div><div class="lbl" style="margin-bottom:6px">Pay to (staff account)</div><div style="display:flex;flex-direction:column;gap:8px">${accs(STF,'staff')}</div></div>
+    <div><button class="btn ghost" data-more2 style="padding:0;height:28px" aria-expanded="${f.more}">${f.more?'Hide reference and notes':'Add reference or notes'}</button>
+      ${f.more?`<div style="display:flex;flex-direction:column;gap:14px;margin-top:8px"><div><label for="rf" class="lbl">Reference</label><input id="rf" class="field" style="margin-top:6px" placeholder="TRF / receipt no." value="${f.ref}"></div><div><label for="nt" class="lbl">Notes</label><input id="nt" class="field" style="margin-top:6px" placeholder="Anything worth remembering" value="${f.notes}"></div></div>`:''}</div></div>
+    <div class="df" style="justify-content:stretch"><button class="btn" data-reset>Reset</button><button class="btn pri" style="flex:1" data-review>Review payout</button></div>`;
+    const bind=(id,k,live)=>{const el=$(id);if(el)el.oninput=e=>{f[k]=e.target.value;S.err='';if(live)live()}};
+    bind('amt','amount',()=>{const a=parseFloat(f.amount)||0,o=outstanding(),d=a>0&&PAY.some(p=>p.iso===f.date&&p.amt===a&&p.status!=='Failed');$('after').textContent=a>0?'Outstanding after this payout: '+RS(Math.max(o-a,0)):'Outstanding now: '+RS(o);$('warns').innerHTML=warns(a,o,d)});
+    bind('dt','date');bind('rf','ref');bind('nt','notes');
+  }else{
+    $('d2').innerHTML=`<div class="dh"><div><div style="font-size:16px;font-weight:600">Review payout</div><div class="sub">Check the details before it is recorded</div></div><button class="btn" data-x2>Close</button></div>
+    <div class="db" style="gap:16px"><div class="card" style="padding:16px;background:#f8fafc"><div class="cap">You are recording</div><div class="num" style="font-size:28px;font-weight:700;margin-top:2px">${RS(amt)}</div><div class="sub">on ${dd(f.date)}</div></div>
+    <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden"><div style="padding:12px 14px;border-bottom:1px solid #f1f5f9"><div class="cap">From</div><b>${comp.bank} · ${comp.line}</b></div><div style="padding:12px 14px"><div class="cap">To</div><b>${stf.bank} · ${stf.line}</b></div></div>
+    ${f.ref?`<div><div class="cap">Reference</div>${f.ref}</div>`:''}<div class="sub">Outstanding after this payout: ${RS(after)}. This writes to the payroll ledger.</div></div>
+    <div class="df" style="justify-content:stretch"><button class="btn" data-back>Back</button><button class="btn pri" style="flex:1" data-confirm>Confirm payout</button></div>`}
+  $('d2').style.display='flex';$('s2').style.display='block'}
+/* warnings never block: over-outstanding and same-day same-amount duplicate */
+const warns=(a,o,dup)=>(a>o&&a>0?`<div class="warn" style="border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px">This is ${RS(a-o)} more than the outstanding balance.</div>`:'')+(dup?'<div class="warn" style="border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px">A payout of this amount is already recorded for this date.</div>':'');
+
+document.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;const D=t.dataset;
+  if(t.id==='export'){toast('Exporting payouts as CSV');return}
+  if('rec' in D){openRec();return}
+  if(D.fl){S.fl=D.fl;S.all=false;render();return}if('clear' in D){S.q='';$('q').value='';S.fl='All';render();return}if('more' in D){S.all=true;render();return}
+  if(D.open){detail(D.open);return}if(t.id==='s1'||'x1' in D){detail(null);return}if('slip' in D){toast('Payout slip downloaded');return}
+  if(t.id==='s2'||'x2' in D){S.f=null;rec();return}
+  if(D.acc){const[k,v]=D.acc.split(':');S.f[k]=v;rec();return}if('full' in D){S.f.amount=String(outstanding());S.err='';rec();return}
+  if('more2' in D){S.f.more=!S.f.more;rec();return}if('reset' in D){openRec();return}
+  if('review' in D){if(!(parseFloat(S.f.amount)>0)){S.err='Enter an amount greater than zero.';rec();return}S.step='confirm';rec();return}
+  if('back' in D){S.step='form';rec();return}
+  if('confirm' in D){const f=S.f,amt=parseFloat(f.amount),comp=COMP.find(c=>c.id===f.comp),stf=STF.find(c=>c.id===f.staff),id='SP-'+(1052+PAY.filter(p=>p.isNew).length);
+    PAY.unshift({id,iso:f.date,time:'23:20',method:'Bank transfer',status:'Paid',amt,ref:f.ref||'No reference',notes:f.notes,comp:comp.bank+' '+comp.line.split('· ')[1],st:stf.bank+' '+stf.line.split('· ')[1],by:'You',isNew:true});
+    S.f=null;S.hl=id;S.fl='All';S.q='';$('q').value='';rec();render();toast('Payout of '+RS(amt)+' recorded');setTimeout(()=>{S.hl=null;render()},3500)}});
+$('q').oninput=e=>{S.q=e.target.value;render()};
+render();
+</script></body></html>

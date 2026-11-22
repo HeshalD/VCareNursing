@@ -55,6 +55,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import StaffCareTimeline from './StaffCareTimeline';
+import StaffPayoutsTab from './StaffPayoutsTab';
 import StaffSwitcherSidebar from './StaffSwitcherSidebar';
 import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
@@ -2059,112 +2060,26 @@ const StaffDetailPageV2 = () => {
   };
 
   const renderPayouts = () => (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <MiniCard label="All-time paid" value={formatMoney(payoutsSummary?.all_time_paid ?? overviewPayoutSummary.total_payouts ?? 0)} />
-        <MiniCard label="Paid this month" value={formatMoney(payoutsSummary?.paid_this_month ?? 0)} color="#059669" />
-        <MiniCard label="Outstanding" value={formatMoney(payoutsSummary?.outstanding ?? currentEarnings)} color="#dc2626" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        <Card>
-          <CardHead title="Payout history" />
-          <CardBody className="p-0">
-            {sectionErrors.payouts ? (
-              <div className="p-5"><Empty title="Failed to load payouts" subtitle={sectionErrors.payouts} /></div>
-            ) : safeArray(payouts).length === 0 ? (
-              <div className="p-5"><Empty title="No payouts recorded" /></div>
-            ) : (
-              <div className="px-5 pb-5 pt-4">
-                <TableHead cols="1fr 1.1fr 1fr 0.9fr 1fr">
-                  <span>Payout</span><span>Date</span><span>Method</span><span>Status</span><span className="text-right">Amount</span>
-                </TableHead>
-                {payouts.map((payout, i) => (
-                  <TableRow key={payout.staff_payment_id || i} cols="1fr 1.1fr 1fr 0.9fr 1fr">
-                    <div className="font-mono text-xs text-slate-500">{payout.staff_payment_id || '-'}</div>
-                    <div className="text-xs text-slate-500">{formatDateTime(payout.paid_at)}</div>
-                    <div><span className="inline-block text-xs font-semibold text-slate-600 bg-slate-100 rounded px-2 py-0.5">{payout.payment_method || '-'}</span></div>
-                    <div><StatusPill value={payout.status} /></div>
-                    <div className="text-right text-sm font-bold text-slate-900">{formatMoney(payout.amount_paid)}</div>
-                  </TableRow>
-                ))}
-              </div>
-            )}
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHead title="Record a payout" sub="Writes to the payroll ledger." />
-          <CardBody>
-            <form onSubmit={submitPayout} className="flex flex-col gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Amount</label>
-                <input type="number" min="0" step="0.01" value={payoutForm.amount} onChange={handlePayoutFieldChange('amount')} onWheel={(e) => e.target.blur()} placeholder="0.00" className={inputCls} required />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Payment date</label>
-                <DateInput value={payoutForm.payment_date} max={todayISO()} onChange={handlePayoutFieldChange('payment_date')} className={inputCls} required />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Company bank account</label>
-                <select value={payoutForm.company_bank_account_id} onChange={handlePayoutFieldChange('company_bank_account_id')} className={`${inputCls} cursor-pointer`}>
-                  <option value="">Select company bank account</option>
-                  {companyBankAccounts.map(acc => (
-                    <option key={acc.account_id} value={acc.account_id}>
-                      {acc.account_nickname || acc.account_holder_name || acc.bank_name || 'Company Bank Account'}
-                      {acc.account_number ? ` - ${acc.account_number}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Staff bank account</label>
-                <select value={payoutForm.staff_bank_account_id} onChange={handlePayoutFieldChange('staff_bank_account_id')} className={`${inputCls} cursor-pointer`}>
-                  <option value="">Select staff bank account</option>
-                  {bankAccounts.map(acc => (
-                    <option key={acc.staff_bank_account_id} value={acc.staff_bank_account_id}>
-                      {acc.account_holder_name || acc.bank_name || 'Bank Account'}
-                      {acc.account_number ? ` - ${acc.account_number}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Reference (optional)</label>
-                <input type="text" value={payoutForm.reference_number} onChange={handlePayoutFieldChange('reference_number')} placeholder="TRF / receipt no." className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Notes (optional)</label>
-                <input type="text" value={payoutForm.notes} onChange={handlePayoutFieldChange('notes')} placeholder="Optional notes" className={inputCls} />
-              </div>
-              {payoutSubmitError && (
-                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">{payoutSubmitError}</div>
-              )}
-              {payoutSubmitSuccess && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-sm text-emerald-700">{payoutSubmitSuccess}</div>
-              )}
-              <div className="flex gap-2 mt-1">
-                <button
-                  type="submit"
-                  disabled={payoutSubmitting}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-60"
-                >
-                  {payoutSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Record payout
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPayoutForm({ amount: '', company_bank_account_id: '', staff_bank_account_id: '', payment_method: 'BANK_TRANSFER', reference_number: '', notes: '' })}
-                  className="px-4 py-2.5 border border-slate-200 text-sm font-semibold text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
-                >
-                  Reset
-                </button>
-              </div>
-            </form>
-          </CardBody>
-        </Card>
-      </div>
-    </div>
+    <StaffPayoutsTab
+      payoutsSummary={payoutsSummary}
+      overviewPayoutSummary={overviewPayoutSummary}
+      currentEarnings={currentEarnings}
+      payouts={payouts}
+      sectionErrors={sectionErrors}
+      payoutForm={payoutForm}
+      companyBankAccounts={companyBankAccounts}
+      bankAccounts={bankAccounts}
+      onFieldChange={handlePayoutFieldChange}
+      onSubmit={submitPayout}
+      onReset={() => setPayoutForm({ amount: '', company_bank_account_id: '', staff_bank_account_id: '', payment_method: 'BANK_TRANSFER', reference_number: '', notes: '', payment_date: todayISO() })}
+      submitting={payoutSubmitting}
+      submitError={payoutSubmitError}
+      submitSuccess={payoutSubmitSuccess}
+      loading={loading}
+      staffName={profile.full_name || ''}
+      staffCode={profile.staff_code || ''}
+      onAddBankAccount={() => setActiveSection('bank-accounts')}
+    />
   );
 
   const renderDeductions = () => {
