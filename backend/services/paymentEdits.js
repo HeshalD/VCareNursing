@@ -204,7 +204,7 @@ const recomputeBookingPaid = async (client, bookingId) => {
 // booking_payment_tracking row (method WALLET) plus its BOOKING_PAYMENT transaction;
 // reducing/removing them re-opens the charge on the booking ledger (it simply becomes
 // unpaid again - paid-ness is computed from the ledger). Returns what was re-opened.
-async function restoreWalletFloor(client, clientId) {
+async function restoreWalletFloor(client, clientId, ctx = {}) {
   let balance = num((await client.query(
     'SELECT COALESCE(wallet_balance, 0) AS b FROM client_profiles WHERE client_profile_id = $1',
     [clientId]
@@ -238,17 +238,50 @@ async function restoreWalletFloor(client, clientId) {
        FOR UPDATE`,
       [draw.booking_id, drawAmount, draw.created_at]
     );
-    if (tx.rows.length === 0 || num(tx.rows[0].gap) > 120) {
+    let txId = tx.rows.length && num(tx.rows[0].gap) <= 120 ? tx.rows[0].transaction_id : null;
+    let invoiceTx = false;
+    if (!txId) {
+      // A wallet draw can also have paid a product/rental invoice of the booking (e.g. its
+      // transport charge): that ledger row is a PRODUCT_SALE / RENTAL_PAYMENT.
+      const itx = await client.query(
+        `SELECT t.transaction_id, ABS(EXTRACT(EPOCH FROM (t.created_at - $3::timestamptz))) AS gap
+         FROM transactions t
+         JOIN invoice_payments ip ON ip.transaction_id = t.transaction_id
+         WHERE t.booking_id = $1 AND t.category::text IN ('PRODUCT_SALE', 'RENTAL_PAYMENT') AND t.transaction_type = 'CREDIT'
+           AND t.payment_method = 'WALLET' AND ABS(t.amount - $2) < 0.005
+         ORDER BY gap LIMIT 1 FOR UPDATE OF t`,
+        [draw.booking_id, drawAmount, draw.created_at]
+      );
+      if (itx.rows.length && num(itx.rows[0].gap) <= 120) { txId = itx.rows[0].transaction_id; invoiceTx = true; }
+    }
+    if (!txId) {
       fail(409, `Cannot safely re-open the wallet payment on booking ${draw.booking_code}: its ledger entry could not be matched. Nothing was changed.`);
     }
 
     const remaining = drawAmount - give;
-    if (remaining < 0.005) {
+    if (invoiceTx) {
+      const ip = (await client.query('SELECT * FROM invoice_payments WHERE transaction_id = $1 FOR UPDATE', [txId])).rows[0];
       await client.query('DELETE FROM booking_payment_tracking WHERE booking_payment_id = $1', [draw.booking_payment_id]);
-      await client.query('DELETE FROM transactions WHERE transaction_id = $1', [tx.rows[0].transaction_id]);
+      if (remaining < 0.005) {
+        // Also deletes the ledger row and puts the invoice back to PENDING.
+        await removeInvoiceInstalment(client, ip, ctx.effects || [], ctx.warnings || [], { skipBooking: true });
+      } else {
+        await client.query('UPDATE invoice_payments SET amount = $2 WHERE invoice_payment_id = $1', [ip.invoice_payment_id, remaining]);
+        await client.query('UPDATE transactions SET amount = $2 WHERE transaction_id = $1', [txId, remaining]);
+        await client.query(`UPDATE invoices SET status = 'PENDING', transaction_id = NULL, paid_at = NULL, pdf_url = NULL WHERE invoice_id = $1 AND status = 'PAID'`, [ip.invoice_id]);
+        // keep a booking-side draw row for what is still paid
+        await client.query(
+          `INSERT INTO booking_payment_tracking (booking_id, client_id, amount_received, payment_method, notes, status, verified_at, payment_date)
+           VALUES ($1, $2, $3, 'WALLET', 'Auto-applied from client wallet balance', 'VERIFIED', NOW(), $4)`,
+          [draw.booking_id, clientId, remaining, draw.created_at]
+        );
+      }
+    } else if (remaining < 0.005) {
+      await client.query('DELETE FROM booking_payment_tracking WHERE booking_payment_id = $1', [draw.booking_payment_id]);
+      await client.query('DELETE FROM transactions WHERE transaction_id = $1', [txId]);
     } else {
       await client.query('UPDATE booking_payment_tracking SET amount_received = $2 WHERE booking_payment_id = $1', [draw.booking_payment_id, remaining]);
-      await client.query('UPDATE transactions SET amount = $2 WHERE transaction_id = $1', [tx.rows[0].transaction_id, remaining]);
+      await client.query('UPDATE transactions SET amount = $2 WHERE transaction_id = $1', [txId, remaining]);
     }
 
     await adjustWallet(client, clientId, give);
@@ -915,7 +948,7 @@ const RECEIPT_CHAIN_SQL = `
   SELECT * FROM chain`;
 
 // Removes one invoice_payments instalment (and its ledger row) and puts the invoice back in step.
-async function removeInvoiceInstalment(client, ip, effects, warnings) {
+async function removeInvoiceInstalment(client, ip, effects, warnings, opts = {}) {
   const invoice = (await client.query('SELECT * FROM invoices WHERE invoice_id = $1 FOR UPDATE', [ip.invoice_id])).rows[0];
   if (!invoice) fail(409, 'An invoice paid by this payment no longer exists');
   const txId = ip.transaction_id;
@@ -959,7 +992,7 @@ async function removeInvoiceInstalment(client, ip, effects, warnings) {
   }
 
   // An invoice raised for a booking also wrote a booking-side payment row.
-  if (invoice.booking_id) {
+  if (invoice.booking_id && !opts.skipBooking) {
     const bpt = (await client.query(
       `SELECT booking_payment_id,
               ABS(EXTRACT(EPOCH FROM (payment_date - $5::timestamptz))) AS gap
@@ -1011,7 +1044,7 @@ async function deleteClientPayment(client, { receipt, effects }) {
     await client.query('DELETE FROM client_payment_allocations WHERE allocation_id = $1', [a.allocation_id]);
     if (a.transaction_id) await client.query('DELETE FROM transactions WHERE transaction_id = $1', [a.transaction_id]);
   }
-  const reopened = await restoreWalletFloor(client, clientId);
+  const reopened = await restoreWalletFloor(client, clientId, { effects, warnings: [] });
   await client.query('DELETE FROM client_payment_records WHERE record_id = $1', [record.record_id]);
   effects.push('Payment record deleted');
   return { before, reopened, clientId };
@@ -1206,7 +1239,7 @@ async function deleteQuotePayment(client, { receipt, effects, warnings }) {
     }
   }
 
-  const reopened = await restoreWalletFloor(client, clientId);
+  const reopened = await restoreWalletFloor(client, clientId, { effects, warnings });
 
   if (pt) {
     // Any booking-side rows still pointing at the payment, then the payment itself
