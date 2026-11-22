@@ -15,6 +15,7 @@ import homeNursingBg from '../../assets/images/HomeNursing.webp';
 import DateRangePicker from '../../components/common/DateRangePicker';
 import { todayISO } from '../../components/common/DateInput';
 import PhoneInput from '../../components/common/PhoneInput';
+import ServiceRequestOtpModal from './components/ServiceRequestOtpModal';
 
 const DARK_PHONE_INPUT_STYLE = {
   '--vcare-phone-bg': '#0b1120',
@@ -64,6 +65,8 @@ const HomeNursingBookingPage = () => {
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  // Returning client submitting while logged out: must verify their number by OTP first
+  const [showOtp, setShowOtp] = useState(false);
   const [stepError, setStepError] = useState('');
   const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
   const [patients, setPatients] = useState([]);
@@ -443,7 +446,7 @@ const HomeNursingBookingPage = () => {
     return currentStep < 4;
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e, verificationToken) => {
     console.log('handleSubmit called on step:', currentStep);
     if (e) e.preventDefault();
     for (let step = 1; step <= 3; step++) {
@@ -465,7 +468,9 @@ const HomeNursingBookingPage = () => {
         longitude: formData.longitude || null,
       };
 
-      const response = await apiClient.submitServiceRequest(submissionData);
+      const response = await apiClient.submitServiceRequest(
+        verificationToken ? { ...submissionData, verification_token: verificationToken } : submissionData
+      );
       console.log('Booking request submitted successfully:', response);
 
       // Navigate to success page
@@ -478,6 +483,10 @@ const HomeNursingBookingPage = () => {
       });
 
     } catch (error) {
+      if (error.code === 'OTP_REQUIRED') {
+        setShowOtp(true);
+        return;
+      }
       console.error('Booking submission error:', error);
       setSubmitError(error.message || 'Failed to submit booking request. Please try again.');
     } finally {
@@ -1077,6 +1086,12 @@ const HomeNursingBookingPage = () => {
                 )}
               </div>
             </form>
+            <ServiceRequestOtpModal
+              isOpen={showOtp}
+              mobile={formData.payer_mobile}
+              onClose={() => setShowOtp(false)}
+              onVerified={(token) => { setShowOtp(false); handleSubmit(null, token); }}
+            />
           </div>
         </div>
       </div>

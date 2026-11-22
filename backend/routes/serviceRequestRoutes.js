@@ -3,10 +3,13 @@ const router = express.Router();
 const { normalizeHonorificBody } = require('../utils/honorific');
 const serviceRequestController = require('../controllers/serviceRequestController');
 const notificationController = require('../controllers/serviceRequestNotificationController');
-const { protect, restrictTo, requirePermission, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware'); // Adjust path as needed
+const { protect, optionalAuth, restrictTo, requirePermission, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware'); // Adjust path as needed
 
 // Public route for Phase 1
-router.post('/submit-request', serviceRequestController.submitServiceRequest);
+// optionalAuth: a logged-in client is attached to their own account; guests with a known number must pass OTP.
+router.post('/submit-request', optionalAuth, serviceRequestController.submitServiceRequest);
+router.post('/otp/send', serviceRequestController.sendRequestOtp);
+router.post('/otp/verify', serviceRequestController.verifyRequestOtp);
 
 // Who is emailed when a client submits a request (must stay above '/:id')
 router.get('/notification-recipients', protect, requirePermission('SERVICE_REQUEST_NOTIFICATIONS'), notificationController.listRecipients);

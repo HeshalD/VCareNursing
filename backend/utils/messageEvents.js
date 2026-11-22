@@ -12,6 +12,7 @@ const EVENTS = [
   { key: 'otp_auth', group: 'Verification codes', label: 'Account verification OTP', desc: 'Sign-up, login and password-reset codes (client / user accounts).', whatsapp: true, sms: true },
   { key: 'otp_staff_applicant', group: 'Verification codes', label: 'Staff applicant OTP', desc: 'Verification code during the staff application.', whatsapp: true, sms: true },
   { key: 'otp_priority_membership', group: 'Verification codes', label: 'Priority membership OTP', desc: 'Verification code when requesting a priority membership.', whatsapp: true, sms: true },
+  { key: 'otp_service_request', group: 'Verification codes', label: 'Service request OTP', desc: 'Verification code when a returning client submits a service request without logging in.', whatsapp: true, sms: true },
 
   // ── Client onboarding & requests ──
   { key: 'client_welcome', group: 'Client onboarding & requests', label: 'New client welcome / login details', desc: 'Sent when a client account is created (quotation, booking conversion, walk-in, client page). SMS carries the temporary password.', whatsapp: true, sms: true, templates: ['vcare_client_welcome_new'] },

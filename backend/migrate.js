@@ -4038,6 +4038,17 @@ async function runMigration() {
     )
   `);
 
+  // OTP proof for guests submitting a public service request with a number that already belongs to a client
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS service_request_otps (
+      mobile_number VARCHAR(20) PRIMARY KEY,
+      otp_code      VARCHAR(10) NOT NULL,
+      expires_at    TIMESTAMPTZ NOT NULL,
+      attempts      INTEGER NOT NULL DEFAULT 0,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   await seedSriLankaCities();
 
   // =========================================================

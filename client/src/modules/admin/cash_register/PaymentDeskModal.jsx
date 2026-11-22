@@ -264,7 +264,7 @@ const ClientDesk = ({ clientId, onBack, onPaymentRecorded }) => {
 
       {payingInvoice && (
         <RecordInvoicePaymentModal
-          invoice={{ ...payingInvoice, amount: parseFloat(payingInvoice.amount) - parseFloat(payingInvoice.amount_paid || 0) }}
+          invoice={payingInvoice}
           onClose={() => setPayingInvoice(null)}
           onRecorded={() => { setPayingInvoice(null); handleRecorded(); }}
         />

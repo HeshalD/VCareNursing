@@ -212,6 +212,22 @@ exports.protect = async (req, res, next) => {
   }
 };
 
+// For public endpoints that behave differently when the caller is logged in. A missing, expired
+// or invalid token is NOT an error here - the caller is simply treated as a guest (req.user unset).
+exports.optionalAuth = async (req, res, next) => {
+  try {
+    const header = req.headers.authorization;
+    if (header && header.startsWith('Bearer')) {
+      const decoded = jwt.verify(header.split(' ')[1], process.env.JWT_SECRET);
+      const user = await db.query('SELECT user_id, role FROM users WHERE user_id = $1 AND is_active IS NOT FALSE', [decoded.id]);
+      if (user.rows.length > 0) req.user = user.rows[0];
+    }
+  } catch {
+    // guest
+  }
+  next();
+};
+
 const WORKER_ROLES = new Set(['STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR']);
 
 // LAYER 2: Do they have the right Role? (e.g., SUPER_ADMIN)

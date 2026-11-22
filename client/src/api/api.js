@@ -582,6 +582,21 @@ class ApiClient {
   }
 
   // ── Salesperson crediting ──
+  // Public service request: a guest using a number that already belongs to a client proves ownership by OTP
+  async sendServiceRequestOtp(mobileNumber) {
+    return this.request('/service-requests/otp/send', {
+      method: 'POST',
+      body: JSON.stringify({ mobile_number: mobileNumber }),
+    });
+  }
+
+  async verifyServiceRequestOtp(mobileNumber, otp) {
+    return this.request('/service-requests/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ mobile_number: mobileNumber, otp_code: otp }),
+    });
+  }
+
   // Priority Membership (public registration-fee request)
   async sendPriorityMembershipOtp(mobileNumber) {
     return this.request('/priority-membership/otp/send', {

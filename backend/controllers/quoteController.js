@@ -13,7 +13,7 @@ const { createRentalAgreementCore, RentalAgreementError } = require('./rentalCon
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
 const { ensureInvoiceCharge, linkProductQuoteToBooking, payBookingProductInvoicesFromWallet } = require('../services/invoiceCharges');
-const { unbilledLinesSql } = require('../services/productBilling');
+const { unbilledLinesSql, saleStatusOf } = require('../services/productBilling');
 
 // Estimate numbers are EST-NNNN. The 4-digit space is small, so check for a
 // collision (retrying) and widen to 5 digits if it is nearly exhausted.
@@ -569,6 +569,36 @@ const customChargeRejection = (item) =>
     `"${(item.description || 'This line').trim()}" is a custom charge. Custom charges can no longer be added to a quotation — `
     + 'add extras such as transport as a product (Transport Charges) instead.';
 
+// Products added to a service quotation that ALREADY has a booking are invoiced at once, on that
+// booking, the same way booking creation invoices the products that were quoted before it. Otherwise
+// nothing would ever accept them: the booking-creation step has already passed, and the payment form
+// is not guaranteed to be used. Returns the result of attachLinkedProductsToBooking, or null when the
+// quotation has no booking yet (then the products are invoiced at booking creation or first payment).
+async function invoiceCompanionIfBooked(serviceQuoteId, actorUserId) {
+    const found = await db.query(
+        `SELECT COALESCE(sq.booking_id,
+                          (SELECT bk.booking_id FROM bookings bk WHERE bk.request_id = sq.request_id ORDER BY bk.created_at DESC LIMIT 1)) AS booking_id
+         FROM quotations sq WHERE sq.quote_id = $1`,
+        [serviceQuoteId]
+    );
+    const bookingId = found.rows[0]?.booking_id;
+    if (!bookingId) return null;
+
+    const pg = await db.pool.connect();
+    try {
+        await pg.query('BEGIN');
+        const result = await attachLinkedProductsToBooking(pg, { serviceQuoteId, bookingId, actorUserId });
+        await pg.query('COMMIT');
+        return result;
+    } catch (err) {
+        await pg.query('ROLLBACK').catch(() => {});
+        console.error('[quote] could not invoice products added to a booked quotation:', err.message);
+        return { accepted: false, warning: `The products were added but could not be invoiced automatically (${err.message}). Accept them from the Products page.` };
+    } finally {
+        pg.release();
+    }
+}
+
 exports.createModularQuotation = async (req, res) => {
     const {
         request_id, line_items, terms_conditions, quote_type, walk_in_customer_id, linked_quote_id,
@@ -632,10 +662,22 @@ exports.createModularQuotation = async (req, res) => {
                 [linked_quote_id]
             );
             if (existing.rows[0]) {
-                if (await isProductQuoteAccepted(db, existing.rows[0].quote_id)) {
-                    return res.status(409).json({ message: 'This quotation\'s products have already been accepted and invoiced, so no more can be added to it. Create a separate product sale instead.' });
+                // Every product line is invoiced on its own, so a line can be added to a quotation that is
+                // already invoiced. The exceptions are an older quotation billed by ONE combined invoice
+                // (the new line would count as covered by it) and one that already has a rental
+                // agreement (rentals are created once, when the quotation is accepted).
+                const existingId = existing.rows[0].quote_id;
+                if (await isProductQuoteAccepted(db, existingId)) {
+                    const locked = await db.query(
+                        `SELECT 1 FROM invoices WHERE quote_id = $1 AND category = 'PRODUCT' AND line_item_id IS NULL
+                         UNION ALL SELECT 1 FROM rental_agreements WHERE quote_id = $1 LIMIT 1`,
+                        [existingId]
+                    );
+                    if (locked.rows.length > 0) {
+                        return res.status(409).json({ message: 'This quotation\'s products were invoiced together (or include a rental), so no more can be added to it. Create a separate product sale instead.' });
+                    }
                 }
-                appendToQuoteId = existing.rows[0].quote_id;
+                appendToQuoteId = existingId;
             }
         }
 
@@ -769,7 +811,8 @@ exports.createModularQuotation = async (req, res) => {
                 entityId: appendToQuoteId,
                 details: { quote_id: appendToQuoteId, added_line_items: processedItems.length, linked_quote_id },
             });
-            return res.status(201).json({ status: 'success', data: updated.rows[0], appended_to_existing: true });
+            const invoicing = await invoiceCompanionIfBooked(linked_quote_id, req.user?.user_id || null);
+            return res.status(201).json({ status: 'success', data: updated.rows[0], appended_to_existing: true, product_invoicing: invoicing });
         }
 
         // Generate estimate number
@@ -887,9 +930,14 @@ exports.createModularQuotation = async (req, res) => {
             },
         });
 
+        const invoicing = isProductQuote && linked_quote_id
+            ? await invoiceCompanionIfBooked(linked_quote_id, req.user?.user_id || null)
+            : null;
+
         res.status(201).json({
             status: 'success',
-            data: completeQuote.rows[0]
+            data: completeQuote.rows[0],
+            product_invoicing: invoicing
         });
 
     } catch (error) {
@@ -1260,17 +1308,36 @@ exports.listProductQuotes = async (req, res) => {
                        FROM quote_line_items li
                        WHERE li.quote_id = q.quote_id
                    ), 0) as total_deposit_amount,
-                   (SELECT COUNT(*)::int FROM (${unbilledLinesSql('q.quote_id')}) ub) AS unbilled_line_count
+                   (SELECT COUNT(*)::int FROM (${unbilledLinesSql('q.quote_id')}) ub) AS unbilled_line_count,
+                   sq.status AS service_status,
+                   COALESCE(inv.invoice_count, 0) AS invoice_count,
+                   COALESCE(inv.invoiced_total, 0) AS invoiced_total,
+                   COALESCE(inv.paid_total, 0) AS paid_total,
+                   bk.booking_id AS sale_booking_id, bk.booking_code AS sale_booking_code, bk.status AS sale_booking_status
             FROM quotations q
             LEFT JOIN client_profiles cp ON q.client_id = cp.client_profile_id
             LEFT JOIN users u ON cp.user_id = u.user_id
             LEFT JOIN walk_in_customers wc ON q.walk_in_customer_id = wc.walk_in_customer_id
             LEFT JOIN quotations sq ON sq.quote_id = q.linked_quote_id
+            LEFT JOIN bookings bk ON bk.booking_id = COALESCE(q.booking_id, sq.booking_id)
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS invoice_count,
+                       SUM(i.amount) AS invoiced_total,
+                       SUM(CASE WHEN i.status = 'PAID' THEN i.amount
+                                ELSE LEAST(i.amount, COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = i.invoice_id), 0)) END) AS paid_total
+                FROM invoices i
+                WHERE i.quote_id = q.quote_id AND i.category IN ('PRODUCT', 'RENTAL_ONE_TIME', 'RENTAL_RECURRING')
+            ) inv ON true
             WHERE ${conditions.join(' AND ')}
             ORDER BY q.created_at DESC
         `, params);
 
-        res.status(200).json({ status: 'success', data: result.rows });
+        const rows = result.rows.map((r) => ({
+            ...r,
+            amount_owing: Math.max((Number(r.invoiced_total) || 0) - (Number(r.paid_total) || 0), 0),
+            sale_status: saleStatusOf(r),
+        }));
+        res.status(200).json({ status: 'success', data: rows });
     } catch (error) {
         console.error('List Product Quotes Error:', error);
         res.status(500).json({ message: 'Failed to fetch product quotes' });

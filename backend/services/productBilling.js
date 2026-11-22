@@ -26,4 +26,19 @@ const unbilledLinesSql = (quoteRef) => (`
     JOIN products p ON p.product_id = li.product_id AND p.product_type::text = 'RENTAL'
     WHERE li.quote_id = QUOTE_REF AND NOT EXISTS (SELECT 1 FROM rental_agreements ra WHERE ra.quote_id = li.quote_id)`).split('QUOTE_REF').join(quoteRef);
 
-module.exports = { unbilledLinesSql };
+// The status of a product sale (one product quotation), worked out from its invoices. Both the Products
+// page and the client page read it from the server so they always agree.
+//   PENDING_ACCEPTANCE  nothing invoiced yet            PARTLY_INVOICED  some lines still have no invoice
+//   UNPAID / PART_PAID / PAID  by what has been paid against the invoiced amount
+//   REJECTED            rejected (or its service quotation was) and never invoiced
+// `row` carries status, service_status, invoice_count, unbilled_line_count, invoiced_total, paid_total.
+const saleStatusOf = (row) => {
+  const invoices = Number(row.invoice_count) || 0;
+  if (invoices === 0) return row.status === 'REJECTED' || row.service_status === 'REJECTED' ? 'REJECTED' : 'PENDING_ACCEPTANCE';
+  if (Number(row.unbilled_line_count) > 0) return 'PARTLY_INVOICED';
+  const owing = (Number(row.invoiced_total) || 0) - (Number(row.paid_total) || 0);
+  if (owing <= 0.005) return 'PAID';
+  return (Number(row.paid_total) || 0) > 0.005 ? 'PART_PAID' : 'UNPAID';
+};
+
+module.exports = { unbilledLinesSql, saleStatusOf };

@@ -6,7 +6,9 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { invoicePaymentState, SALE_STATUS, SALE_BUCKET } from '../../../utils/invoiceState';
 import { withHonorific } from '../../../utils/clientName';
 import { ClientLink } from '../components/EntityLinks';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
@@ -1990,7 +1992,8 @@ const QUOTE_PAGE_SIZE = 12;
 const QUO_COLS = '90px 150px minmax(190px,1.6fr) 140px 190px 210px 36px';
 
 const invoiceTone = (s) => (s === 'PAID' ? 'green' : s === 'OVERDUE' ? 'red' : s === 'CANCELLED' ? 'slate' : 'amber');
-const invoiceLabel = (s) => (s === 'PAID' ? 'Paid' : s ? s.charAt(0) + s.slice(1).toLowerCase() : 'Unpaid');
+// PENDING is what the database calls an invoice nobody has paid yet; everywhere else it reads Unpaid.
+const invoiceLabel = (s) => (s === 'PAID' ? 'Paid' : s === 'OVERDUE' ? 'Overdue' : s === 'CANCELLED' ? 'Cancelled' : 'Unpaid');
 
 function Step({ done, children, sub }) {
   return (
@@ -2086,25 +2089,22 @@ function QuotesTab({ createTick, onCount }) {
   const invoicesForQuote = (quoteId) =>
     invoices.filter((i) => i.quote_id === quoteId).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-  // Every product line has its own invoice, so a quotation is only invoiced once none of its lines
-  // is still waiting for one (unbilled_line_count comes from the server).
-  const quoteStatusOf = (quoteInvoices, quote) => {
-    if (quoteInvoices.length === 0 || Number(quote?.unbilled_line_count) > 0) return 'pending';
-    return quoteInvoices.every((inv) => inv.status === 'PAID') ? 'paid' : 'awaiting_payment';
-  };
-
+  // The status of each sale (Pending acceptance, Partly invoiced, Unpaid, Part paid, Paid, Rejected) and
+  // its amounts are worked out on the server, so this page and the client page always agree.
   const enrichedQuotes = quotes.map((q) => {
     const quoteInvoices = invoicesForQuote(q.quote_id);
-    return { quote: q, quoteInvoices, bucket: quoteStatusOf(quoteInvoices, q) };
+    return { quote: q, quoteInvoices, bucket: SALE_BUCKET[q.sale_status] || 'pending' };
   });
 
   const tabCounts = enrichedQuotes.reduce(
-    (acc, { bucket }) => ({ ...acc, all: acc.all + 1, [bucket]: acc[bucket] + 1 }),
+    (acc, { bucket }) => ({ ...acc, all: acc.all + 1, ...(acc[bucket] !== undefined ? { [bucket]: acc[bucket] + 1 } : {}) }),
     { all: 0, pending: 0, awaiting_payment: 0, paid: 0 },
   );
 
-  const outstandingTotal = invoices.filter((i) => i.status !== 'PAID').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const collectedTotal = invoices.filter((i) => i.status === 'PAID' && !i.is_duplicate).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  // Money still owing is what is invoiced less what is paid (part payments count), and what is
+  // collected is what has actually been paid. A rejected sale carries no invoices, so adds nothing.
+  const outstandingTotal = quotes.reduce((sum, q) => sum + (Number(q.amount_owing) || 0), 0);
+  const collectedTotal = quotes.reduce((sum, q) => sum + (Number(q.paid_total) || 0), 0);
 
   const recipientName = (q) => q.client_name || q.walk_in_name || '—';
 
@@ -2288,7 +2288,10 @@ function QuotesTab({ createTick, onCount }) {
                     <Cell className="text-[13px] text-slate-500">{formatDate(q.created_at)}</Cell>
                     <Cell>
                       <div className="font-mono text-[13px] font-semibold text-slate-900">{q.estimate_number}</div>
-                      <div className="text-xs text-slate-500">{q.linked_quote_id ? '+ Service request' : 'Product only'}</div>
+                      <div className="text-xs text-slate-500">
+                        {q.linked_quote_id ? '+ Service request' : 'Product only'}
+                        {q.sale_booking_code && <span className="ml-1.5 font-semibold text-blue-700">· {q.sale_booking_code}</span>}
+                      </div>
                     </Cell>
                     <Cell>
                       <div className="truncate font-semibold text-slate-900">
@@ -2307,17 +2310,20 @@ function QuotesTab({ createTick, onCount }) {
                       {Number(q.total_deposit_amount) > 0 && <div className="text-xs text-slate-500">+ {formatMoney(q.total_deposit_amount)} deposit</div>}
                     </Cell>
                     <Cell>
-                      {bucket === 'pending' && <StatusChip tone="slate">{quoteInvoices.length > 0 ? 'Partly invoiced' : 'Pending acceptance'}</StatusChip>}
-                      {bucket === 'awaiting_payment' && <StatusChip tone="amber">Awaiting payment{quoteInvoices.length > 1 ? ` (${unpaidCount}/${quoteInvoices.length})` : ''}</StatusChip>}
-                      {bucket === 'paid' && <StatusChip tone="green">Paid</StatusChip>}
+                      <StatusChip tone={(SALE_STATUS[q.sale_status] || SALE_STATUS.PENDING_ACCEPTANCE).tone}>
+                        {(SALE_STATUS[q.sale_status] || SALE_STATUS.PENDING_ACCEPTANCE).label}
+                        {(q.sale_status === 'UNPAID' || q.sale_status === 'PART_PAID') && quoteInvoices.length > 1 ? ` (${unpaidCount}/${quoteInvoices.length})` : ''}
+                      </StatusChip>
+                      {Number(q.amount_owing) > 0.005 && <div className="mt-0.5 text-xs text-slate-500">{formatMoney(q.amount_owing)} owing</div>}
                     </Cell>
                     <Cell right>
                       {bucket === 'pending' && (
                         <button type="button" disabled={busy} onClick={() => handleAccept(q)} className={btn('success', 'sm')}>
                           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          {isRentalQuote ? 'Accept and create rental' : 'Accept and invoice'}
+                          {q.sale_status === 'PARTLY_INVOICED' ? 'Invoice remaining lines' : isRentalQuote ? 'Accept and create rental' : 'Accept and invoice'}
                         </button>
                       )}
+                      {q.sale_status === 'REJECTED' && <span className="text-[13px] text-slate-500">Rejected</span>}
                       {bucket === 'awaiting_payment' && firstUnpaid && (
                         <button type="button" onClick={() => setPaymentModalInvoice(firstUnpaid)} className={btn('primary', 'sm')}>Record payment</button>
                       )}
@@ -2344,8 +2350,8 @@ function QuotesTab({ createTick, onCount }) {
                           <div className="space-y-2">
                             <Step done sub={formatDate(q.created_at)}>Quotation created</Step>
                             <Step done={!!q.sent_at || sentIds.has(q.quote_id) || quoteInvoices.length > 0}>Sent to client</Step>
-                            <Step done={bucket !== 'pending'}>Accepted and invoiced</Step>
-                            <Step done={bucket === 'paid'}>Fully paid</Step>
+                            <Step done={bucket === 'awaiting_payment' || bucket === 'paid'}>Accepted and invoiced</Step>
+                            <Step done={q.sale_status === 'PAID'}>Fully paid</Step>
                           </div>
                         </div>
                         <div className="min-w-[280px] flex-1 basis-[320px]">
@@ -2354,18 +2360,27 @@ function QuotesTab({ createTick, onCount }) {
                             <p className="text-[13px] text-slate-500">No invoices yet. Each product line is invoiced when the quotation is accepted.</p>
                           ) : (
                             <div className="space-y-2">
-                              {quoteInvoices.map((inv) => (
-                                <div key={inv.invoice_id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                                  <span className="flex flex-wrap items-center gap-2">
-                                    <span className="font-mono text-[13px] text-slate-600">{inv.invoice_code}</span>
-                                    <StatusChip tone={invoiceTone(inv.status)}>{invoiceLabel(inv.status)}</StatusChip>
-                                  </span>
-                                  <span className="flex items-center gap-3">
-                                    <b className="tabular-nums text-slate-900">{formatMoney(inv.amount)}</b>
-                                    {inv.status !== 'PAID' && <button type="button" onClick={() => setPaymentModalInvoice(inv)} className={btn('primary', 'sm')}>Pay</button>}
-                                  </span>
-                                </div>
-                              ))}
+                              {quoteInvoices.map((inv) => {
+                                const state = invoicePaymentState(inv.amount, inv.amount_paid, inv.status === 'PAID');
+                                return (
+                                  <div key={inv.invoice_id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                    <span className="min-w-0">
+                                      <span className="flex flex-wrap items-center gap-2">
+                                        <span className="font-mono text-[13px] text-slate-600">{inv.invoice_code}</span>
+                                        <StatusChip tone={state.tone}>{state.label}</StatusChip>
+                                      </span>
+                                      {inv.item_summary && <span className="block truncate text-xs text-slate-500">{inv.item_summary}</span>}
+                                    </span>
+                                    <span className="flex items-center gap-3">
+                                      <span className="text-right">
+                                        <b className="block tabular-nums text-slate-900">{formatMoney(inv.amount)}</b>
+                                        {!state.settled && state.due !== Number(inv.amount) && <span className="block text-xs text-slate-500">{formatMoney(state.due)} due</span>}
+                                      </span>
+                                      {!state.settled && <button type="button" onClick={() => setPaymentModalInvoice(inv)} className={btn('primary', 'sm')}>Pay</button>}
+                                    </span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -2898,8 +2913,22 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
   );
 }
 
+// The one dialog for paying a product or rental invoice, used by the Products page, the client page and
+// the cash register desk. It takes the amount (part payments are fine; it defaults to what is still
+// due), shows what the client already owes, and can pay from the client's wallet the same way the
+// nightly job does for care days: the invoice's own booking reservation first, then unreserved money,
+// never money reserved for another booking (use Pay from wallet on the client page to override that).
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
 export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
   const bank = useBankAccounts();
+  const { hasPermission } = useAdminAuth();
+  const paidSoFar = Number(invoice.amount_paid || 0);
+  const remaining = Math.max(round2(Number(invoice.amount || 0) - paidSoFar), 0);
+  const clientId = invoice.client_id || null;
+  const canWallet = Boolean(clientId) && hasPermission('INVOICE_PAY_FROM_WALLET');
+
+  const [amount, setAmount] = useState(String(remaining));
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [bankAccountId, setBankAccountId] = useState('');
@@ -2911,33 +2940,73 @@ export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [error, setError] = useState('');
+  const [context, setContext] = useState({ wallet: null, overdue: null });
+
+  // What the client already owes, and how much wallet money is free for THIS invoice.
+  useEffect(() => {
+    if (!clientId) return undefined;
+    let cancelled = false;
+    (async () => {
+      const [walletRes, overdueRes] = await Promise.all([
+        canWallet ? apiClient.getWalletPayInfo(clientId).catch(() => null) : Promise.resolve(null),
+        apiClient.getClientOverduePayments(clientId).catch(() => null),
+      ]);
+      if (cancelled) return;
+      setContext({
+        wallet: walletRes?.data || null,
+        overdue: overdueRes?.summary ? Number(overdueRes.summary.total_overdue_amount || 0) : null,
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [clientId, canWallet]);
+
+  const ownReserved = context.wallet?.reservations?.find((r) => r.booking_id === invoice.booking_id)?.reserved || 0;
+  const walletFree = context.wallet ? round2(Math.min(context.wallet.wallet_balance, Number(ownReserved) + Number(context.wallet.unreserved || 0))) : 0;
+  const walletOffered = canWallet && walletFree > 0.005;
+  const useWallet = paymentMethod === 'WALLET';
+  const amountNum = parseFloat(amount) || 0;
+  const maxAmount = useWallet ? Math.min(remaining, walletFree) : remaining;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     const errs = {};
-    if (!paymentDate) errs.paymentDate = 'Please enter the payment date';
-    if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && !bankAccountId) errs.bank = 'Please select a bank account';
-    if (paymentMethod === 'CHEQUE' && !chequeNumber) errs.chequeNumber = 'Cheque number is required';
-    if (paymentMethod === 'CHEQUE' && !chequeDate) errs.chequeDate = 'Cheque date is required';
+    if (!(amountNum > 0)) errs.amount = 'Enter an amount greater than 0';
+    else if (amountNum > maxAmount + 0.005) errs.amount = useWallet
+      ? `The wallet can cover at most ${formatMoney(maxAmount)} of this invoice`
+      : `This invoice has only ${formatMoney(remaining)} left to pay`;
+    if (!useWallet) {
+      if (!paymentDate) errs.paymentDate = 'Please enter the payment date';
+      if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && !bankAccountId) errs.bank = 'Please select a bank account';
+      if (paymentMethod === 'CHEQUE' && !chequeNumber) errs.chequeNumber = 'Cheque number is required';
+      if (paymentMethod === 'CHEQUE' && !chequeDate) errs.chequeDate = 'Cheque date is required';
+    }
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
     setSaving(true);
     try {
-      await apiClient.recordProductInvoicePayment(
-        invoice.invoice_id,
-        {
-          payment_method: paymentMethod,
-          payment_date: paymentDate,
-          bank_account_id: bankAccountId || undefined,
-          cheque_number: chequeNumber || undefined,
-          cheque_date: chequeDate || undefined,
-          reference_number: referenceNumber || undefined,
-          notes: notes || undefined,
-        },
-        slipFile,
-      );
+      if (useWallet) {
+        await apiClient.walletPay(clientId, {
+          targets: [{ type: 'PRODUCT', id: invoice.invoice_id, amount: round2(amountNum) }],
+          note: notes || undefined,
+        });
+      } else {
+        await apiClient.recordProductInvoicePayment(
+          invoice.invoice_id,
+          {
+            amount: round2(amountNum),
+            payment_method: paymentMethod,
+            payment_date: paymentDate,
+            bank_account_id: bankAccountId || undefined,
+            cheque_number: chequeNumber || undefined,
+            cheque_date: chequeDate || undefined,
+            reference_number: referenceNumber || undefined,
+            notes: notes || undefined,
+          },
+          slipFile,
+        );
+      }
       onRecorded();
     } catch (err) {
       setError(err?.message || 'Failed to record payment');
@@ -2949,49 +3018,83 @@ export function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
   return (
     <Modal
       title={`Record payment — ${invoice.invoice_code}`}
-      subtitle={`Invoice amount ${formatMoney(invoice.amount)}`}
+      subtitle={`Invoice ${formatMoney(invoice.amount)}${paidSoFar > 0.005 ? ` · paid ${formatMoney(paidSoFar)}` : ''} · ${formatMoney(remaining)} left to pay`}
       onClose={onClose}
       onSubmit={handleSubmit}
       footer={(
         <>
           <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
-          <button type="submit" disabled={saving} className={btn('success')}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Record payment</button>
+          <button type="submit" disabled={saving || remaining <= 0.005} className={btn('success')}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} {useWallet ? 'Pay from wallet' : 'Record payment'}</button>
         </>
       )}
     >
       <ErrorBanner message={error} />
       <ErrorBanner message={bank.error} onRetry={bank.reload} />
+
+      {(context.overdue !== null || context.wallet) && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-600">
+          {context.overdue !== null && (
+            <div>This client currently owes <b className={context.overdue > 0 ? 'text-red-700' : 'text-slate-900'}>{formatMoney(context.overdue)}</b> overdue.</div>
+          )}
+          {context.wallet && (
+            <div>
+              Wallet <b className="text-slate-900">{formatMoney(context.wallet.wallet_balance)}</b>
+              {invoice.booking_id ? `, ${formatMoney(walletFree)} free for this invoice (its booking's reservation and unreserved money).` : `, ${formatMoney(walletFree)} unreserved.`}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Payment date" error={errors.paymentDate}>
-          <DateInput value={paymentDate} max={todayISO()} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls(!!errors.paymentDate)} />
+        <Field label="Amount to pay" htmlFor="rp-amount" error={errors.amount}
+          hint={amountNum > 0 && amountNum < remaining - 0.005 ? `${formatMoney(remaining - amountNum)} will still be due after this payment.` : undefined}>
+          <div className="flex gap-2">
+            <input id="rp-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} onWheel={(e) => e.target.blur()} className={`${inputCls(!!errors.amount)} tabular-nums`} />
+            <button type="button" onClick={() => setAmount(String(maxAmount))} className={btn('secondary', 'sm')}>All</button>
+          </div>
         </Field>
         <Field label="Payment method" htmlFor="rp-method">
-          <select id="rp-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputCls(false)}>
+          <select id="rp-method" value={paymentMethod} onChange={(e) => { setPaymentMethod(e.target.value); if (e.target.value === 'WALLET') setAmount(String(Math.min(remaining, walletFree))); }} className={inputCls(false)}>
             {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+            {walletOffered && <option value="WALLET">WALLET</option>}
           </select>
         </Field>
       </div>
-      {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && (
-        <Field label="Bank account" htmlFor="rp-bank" error={errors.bank}>
-          <BankAccountSelect id="rp-bank" value={bankAccountId} onChange={setBankAccountId} accounts={bank.bankAccounts} invalid={!!errors.bank} />
-        </Field>
-      )}
-      {paymentMethod === 'CHEQUE' && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Cheque number" htmlFor="rp-chq" error={errors.chequeNumber}>
-            <input id="rp-chq" type="text" value={chequeNumber} onChange={(e) => setChequeNumber(e.target.value)} className={inputCls(!!errors.chequeNumber)} />
+
+      {useWallet ? (
+        <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[13px] text-blue-800">
+          The amount is taken from the client's wallet, from this invoice's own booking reservation first and then unreserved money. Money reserved for other bookings is never used here.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Payment date" error={errors.paymentDate}>
+              <DateInput value={paymentDate} max={todayISO()} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls(!!errors.paymentDate)} />
+            </Field>
+          </div>
+          {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod) && (
+            <Field label="Bank account" htmlFor="rp-bank" error={errors.bank}>
+              <BankAccountSelect id="rp-bank" value={bankAccountId} onChange={setBankAccountId} accounts={bank.bankAccounts} invalid={!!errors.bank} />
+            </Field>
+          )}
+          {paymentMethod === 'CHEQUE' && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Cheque number" htmlFor="rp-chq" error={errors.chequeNumber}>
+                <input id="rp-chq" type="text" value={chequeNumber} onChange={(e) => setChequeNumber(e.target.value)} className={inputCls(!!errors.chequeNumber)} />
+              </Field>
+              <Field label="Cheque date" error={errors.chequeDate}>
+                <DateInput value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} className={inputCls(!!errors.chequeDate)} />
+              </Field>
+            </div>
+          )}
+          <Field label="Reference number" htmlFor="rp-ref">
+            <input id="rp-ref" type="text" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} className={inputCls(false)} />
           </Field>
-          <Field label="Cheque date" error={errors.chequeDate}>
-            <DateInput value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} className={inputCls(!!errors.chequeDate)} />
+          <Field label="Slip / receipt (optional)" htmlFor="rp-slip">
+            <input id="rp-slip" type="file" onChange={(e) => setSlipFile(e.target.files?.[0] || null)} className="w-full text-sm text-slate-600" />
           </Field>
-        </div>
+        </>
       )}
-      <Field label="Reference number" htmlFor="rp-ref">
-        <input id="rp-ref" type="text" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} className={inputCls(false)} />
-      </Field>
-      <Field label="Slip / receipt (optional)" htmlFor="rp-slip">
-        <input id="rp-slip" type="file" onChange={(e) => setSlipFile(e.target.files?.[0] || null)} className="w-full text-sm text-slate-600" />
-      </Field>
       <Field label="Notes" htmlFor="rp-notes">
         <textarea id="rp-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={textareaCls(false)} />
       </Field>

@@ -7,6 +7,7 @@ import DateInput from '../../../components/common/DateInput';
 import EditedAmountBadge from '../components/EditedAmountBadge';
 import { PreviewButton } from '../invoices/InvoicePreviewModal';
 import { invoicePreview } from '../invoices/invoicePreviewSources';
+import { invoicePaymentState } from '../../../utils/invoiceState';
 
 // Client detail → Invoices. Every invoice type (care service days, registration
 // fee, products/rentals, extra charges, combined quotation invoices) is merged
@@ -92,13 +93,8 @@ const TypeTag = ({ type }) => (
   </span>
 );
 
-// Paid / part paid / unpaid from amount vs. what has been paid so far.
-const paymentState = (amount, paid, storedPaid) => {
-  const due = Math.max(Number(amount || 0) - Number(paid || 0), 0);
-  if (storedPaid || due <= 0.01) return { label: 'Paid', tone: 'green', due: 0, settled: true };
-  if (Number(paid) > 0.01) return { label: 'Part paid', tone: 'blue', due, settled: false };
-  return { label: 'Unpaid', tone: 'amber', due, settled: false };
-};
+// Paid / part paid / unpaid from amount vs. what has been paid so far (shared with the Products page).
+const paymentState = invoicePaymentState;
 
 const iconBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40';
 const resendBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bg-green-600 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50';

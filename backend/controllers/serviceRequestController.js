@@ -4,6 +4,9 @@ const { sendSms } = require('../utils/sms');
 const { sendServiceRequestConfirmed, sendCandidateProfile } = require('../utils/metaWhatsapp');
 const { toE164, isValidPhone } = require('../utils/phone');
 const { notifyNewServiceRequest } = require('../services/serviceRequestEmail');
+const { sendOtp: sendWhatsAppOtp } = require('../utils/metaWhatsapp');
+const { sendSmsOtp } = require('../utils/sms');
+const identity = require('../services/serviceRequestIdentity');
 
 const formatServiceType = (type) => {
     if (!type) return 'our services';
@@ -87,21 +90,26 @@ exports.submitServiceRequest = async (req, res) => {
         }
         const payer_mobile = toE164(req.body.payer_mobile);
 
-        // 1. Smart Detection: Does this mobile number belong to an existing client?
-        const userCheck = await db.query(
-            'SELECT user_id FROM users WHERE mobile_number = $1',
-            [payer_mobile]
-        );
-
+        // 1. Which client does this request belong to?
+        //  - Logged-in client: their own account, taken from the token (the typed number is ignored for identity).
+        //  - Guest typing a number that already belongs to a client: only attached after the number is
+        //    verified by OTP, so a returning client is never duplicated and nobody can file requests
+        //    against someone else's account by typing their number.
+        //  - Guest with an unknown number: a genuinely new client (client_id stays NULL).
         let clientId = null;
-        if (userCheck.rows.length > 0) {
-            // Check if they have a client profile
-            const clientProfile = await db.query(
-                'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
-                [userCheck.rows[0].user_id]
-            );
-            if (clientProfile.rows.length > 0) {
-                clientId = clientProfile.rows[0].client_profile_id;
+        const ownClient = await identity.findClientByUserId(req.user?.user_id);
+        if (ownClient) {
+            clientId = ownClient.client_profile_id;
+        } else {
+            const existing = await identity.findClientByMobile(payer_mobile);
+            if (existing) {
+                if (!identity.isVerifiedToken(req.body.verification_token, payer_mobile)) {
+                    return res.status(409).json({
+                        code: 'OTP_REQUIRED',
+                        message: 'This mobile number is already registered with VCare. Please verify it with a code we send you, or log in, to continue.',
+                    });
+                }
+                clientId = existing.client_profile_id;
             }
         }
 
@@ -200,6 +208,48 @@ exports.submitServiceRequest = async (req, res) => {
     } catch (error) {
         console.error("Service Request Error:", error);
         res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+};
+
+// POST /api/service-requests/otp/send   { mobile_number }
+// Only numbers that already belong to a client need a code, so this can't be used to text arbitrary numbers.
+exports.sendRequestOtp = async (req, res) => {
+    try {
+        if (!isValidPhone(req.body.mobile_number)) {
+            return res.status(400).json({ message: 'Enter a valid mobile number.' });
+        }
+        const mobile = toE164(req.body.mobile_number);
+        if (!(await identity.findClientByMobile(mobile))) {
+            return res.status(400).json({ message: 'This number does not need verification.' });
+        }
+        const issued = await identity.issueOtp(mobile);
+        if (issued.retryAfter) {
+            return res.status(429).json({ message: `Please wait ${issued.retryAfter} seconds before requesting a new code.` });
+        }
+        await Promise.allSettled([
+            sendWhatsAppOtp(mobile, issued.code, 'otp_service_request'),
+            sendSmsOtp(mobile, issued.code, 'otp_service_request'),
+        ]);
+        if (process.env.NODE_ENV !== 'production') console.log(`[DEV ONLY] Service request OTP for ${mobile}: ${issued.code}`);
+        res.status(200).json({ status: 'success', message: 'A verification code has been sent to your mobile number.' });
+    } catch (error) {
+        console.error('Service request sendOtp error:', error);
+        res.status(500).json({ message: 'Could not send the verification code. Please try again.' });
+    }
+};
+
+// POST /api/service-requests/otp/verify   { mobile_number, otp_code }  ->  { verification_token }
+exports.verifyRequestOtp = async (req, res) => {
+    try {
+        if (!isValidPhone(req.body.mobile_number)) {
+            return res.status(400).json({ message: 'Enter a valid mobile number.' });
+        }
+        const result = await identity.checkOtp(toE164(req.body.mobile_number), req.body.otp_code);
+        if (!result.ok) return res.status(result.status).json({ message: result.message });
+        res.status(200).json({ status: 'success', verification_token: result.token });
+    } catch (error) {
+        console.error('Service request verifyOtp error:', error);
+        res.status(500).json({ message: 'Could not verify the code. Please try again.' });
     }
 };
 
