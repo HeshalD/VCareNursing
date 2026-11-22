@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, Plus, Trash2, CheckCircle, AlertCircle, Loader2, FileText, ExternalLink,
 } from 'lucide-react';
+import ProductAutocomplete from '../service_quotes/ProductAutocomplete';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 
@@ -25,6 +26,7 @@ const formatMoney = (value) =>
 const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, onSuccess }) => {
   const [lineItems, setLineItems] = useState([emptyLine()]);
   const [dueDate, setDueDate] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(todayISO());
   const [markPaid, setMarkPaid] = useState(false);
 
   const [products, setProducts] = useState([]);
@@ -48,6 +50,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
     if (!open) {
       setLineItems([emptyLine()]);
       setDueDate('');
+      setInvoiceDate(todayISO());
       setMarkPaid(false);
       setPaymentMethod('CASH');
       setBankAccountId('');
@@ -72,17 +75,18 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
   const addDepositLine = () => setLineItems((items) => [...items, emptyDepositLine()]);
   const removeLine = (idx) => setLineItems((items) => items.filter((_, i) => i !== idx));
 
-  const selectProductForLine = (idx, productId) => {
-    const product = products.find((p) => p.product_id === productId);
-    updateLine(idx, {
-      product_id: productId,
-      description: product ? product.name : '',
-      unit_price: product ? product.price : '',
-      unit_id: '',
-    });
+  // `picked` is a just-created product, which isn't in `products` until the state update lands.
+  const selectProductForLine = (idx, productId, picked) => {
+    const product = picked || products.find((p) => p.product_id === productId);
+    updateLine(idx, product
+      ? { product_id: productId, description: product.name, unit_price: product.price, unit_id: '' }
+      // Typing away from a chosen product detaches it; keep the typed text so the search continues.
+      : { product_id: '', unit_id: '' });
   };
 
-  const validLines = lineItems.filter((it) => it.description.trim() && parseFloat(it.unit_price) > 0);
+  // Every line is a catalogue product (or a standalone deposit): free-text "custom items" are not
+  // allowed, a charge that isn't in the catalogue is added as a new product instead.
+  const validLines = lineItems.filter((it) => it.description.trim() && parseFloat(it.unit_price) > 0 && (it.isStandaloneDeposit || it.product_id));
   const total = validLines.reduce((sum, it) => sum + (parseFloat(it.quantity) || 1) * (parseFloat(it.unit_price) || 0), 0);
   const depositTotal = validLines.reduce(
     (sum, it) => sum + (!it.isStandaloneDeposit && isRentalLine(it) ? (parseFloat(it.deposit_amount) || 0) : 0), 0
@@ -101,7 +105,8 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
     (paymentMethod !== 'CHEQUE' || (chequeNumber && chequeDate))
   );
 
-  const isValid = validLines.length > 0 && total > 0 && rentalTermsValid && paymentValid;
+  const invoiceDateValid = !!invoiceDate && invoiceDate <= todayISO();
+  const isValid = validLines.length > 0 && total > 0 && rentalTermsValid && paymentValid && invoiceDateValid;
 
   const buildLineItemPayload = (it) => {
     if (it.isStandaloneDeposit) {
@@ -138,7 +143,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
       // Accepting the quotation invoices it: a rental line gets its rental agreement and invoice, and
       // every other line (and standalone deposit) gets its own invoice, each with its charge on the
       // client's account. The same acceptance the Products page and booking creation use.
-      const invoiceRes = await apiClient.createInvoiceFromQuote(quoteId, markPaid ? null : (dueDate || null));
+      const invoiceRes = await apiClient.createInvoiceFromQuote(quoteId, markPaid ? null : (dueDate || null), invoiceDate || null);
       const invoices = [
         ...(invoiceRes.rental_agreements || []).map((a) => a.invoice),
         ...(invoiceRes.invoices || []),
@@ -307,23 +312,16 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                     return (
                       <div key={idx} className={rental ? 'rounded-lg border border-purple-100 bg-purple-50/40 p-2.5 space-y-2' : ''}>
                         <div className="flex items-center gap-2">
-                          <select
-                            value={it.product_id}
-                            onChange={(e) => selectProductForLine(idx, e.target.value)}
-                            className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
-                          >
-                            <option value="">Custom item…</option>
-                            {products.map((p) => (
-                              <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
-                            ))}
-                          </select>
-                          <input
-                            type="text"
-                            placeholder="Description"
-                            value={it.description}
-                            onChange={(e) => updateLine(idx, { description: e.target.value })}
-                            className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                          />
+                          <div className="flex-1 min-w-0">
+                            <ProductAutocomplete
+                              variant="boxed"
+                              products={products}
+                              item={it}
+                              onSelectProduct={(productId, picked) => selectProductForLine(idx, productId, picked)}
+                              onChangeDescription={(description) => updateLine(idx, { description })}
+                              onProductCreated={(np) => setProducts((prev) => [...prev, np])}
+                            />
+                          </div>
                           <input
                             type="number"
                             min="0"
@@ -439,6 +437,20 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
               {/* Payment status */}
               <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Payment Status</p>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Invoice Date</label>
+                  <DateInput
+                    value={invoiceDate}
+                    onChange={(e) => setInvoiceDate(e.target.value)}
+                    max={todayISO()}
+                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                  />
+                  <p className="mt-0.5 text-[10px] text-gray-400">
+                    The date printed on the invoice and used for its charge on the client's account. It can be changed later.
+                    {hasRentalItems ? ' Rental invoices are always dated today.' : ''}
+                  </p>
+                </div>
+
                 <div className="flex gap-2">
                   <button
                     type="button"

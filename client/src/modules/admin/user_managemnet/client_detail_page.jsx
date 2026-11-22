@@ -958,6 +958,7 @@ const ClientDetailPage = () => {
     EXTRA: canEditInvoiceAmount,
     COMBINED: canEditInvoiceAmount,
     CANCEL: canCancelInvoice,
+    DATE: canEditInvoiceAmount,
   }), [canEditCare, canEditRegFee, canEditInvoiceAmount, canCancelInvoice]);
 
   // An edit can move the client's totals, wallet/ledger and every invoice list.

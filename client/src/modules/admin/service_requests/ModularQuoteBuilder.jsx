@@ -923,6 +923,7 @@ const ModularQuoteBuilder = () => {
                               item={item}
                               index={lineItems.length + idx}
                               products={products}
+                              onProductCreated={(np) => setProducts((prev) => [...prev, np])}
                               rentalUnits={rentalUnits}
                               canDelete
                               onUpdate={(updated) => updateProductLine(idx, updated)}

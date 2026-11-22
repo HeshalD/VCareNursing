@@ -3,7 +3,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { sendPaymentReceipt, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { generateReceiptPdf } = require('../services/receiptService');
 const { ensureCombinedInvoice } = require('./quoteController');
-const { editReceiptPayment, getEditContext, PaymentEditError } = require('../services/paymentEdits');
+const { editReceiptPayment, deleteReceiptPayment, getEditContext, PaymentEditError } = require('../services/paymentEdits');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -431,8 +431,87 @@ const getEditContextHandler = async (req, res) => {
     }
 };
 
+// =========================================================
+// POST /api/payment-receipts/:receipt_id/delete-preview   (RECEIPT_DELETE_PAYMENT)
+// DELETE /api/payment-receipts/:receipt_id                (RECEIPT_DELETE_PAYMENT)
+// Permanently deletes the payment behind a receipt, reverses everything it did (ledger,
+// wallet, invoices, bookings) and deletes the receipt(s). The preview runs the same steps
+// and rolls back, so the confirmation dialog can list exactly what will happen.
+// =========================================================
+const buildActor = async (req) => {
+    const nameRes = await db.query(
+        `SELECT COALESCE(sp.full_name, ist.full_name) AS full_name
+         FROM users u
+         LEFT JOIN staff_profiles sp ON sp.user_id = u.user_id
+         LEFT JOIN internal_staff ist ON ist.user_id = u.user_id
+         WHERE u.user_id = $1`,
+        [req.user.user_id]
+    );
+    return { user_id: req.user.user_id, name: nameRes.rows[0]?.full_name || 'Super Admin', role: extractActorRole(req.user.role) };
+};
+
+const deleteReceiptPaymentHandler = (dryRun) => async (req, res) => {
+    try {
+        const { receipt_id } = req.params;
+        if (!uuidRegex.test(receipt_id)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid receipt_id format' });
+        }
+        const reason = String((req.body || {}).reason || '').trim();
+        const actor = await buildActor(req);
+        const out = await deleteReceiptPayment({ receipt_id, reason, actor, dryRun });
+
+        if (dryRun) {
+            return res.status(200).json({
+                status: 'success',
+                data: {
+                    receipt_code: out.receipt.receipt_code,
+                    source_type: out.receipt.source_type,
+                    total_amount: out.receipt.total_amount,
+                    effects: out.effects,
+                    warnings: out.warnings,
+                    reopened: out.reopened,
+                },
+            });
+        }
+
+        logActivity({
+            actorUserId: actor.user_id,
+            actorName: actor.name,
+            actorRole: actor.role,
+            actionType: 'CLIENT_PAYMENT_DELETED',
+            entityType: 'payment_receipt',
+            entityId: String(receipt_id),
+            details: {
+                client_id: out.receipt.client_id,
+                source_type: out.receipt.source_type,
+                receipts: out.deleted_receipts,
+                total_amount: out.receipt.total_amount,
+                reason,
+                effects: out.effects,
+                reopened: out.reopened,
+            },
+        }).catch((e) => console.error('[PaymentDelete] Activity log error:', e.message));
+
+        return res.status(200).json({
+            status: 'success',
+            message: `Payment deleted. Receipt${out.deleted_receipts.length === 1 ? '' : 's'} ${out.deleted_receipts.join(', ')} removed.`,
+            effects: out.effects,
+            reopened: out.reopened,
+            warnings: out.warnings,
+        });
+    } catch (err) {
+        if (err instanceof PaymentEditError) {
+            return res.status(err.statusCode).json({ status: 'error', message: err.message });
+        }
+        console.error('deleteReceiptPayment error:', err);
+        return res.status(500).json({ status: 'error', message: err.message || 'Server error' });
+    }
+};
+
 module.exports = {
     getAllReceipts, getClientReceipts, getBookingReceipts, getReceipt, sendReceiptWhatsApp,
+    deleteReceiptPayment: deleteReceiptPaymentHandler(false),
+    previewDeleteReceiptPayment: deleteReceiptPaymentHandler(true),
     editReceiptPayment: editReceiptPaymentHandler,
     getEditContext: getEditContextHandler,
 };

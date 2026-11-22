@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertCircle, AlertTriangle, Ban, ChevronDown, ChevronRight, Download, Info, Loader2, MessageCircle, Pencil, RotateCcw, Search, Wallet, X,
+  AlertCircle, AlertTriangle, Ban, CalendarDays, ChevronDown, ChevronRight, Download, Info, Loader2, MessageCircle, Pencil, RotateCcw, Search, Wallet, X,
 } from 'lucide-react';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { toLocalISO } from '../../../components/common/DateInput';
 import EditedAmountBadge from '../components/EditedAmountBadge';
 import { PreviewButton } from '../invoices/InvoicePreviewModal';
 import { invoicePreview } from '../invoices/invoicePreviewSources';
@@ -100,7 +100,7 @@ const iconBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bord
 const resendBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bg-green-600 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50';
 const fieldCls = 'rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
-function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit, onPay, onCancel }) {
+function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit, onEditDate, onPay, onCancel }) {
   return (
     <div className="flex items-center justify-end gap-1">
       {onPay && (
@@ -111,6 +111,11 @@ function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit,
       {onEdit && (
         <button type="button" disabled={busy} onClick={onEdit} title="Edit amount" className={iconBtn}>
           <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {onEditDate && (
+        <button type="button" disabled={busy} onClick={onEditDate} title="Change invoice date" className={iconBtn}>
+          <CalendarDays className="h-3.5 w-3.5" />
         </button>
       )}
       {onCancel && (
@@ -272,6 +277,9 @@ export default function ClientInvoicesPanel({
         cancel: type === 'PRODUCT' && canEdit.CANCEL && onEdit && !inv.is_duplicate && inv.line_item_id && inv.category === 'PRODUCT'
           && !state.settled && !(Number(inv.amount_paid) > 0.005)
           ? () => onEdit({ kind: 'CANCEL', invoiceId: inv.invoice_id, currentAmount: inv.amount, label: inv.item_summary || 'Product', code: inv.invoice_code })
+          : null,
+        editDate: type === 'PRODUCT' && canEdit.DATE && onEdit && !inv.is_duplicate && inv.status !== 'CANCELLED'
+          ? () => onEdit({ kind: 'DATE', invoiceId: inv.invoice_id, currentDate: toLocalISO(inv.created_at), label: inv.item_summary || 'Product', code: inv.invoice_code })
           : null,
         // A duplicate only mirrors another invoice's payment — edit that one instead.
         edit: inv.is_duplicate ? null : edit(type, {
@@ -681,6 +689,7 @@ export default function ClientInvoicesPanel({
                         download={r.download}
                         onResend={r.resend}
                         onEdit={r.edit}
+                        onEditDate={r.editDate}
                         onCancel={r.cancel}
                       />
                     </td>

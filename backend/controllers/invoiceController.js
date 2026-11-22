@@ -18,6 +18,7 @@ const { parsePaymentDate } = require('../utils/paymentDate');
 const { editInvoiceAmount: editInvoiceAmountCore, editQuoteLineAmounts, getQuoteLinesForEdit } = require('../services/invoiceAmountEdits');
 const { ensureInvoiceCharge, linkProductQuoteToBooking } = require('../services/invoiceCharges');
 const { cancelProductInvoice: cancelProductInvoiceCore } = require('../services/invoiceCancellation');
+const { parseInvoiceDate, setInvoiceDate } = require('../services/invoiceDate');
 const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -42,12 +43,13 @@ async function safeLog(params) {
 // product's bill is recorded. It used to build one combined invoice by its own, separate rules.
 exports.createInvoiceFromQuote = async (req, res) => {
   const { quote_id } = req.params;
-  const { due_date } = req.body || {};
+  const { due_date, invoice_date } = req.body || {};
   const pgClient = await db.pool.connect();
 
   try {
+    const invoiceDate = parseInvoiceDate(invoice_date);
     await pgClient.query('BEGIN');
-    const out = await acceptProductQuoteCore(pgClient, quote_id, { actorUserId: req.user?.user_id || null, dueDate: due_date || null });
+    const out = await acceptProductQuoteCore(pgClient, quote_id, { actorUserId: req.user?.user_id || null, dueDate: due_date || null, invoiceDate });
     await pgClient.query('COMMIT');
 
     for (const inv of out.invoices) {
@@ -923,6 +925,38 @@ exports.editInvoiceAmount = async (req, res) => {
   } catch (error) {
     await pgClient.query('ROLLBACK');
     sendEditError(res, error, 'Failed to edit the invoice amount');
+  } finally {
+    pgClient.release();
+  }
+};
+
+// PATCH /api/product-invoices/:invoice_id/date — body { invoice_date: 'YYYY-MM-DD', reason? }.
+// Re-dates a product/rental invoice: its PDF date and its ledger charge move with it (services/invoiceDate.js).
+exports.editInvoiceDate = async (req, res) => {
+  const { invoice_id } = req.params;
+  const { invoice_date, reason } = req.body || {};
+  const pgClient = await db.pool.connect();
+  try {
+    await pgClient.query('BEGIN');
+    const result = await setInvoiceDate(pgClient, invoice_id, invoice_date);
+    await pgClient.query('COMMIT');
+
+    if (result.changed) {
+      await ensureInvoicePdf(invoice_id).catch((err) => console.error('Re-dated invoice PDF regeneration failed:', err.message));
+      await safeLog({
+        actorUserId: req.user?.user_id,
+        actorName: await getActorName(req.user?.user_id),
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'INVOICE_DATE_EDITED',
+        entityType: 'INVOICE',
+        entityId: invoice_id,
+        details: { ...result, reason: reason ? String(reason).trim() : undefined },
+      });
+    }
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) {
+    await pgClient.query('ROLLBACK').catch(() => {});
+    sendEditError(res, error, 'Failed to change the invoice date');
   } finally {
     pgClient.release();
   }

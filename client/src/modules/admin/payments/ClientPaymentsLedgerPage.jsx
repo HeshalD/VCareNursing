@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Receipt, Download, Send, Search, RefreshCcw, Loader2,
-  CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User, Pencil, Ban,
+  CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User, Pencil, Ban, Trash2,
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import useUrlSearchState from '../../../hooks/useUrlSearchState';
@@ -12,6 +12,7 @@ import { withHonorific } from '../../../utils/clientName';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import EditPaymentModal from './EditPaymentModal';
+import DeletePaymentModal from './DeletePaymentModal';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const fmt = (v) => money.format(Number(v || 0));
@@ -38,7 +39,9 @@ const ClientPaymentsLedgerPage = () => {
   const navigate = useNavigate();
   const { hasPermission } = useAdminAuth();
   const canEditPayments = hasPermission ? hasPermission('RECEIPT_EDIT_PAYMENT') : false;
+  const canDeletePayments = hasPermission ? hasPermission('RECEIPT_DELETE_PAYMENT') : false;
   const [editTarget, setEditTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [notice, setNotice] = useState(null); // { message, reopened, warnings }
   const [receipts, setReceipts] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: LIMIT, total: 0, total_pages: 1 });
@@ -88,12 +91,22 @@ const ClientPaymentsLedgerPage = () => {
   // while a WhatsApp receipt send is in flight (or the edit form is open) so it can't be raced.
   useAutoRefresh(() => load({ silent: true }), {
     intervalMs: 5000,
-    enabled: sendingIds.size === 0 && !editTarget,
+    enabled: sendingIds.size === 0 && !editTarget && !deleteTarget,
   });
 
   const handleEdited = (res) => {
     setEditTarget(null);
     setNotice({ message: res?.message || 'Payment updated.', reopened: res?.reopened || [], warnings: res?.warnings || [] });
+    load({ silent: true });
+  };
+
+  const handleDeleted = (res) => {
+    setDeleteTarget(null);
+    setNotice({
+      message: res?.message || 'Payment deleted.',
+      reopened: res?.reopened || [],
+      warnings: [...(res?.effects || []), ...(res?.warnings || [])],
+    });
     load({ silent: true });
   };
 
@@ -280,6 +293,15 @@ const ClientPaymentsLedgerPage = () => {
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
                             )}
+                            {canDeletePayments && !r.replaced_by_code && (
+                              <button
+                                onClick={() => setDeleteTarget(r)}
+                                title="Delete this payment and its receipt"
+                                className={`${iconBtnCls} hover:text-red-600 hover:bg-red-50`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
                               disabled={isSending || !r.mobile_number || !!r.voided_at}
                               onClick={() => handleSend(r.receipt_id)}
@@ -374,6 +396,9 @@ const ClientPaymentsLedgerPage = () => {
       )}
       {editTarget && (
         <EditPaymentModal receipt={editTarget} onClose={() => setEditTarget(null)} onSaved={handleEdited} />
+      )}
+      {deleteTarget && (
+        <DeletePaymentModal receipt={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={handleDeleted} />
       )}
     </AdminLayout>
   );

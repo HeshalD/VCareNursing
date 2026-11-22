@@ -19,6 +19,14 @@ router.patch(
   invoiceController.editInvoiceAmount
 );
 
+// Change the date an invoice is issued on (moves its ledger charge with it).
+router.patch(
+  '/:invoice_id/date',
+  protect,
+  requirePermission('INVOICE_EDIT_AMOUNT'),
+  invoiceController.editInvoiceDate
+);
+
 // Cancel an unpaid per-line product invoice (removes it and its ledger charge, restores stock).
 router.post(
   '/:invoice_id/cancel',

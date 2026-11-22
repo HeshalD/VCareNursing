@@ -42,6 +42,14 @@ export const todayISO = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+// YYYY-MM-DD of a timestamp in local time (empty string if it can't be read).
+export const toLocalISO = (value) => {
+  const d = new Date(value);
+  if (!value || Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 // ISO date `n` days before today (local). Used as a `min` that allows a short backdate.
 export const daysAgoISO = (n) => {
   const d = new Date();

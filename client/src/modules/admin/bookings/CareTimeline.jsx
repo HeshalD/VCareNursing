@@ -252,10 +252,19 @@ const CareTimeline = ({
     if (completionDate && ['COMPLETED', 'TERMINATED'].includes((bookingStatus || '').toUpperCase())) {
       const end = new Date(completionDate);
       end.setHours(0, 0, 0, 0);
+      // Never cut off days that already have an invoice or attendance record — they were
+      // billed/served whatever the recorded end date says.
+      let lastRecord = '';
+      dailyInvoiceRecords.forEach((r) => { const k = r.service_date?.slice(0, 10); if (k && k > lastRecord) lastRecord = k; });
+      attendanceRecords.forEach((r) => { const k = r.service_date?.slice(0, 10); if (k && k > lastRecord) lastRecord = k; });
+      if (lastRecord) {
+        const lr = new Date(`${lastRecord}T00:00:00`);
+        if (lr > end) end.setTime(lr.getTime());
+      }
       if (!Number.isNaN(end.getTime()) && end < d) return end;
     }
     return d;
-  }, [markerToday, completionDate, bookingStatus]);
+  }, [markerToday, completionDate, bookingStatus, dailyInvoiceRecords, attendanceRecords]);
 
   // ── Service calendar (pauses + weekly repeat days) — see careTimelineMath.js ──
   const cal = useMemo(

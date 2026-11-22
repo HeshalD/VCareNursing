@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Loader2, Lock, X } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 
 // Edit-amount dialogs for the client Invoices panel (opened through
 // useInvoiceAmountEditor). One dialog per shape; each type posts to the endpoint that owns its money:
@@ -95,6 +96,62 @@ function SaveButtons({ busy, disabled, onClose, onSave }) {
         {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save change
       </button>
     </>
+  );
+}
+
+// ── Change the date an invoice is issued on ──────────────────────────────────
+// Moves the invoice's date (printed on its PDF) and its charge on the client's account together.
+export function InvoiceDateModal({ target, onClose, onSaved }) {
+  const [date, setDate] = useState(target.currentDate || todayISO());
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const valid = !!date && date <= todayISO();
+  const unchanged = date === target.currentDate;
+
+  const save = async () => {
+    if (!valid || unchanged) return;
+    setBusy(true); setError('');
+    try {
+      await apiClient.editInvoiceDate(target.invoiceId, { invoice_date: date, reason: reason.trim() || undefined });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Failed to change the invoice date');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Shell
+      title="Change invoice date"
+      subtitle={[target.label, target.code].filter(Boolean).join(' · ')}
+      onClose={onClose}
+      busy={busy}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} disabled={busy} className="rounded-md border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={save} disabled={busy || !valid || unchanged} className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+            {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save date
+          </button>
+        </>
+      )}
+    >
+      <p className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5 text-xs text-blue-900">
+        The invoice and its charge on the client's account both move to this date, and the PDF is regenerated. Payments already recorded keep their own dates. The date cannot be in the future.
+      </p>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-600">Invoice date</label>
+        <DateInput value={date} onChange={(e) => setDate(e.target.value)} max={todayISO()} disabled={busy} className={fieldCls} />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-600">Reason (optional)</label>
+        <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} disabled={busy} placeholder="e.g. Item was handed over on this date" className={fieldCls} />
+      </div>
+      <ErrorNote message={error} />
+    </Shell>
   );
 }
 

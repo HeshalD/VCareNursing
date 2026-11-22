@@ -921,6 +921,11 @@ const BookingDetailPageV2 = () => {
     if (['completed', 'terminated'].includes((bookingSummary.status || '').toLowerCase()) && bookingSummary.actual_end_time) {
       const end = new Date(bookingSummary.actual_end_time);
       end.setHours(0, 0, 0, 0);
+      // Days that already carry an invoice or attendance record were billed/served regardless.
+      let lastRecord = '';
+      dailyInvoiceRecords.forEach(r => { const k = r.service_date?.slice(0, 10); if (k && k > lastRecord) lastRecord = k; });
+      attendanceRecords.forEach(r => { const k = r.service_date?.slice(0, 10); if (k && k > lastRecord) lastRecord = k; });
+      if (lastRecord) { const lr = new Date(`${lastRecord}T00:00:00`); if (lr > end) end.setTime(lr.getTime()); }
       if (!isNaN(end.getTime()) && end < d) return end;
     }
     return d;
@@ -928,14 +933,14 @@ const BookingDetailPageV2 = () => {
   const servedDays = useMemo(
     () => computeServedDays({ cal: bookingCal, start: careStart, today: capToBookingEnd(new Date()), serviceModel: bookingSummary.service_model }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [bookingCal, careStart, bookingSummary.service_model, bookingSummary.status, bookingSummary.actual_end_time]
+    [bookingCal, careStart, bookingSummary.service_model, bookingSummary.status, bookingSummary.actual_end_time, dailyInvoiceRecords, attendanceRecords]
   );
   const simServedDays = useMemo(
     () => (simDate
       ? computeServedDays({ cal: bookingCal, start: careStart, today: capToBookingEnd(simDate), serviceModel: bookingSummary.service_model })
       : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [simDate, bookingCal, careStart, bookingSummary.service_model, bookingSummary.status, bookingSummary.actual_end_time]
+    [simDate, bookingCal, careStart, bookingSummary.service_model, bookingSummary.status, bookingSummary.actual_end_time, dailyInvoiceRecords, attendanceRecords]
   );
 
   // Shifts elapsed (servedDays × shifts/day) — what the "Shifts served" stat and

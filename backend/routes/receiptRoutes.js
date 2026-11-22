@@ -56,6 +56,23 @@ router.patch(
   receiptController.editReceiptPayment
 );
 
+// POST /api/payment-receipts/:receipt_id/delete-preview — dry run: lists everything a delete would reverse
+router.post(
+  '/:receipt_id/delete-preview',
+  protect,
+  requirePermission('RECEIPT_DELETE_PAYMENT'),
+  receiptController.previewDeleteReceiptPayment
+);
+
+// DELETE /api/payment-receipts/:receipt_id — deletes the payment behind a receipt, reverses
+// everything it did, and deletes the receipt(s)
+router.delete(
+  '/:receipt_id',
+  protect,
+  requirePermission('RECEIPT_DELETE_PAYMENT'),
+  receiptController.deleteReceiptPayment
+);
+
 // GET /api/payment-receipts/:receipt_id — receipt detail
 router.get(
   '/:receipt_id',

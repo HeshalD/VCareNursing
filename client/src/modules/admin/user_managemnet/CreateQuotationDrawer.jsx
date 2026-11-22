@@ -503,6 +503,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                             item={it}
                             index={idx}
                             products={products}
+                            onProductCreated={(np) => setProducts((prev) => [...prev, np])}
                             rentalUnits={rentalUnits}
                             canDelete
                             onUpdate={(updated) => updateProductLineItem(idx, updated)}
@@ -652,6 +653,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                               item={item}
                               index={lineItems.length + idx}
                               products={products}
+                              onProductCreated={(np) => setProducts((prev) => [...prev, np])}
                               rentalUnits={rentalUnits}
                               canDelete
                               onUpdate={(updated) => updateProductLineItem(idx, updated)}

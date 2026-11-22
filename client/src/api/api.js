@@ -2150,6 +2150,17 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     return this.request(`/payment-receipts/${receiptId}/edit`, { method: 'PATCH', body: formData });
   }
 
+  // Super admin: dry run - everything deleting the payment behind a receipt would reverse.
+  async previewDeletePaymentReceipt(receiptId) {
+    return this.request(`/payment-receipts/${receiptId}/delete-preview`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  // Super admin: permanently delete the payment behind a receipt (reverses the ledger,
+  // wallet, invoices and bookings, and deletes the receipt(s)).
+  async deletePaymentReceipt(receiptId, reason) {
+    return this.request(`/payment-receipts/${receiptId}`, { method: 'DELETE', body: JSON.stringify({ reason }) });
+  }
+
   // ── Frontdesk cash register ────────────────────────────────────────────────────────
   // While the register screen is mounted it sets this so every payment recorded from it
   // (client payment, quotation, invoice, booking) is stamped with the open day.
@@ -3231,10 +3242,21 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     return this.request(`/product-invoices/${invoiceId}/resend`, { method: 'POST' });
   }
 
-  async createInvoiceFromQuote(quoteId, dueDate = null) {
+  async createInvoiceFromQuote(quoteId, dueDate = null, invoiceDate = null) {
     return this.request(`/product-invoices/from-quote/${quoteId}`, {
       method: 'POST',
-      body: JSON.stringify(dueDate ? { due_date: dueDate } : {}),
+      body: JSON.stringify({
+        ...(dueDate ? { due_date: dueDate } : {}),
+        ...(invoiceDate ? { invoice_date: invoiceDate } : {}),
+      }),
+    });
+  }
+
+  // Re-dates a product/rental invoice (and its ledger charge). invoiceDate is YYYY-MM-DD.
+  async editInvoiceDate(invoiceId, { invoice_date, reason }) {
+    return this.request(`/product-invoices/${invoiceId}/date`, {
+      method: 'PATCH',
+      body: JSON.stringify({ invoice_date, reason }),
     });
   }
 

@@ -881,6 +881,426 @@ async function voidReceiptPayment({ receipt_id, reason, actor }) {
   }
 }
 
+// ─── Delete (super admin) ────────────────────────────────────────────────────────────
+// Permanently removes a recorded payment and everything it did, then deletes its receipt(s)
+// (the current one and every voided predecessor from earlier edits). Unlike a desk void the
+// receipt rows are NOT kept; a payment_edit_log row (with the reason and the full before
+// state) is the audit trail, plus the activity log written by the controller.
+//
+// Everything runs in ONE database transaction. Per source type it reverses:
+//   CLIENT_PAYMENT  - each allocation: wallet credit/earmark taken back, ledger row deleted,
+//                     the payment record deleted.
+//   BOOKING_PAYMENT - the booking_payment_tracking row + its ledger row; booking amount_paid
+//                     and per-day paid amounts recomputed.
+//   PRODUCT_INVOICE - the invoice instalment + ledger row (+ the booking-side payment row for
+//                     a booking-linked invoice); invoice back to PENDING if no longer fully
+//                     paid; a deposit collected by it is released.
+//   QUOTE_PAYMENT   - payment_tracking row, REGISTRATION_FEE credit (client registration status
+//                     re-opened if it is no longer covered), WALLET_TOPUP credits (wallet
+//                     balance + earmark taken back), product/rental invoice instalments, an
+//                     overpayment applied to a booking, and per-charge allocations.
+// If wallet credit that was already spent on invoices is taken back, the newest wallet
+// draw-downs are re-opened (restoreWalletFloor) - or the delete is refused with a 409.
+// Anything that cannot be matched to exactly one ledger row is refused, never guessed.
+//
+// dryRun: performs every step, collects what happened, then ROLLS BACK - used by the
+// confirmation dialog to show exactly what will be reversed.
+const RECEIPT_CHAIN_SQL = `
+  WITH RECURSIVE chain AS (
+    SELECT receipt_id, replaces_receipt_id, receipt_code, pdf_url FROM payment_receipts WHERE receipt_id = $1
+    UNION
+    SELECT r.receipt_id, r.replaces_receipt_id, r.receipt_code, r.pdf_url
+    FROM payment_receipts r JOIN chain c ON r.receipt_id = c.replaces_receipt_id
+  )
+  SELECT * FROM chain`;
+
+// Removes one invoice_payments instalment (and its ledger row) and puts the invoice back in step.
+async function removeInvoiceInstalment(client, ip, effects, warnings) {
+  const invoice = (await client.query('SELECT * FROM invoices WHERE invoice_id = $1 FOR UPDATE', [ip.invoice_id])).rows[0];
+  if (!invoice) fail(409, 'An invoice paid by this payment no longer exists');
+  const txId = ip.transaction_id;
+  const txRow = txId ? (await client.query('SELECT created_at FROM transactions WHERE transaction_id = $1', [txId])).rows[0] : null;
+
+  const others = (await client.query(
+    `SELECT invoice_payment_id, transaction_id, amount FROM invoice_payments
+     WHERE invoice_id = $1 AND invoice_payment_id <> $2 ORDER BY created_at`,
+    [ip.invoice_id, ip.invoice_payment_id]
+  )).rows;
+  const paidAfter = others.reduce((s, o) => s + num(o.amount), 0);
+
+  // A deposit collected by this instalment goes with it - unless it was already refunded or
+  // forfeited (that money has moved on), or another instalment can carry it.
+  if (txId) {
+    const deps = (await client.query('SELECT deposit_id, status FROM deposits WHERE collected_transaction_id = $1 FOR UPDATE', [txId])).rows;
+    if (deps.some((d) => String(d.status) !== 'HELD')) {
+      fail(409, `Invoice ${invoice.invoice_code}: a deposit collected with this payment was already refunded or forfeited, so the payment cannot be deleted.`);
+    }
+    const carrier = others.find((o) => o.transaction_id);
+    for (const d of deps) {
+      if (carrier) {
+        await client.query('UPDATE deposits SET collected_transaction_id = $2 WHERE deposit_id = $1', [d.deposit_id, carrier.transaction_id]);
+      } else {
+        await client.query('DELETE FROM deposits WHERE deposit_id = $1', [d.deposit_id]);
+        effects.push(`Deposit held for invoice ${invoice.invoice_code} removed`);
+      }
+    }
+  }
+
+  const fullyPaidAfter = paidAfter >= num(invoice.amount) - 0.01;
+  if (invoice.status === 'PAID' && !fullyPaidAfter) {
+    await client.query(
+      `UPDATE invoices SET status = 'PENDING', transaction_id = NULL, paid_at = NULL, pdf_url = NULL WHERE invoice_id = $1`,
+      [invoice.invoice_id]
+    );
+    effects.push(`Invoice ${invoice.invoice_code} is unpaid again (PENDING)`);
+  } else if (invoice.transaction_id && invoice.transaction_id === txId) {
+    const carrier = others.find((o) => o.transaction_id);
+    await client.query('UPDATE invoices SET transaction_id = $2 WHERE invoice_id = $1', [invoice.invoice_id, carrier?.transaction_id || null]);
+  }
+
+  // An invoice raised for a booking also wrote a booking-side payment row.
+  if (invoice.booking_id) {
+    const bpt = (await client.query(
+      `SELECT booking_payment_id,
+              ABS(EXTRACT(EPOCH FROM (payment_date - $5::timestamptz))) AS gap
+       FROM booking_payment_tracking
+       WHERE booking_id = $1 AND client_id = $2 AND status = 'VERIFIED' AND payment_method <> 'WALLET'
+         AND ABS(amount_received - $3) < 0.005 AND notes IS NOT DISTINCT FROM $4
+       ORDER BY gap LIMIT 1 FOR UPDATE`,
+      [invoice.booking_id, invoice.client_id, ip.amount, ip.notes, txRow?.created_at || new Date()]
+    )).rows[0];
+    if (bpt && num(bpt.gap) <= 120) {
+      const linked = await client.query('SELECT 1 FROM client_payment_allocations WHERE booking_payment_id = $1 LIMIT 1', [bpt.booking_payment_id]);
+      if (linked.rows.length) fail(409, `Invoice ${invoice.invoice_code}: its booking payment is also linked to a recorded client payment, so it cannot be deleted here.`);
+      await client.query('DELETE FROM booking_payment_tracking WHERE booking_payment_id = $1', [bpt.booking_payment_id]);
+      await recomputeBookingPaid(client, invoice.booking_id);
+      effects.push(`Booking payment for invoice ${invoice.invoice_code} reversed (booking paid total recomputed)`);
+    } else {
+      warnings.push(`Invoice ${invoice.invoice_code} is linked to a booking but its booking-side payment row could not be matched - review the booking's payments.`);
+    }
+  }
+
+  await client.query('DELETE FROM invoice_payments WHERE invoice_payment_id = $1', [ip.invoice_payment_id]);
+  if (txId) await client.query('DELETE FROM transactions WHERE transaction_id = $1', [txId]);
+  effects.push(`Invoice ${invoice.invoice_code}: instalment of ${money(ip.amount)} removed from the ledger`);
+}
+
+async function deleteClientPayment(client, { receipt, effects }) {
+  const record = (await client.query('SELECT * FROM client_payment_records WHERE record_id = $1 FOR UPDATE', [receipt.source_id])).rows[0];
+  if (!record) fail(404, 'The payment record behind this receipt no longer exists');
+  const clientId = record.client_id;
+  const existing = (await client.query(
+    'SELECT * FROM client_payment_allocations WHERE record_id = $1 ORDER BY created_at FOR UPDATE', [record.record_id]
+  )).rows;
+  if (existing.some((a) => a.allocation_type === 'NEW_BOOKING')) {
+    fail(409, 'This payment created a new booking. Cancel or delete that booking first, then delete the payment.');
+  }
+  await lockWallet(client, clientId);
+  const before = {
+    total_amount: money(record.total_amount), payment_method: record.payment_method, reference_number: record.reference_number,
+    allocations: existing.map((a) => ({ type: a.allocation_type, amount: money(a.amount), booking_id: a.booking_id, description: a.description })),
+  };
+  for (const a of existing) {
+    if (a.allocation_type !== 'OTHER') {
+      await adjustWallet(client, clientId, -num(a.amount));
+      await adjustEarmark(client, a.booking_id, -num(a.amount));
+      effects.push(`Wallet credit of ${money(a.amount)} taken back${a.booking_id ? ' (and its booking earmark released)' : ''}`);
+    } else {
+      effects.push(`Income entry "${a.description}" of ${money(a.amount)} removed from the ledger`);
+    }
+    await client.query('DELETE FROM client_payment_allocations WHERE allocation_id = $1', [a.allocation_id]);
+    if (a.transaction_id) await client.query('DELETE FROM transactions WHERE transaction_id = $1', [a.transaction_id]);
+  }
+  const reopened = await restoreWalletFloor(client, clientId);
+  await client.query('DELETE FROM client_payment_records WHERE record_id = $1', [record.record_id]);
+  effects.push('Payment record deleted');
+  return { before, reopened, clientId };
+}
+
+async function deleteBookingPayment(client, { receipt, effects }) {
+  const bpt = (await client.query('SELECT * FROM booking_payment_tracking WHERE booking_payment_id = $1 FOR UPDATE', [receipt.source_id])).rows[0];
+  if (!bpt) fail(404, 'The booking payment behind this receipt no longer exists');
+  if (bpt.payment_method === 'WALLET') fail(409, 'Wallet draw-downs are not payments and cannot be deleted');
+  const linked = await client.query('SELECT 1 FROM client_payment_allocations WHERE booking_payment_id = $1 LIMIT 1', [bpt.booking_payment_id]);
+  if (linked.rows.length) fail(409, 'This booking payment is part of a recorded client payment. Delete that client payment instead.');
+
+  const oldAmount = money(bpt.amount_received);
+  const txRes = await client.query(
+    `SELECT transaction_id, ABS(EXTRACT(EPOCH FROM (created_at - $4::timestamptz))) AS gap
+     FROM transactions
+     WHERE booking_id = $1 AND category = 'BOOKING_PAYMENT' AND transaction_type = 'CREDIT'
+       AND payment_method IS NOT DISTINCT FROM $2 AND ABS(amount - $3) < 0.005
+     ORDER BY gap LIMIT 1 FOR UPDATE`,
+    [bpt.booking_id, bpt.payment_method, oldAmount, bpt.payment_date]
+  );
+  if (txRes.rows.length === 0 || num(txRes.rows[0].gap) > 120) {
+    fail(409, 'This payment\'s ledger entry could not be matched safely, so it cannot be deleted.');
+  }
+  await client.query('DELETE FROM booking_payment_tracking WHERE booking_payment_id = $1', [bpt.booking_payment_id]);
+  await client.query('DELETE FROM transactions WHERE transaction_id = $1', [txRes.rows[0].transaction_id]);
+  await recomputeBookingPaid(client, bpt.booking_id);
+  effects.push(`Booking payment of ${oldAmount} removed from the ledger; the booking's paid total and daily paid amounts were recomputed`);
+  return {
+    before: { amount: oldAmount, payment_method: bpt.payment_method, reference_number: bpt.reference_number, booking_id: bpt.booking_id },
+    reopened: [], clientId: bpt.client_id,
+  };
+}
+
+async function deleteProductInvoicePayment(client, { receipt, effects, warnings }) {
+  const cands = (await client.query(
+    `SELECT ip.*, ABS(EXTRACT(EPOCH FROM (COALESCE(t.created_at, ip.created_at) - $3::timestamptz))) AS gap
+     FROM invoice_payments ip LEFT JOIN transactions t ON t.transaction_id = ip.transaction_id
+     WHERE ip.invoice_id = $1 AND ABS(ip.amount - $2) < 0.005
+     ORDER BY gap, ip.created_at FOR UPDATE OF ip`,
+    [receipt.source_id, receipt.total_amount, receipt.payment_date]
+  )).rows;
+  if (cands.length === 0) fail(409, 'The invoice instalment behind this receipt could not be found');
+  if (cands.length > 1 && Math.abs(num(cands[0].gap) - num(cands[1].gap)) < 2) {
+    fail(409, 'This invoice has more than one identical instalment and this receipt cannot be matched to just one of them.');
+  }
+  const ip = cands[0];
+  await removeInvoiceInstalment(client, ip, effects, warnings);
+  return {
+    before: { amount: money(ip.amount), payment_method: ip.payment_method, reference_number: ip.reference_number, invoice_id: ip.invoice_id },
+    reopened: [], clientId: receipt.client_id,
+  };
+}
+
+async function deleteQuotePayment(client, { receipt, effects, warnings }) {
+  const clientId = receipt.client_id;
+  const items = Array.isArray(receipt.line_items) ? receipt.line_items : [];
+  const pt = (await client.query('SELECT * FROM payment_tracking WHERE payment_id = $1 FOR UPDATE', [receipt.source_id])).rows[0] || null;
+  await lockWallet(client, clientId);
+
+  let instalments = [];
+  let txRows = [];
+  let before;
+
+  if (pt) {
+    // Everything this payment wrote to the ledger (same match the edit engine uses).
+    txRows = (await client.query(
+      `SELECT transaction_id, category::text AS category, transaction_type, amount, payment_method,
+              booking_id, earmarked_booking_id
+       FROM transactions
+       WHERE client_id = $1
+         AND (payment_tracking_id = $2
+              OR (created_at = $3::timestamptz
+                  AND payment_method IS NOT DISTINCT FROM $4
+                  AND reference_number IS NOT DISTINCT FROM $5
+                  AND category::text IN ('REGISTRATION_FEE', 'WALLET_TOPUP', 'BOOKING_PAYMENT', 'PRODUCT_SALE', 'RENTAL_PAYMENT')))
+       FOR UPDATE`,
+      [clientId, pt.payment_id, pt.payment_date, pt.payment_method, pt.reference_number]
+    )).rows;
+    before = { amount_received: money(pt.amount_received), payment_method: pt.payment_method, reference_number: pt.reference_number, quote_id: pt.quote_id };
+  } else {
+    // A payment that only paid product/rental invoices has no payment_tracking row (the receipt
+    // points at the quotation). Resolve it from the receipt's own lines; anything else is refused.
+    const lines = items.filter((li) => li.label === 'Products & Rentals');
+    if (lines.length === 0 || lines.length !== items.length) {
+      fail(409, 'This quotation payment is not linked to a payment record and includes more than product/rental invoices, so it cannot be deleted safely.');
+    }
+    for (const li of lines) {
+      const ip = (await client.query(
+        `SELECT ip.*, ABS(EXTRACT(EPOCH FROM (ip.created_at - $3::timestamptz))) AS gap
+         FROM invoice_payments ip JOIN invoices i ON i.invoice_id = ip.invoice_id
+         WHERE i.invoice_code = $1 AND i.client_id = $4 AND ABS(ip.amount - $2) < 0.005
+         ORDER BY gap LIMIT 1 FOR UPDATE OF ip`,
+        [li.description, li.amount, receipt.created_at, clientId]
+      )).rows[0];
+      if (!ip || num(ip.gap) > 600) fail(409, `The instalment for invoice ${li.description} could not be matched safely, so this payment cannot be deleted.`);
+      instalments.push(ip);
+    }
+    before = { amount_received: money(receipt.total_amount), invoices: lines.map((l) => l.description) };
+  }
+
+  if (pt) {
+    // Guard against the time-based match picking up another payment's rows: what we are about to
+    // reverse must add up to exactly what this receipt says was received.
+    const cashRows = txRows.filter((t) => t.transaction_type === 'CREDIT' && t.payment_method !== 'WALLET');
+    const sum = money(cashRows.reduce((s, t) => s + num(t.amount), 0));
+    if (Math.abs(sum - money(receipt.total_amount)) > 0.01) {
+      fail(409, `The ledger entries found for this payment total ${sum}, not the receipt's ${money(receipt.total_amount)}, so it cannot be matched safely. Nothing was changed.`);
+    }
+  }
+
+  let regFeeRemoved = false;
+  for (const t of txRows) {
+    if (t.transaction_type !== 'CREDIT') continue;
+    if (t.category === 'REGISTRATION_FEE') {
+      await client.query('DELETE FROM transactions WHERE transaction_id = $1', [t.transaction_id]);
+      regFeeRemoved = true;
+      effects.push(`Registration fee payment of ${money(t.amount)} removed from the ledger`);
+    } else if (t.category === 'WALLET_TOPUP') {
+      await adjustWallet(client, clientId, -num(t.amount));
+      await adjustEarmark(client, t.earmarked_booking_id, -num(t.amount));
+      await client.query('DELETE FROM transactions WHERE transaction_id = $1', [t.transaction_id]);
+      effects.push(`Wallet credit of ${money(t.amount)} taken back${t.earmarked_booking_id ? ' (and its booking earmark released)' : ''}`);
+    } else if (t.category === 'BOOKING_PAYMENT') {
+      // Overpayment applied straight to an overdue booking.
+      const b = (await client.query(
+        `SELECT booking_payment_id FROM booking_payment_tracking
+         WHERE booking_id = $1 AND client_id = $2 AND status = 'VERIFIED' AND payment_method <> 'WALLET'
+           AND ABS(amount_received - $3) < 0.005 AND payment_date = $4::timestamptz
+         LIMIT 1 FOR UPDATE`,
+        [t.booking_id, clientId, t.amount, pt.payment_date]
+      )).rows[0];
+      if (b) {
+        await client.query('DELETE FROM client_payment_allocations WHERE booking_payment_id = $1', [b.booking_payment_id]);
+        await client.query('DELETE FROM booking_payment_tracking WHERE booking_payment_id = $1', [b.booking_payment_id]);
+      }
+      await client.query('DELETE FROM transactions WHERE transaction_id = $1', [t.transaction_id]);
+      await recomputeBookingPaid(client, t.booking_id);
+      effects.push(`Payment of ${money(t.amount)} applied to an overdue booking reversed`);
+    } else if (t.category === 'PRODUCT_SALE' || t.category === 'RENTAL_PAYMENT') {
+      const ip = (await client.query('SELECT * FROM invoice_payments WHERE transaction_id = $1 FOR UPDATE', [t.transaction_id])).rows[0];
+      if (!ip) fail(409, 'A product/rental ledger entry of this payment has no invoice instalment, so it cannot be deleted safely.');
+      instalments.push(ip);
+    }
+  }
+  for (const ip of instalments) await removeInvoiceInstalment(client, ip, effects, warnings);
+
+  // Registration fee no longer covered -> re-open it.
+  if (regFeeRemoved) {
+    const prof = (await client.query(
+      `SELECT reg_fee_status, reg_fee_amount, COALESCE(reg_fee_pre_system, false) AS pre_system
+       FROM client_profiles WHERE client_profile_id = $1`, [clientId]
+    )).rows[0];
+    const paidRes = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS paid FROM transactions
+       WHERE client_id = $1 AND category::text = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT'`, [clientId]
+    );
+    const invRes = await client.query(
+      `SELECT EXISTS (SELECT 1 FROM transactions WHERE client_id = $1 AND category::text = 'REGISTRATION_FEE' AND transaction_type = 'DEBIT') AS invoiced`, [clientId]
+    );
+    if (prof && prof.reg_fee_status === 'PAID' && !prof.pre_system && num(paidRes.rows[0].paid) < num(prof.reg_fee_amount) - 0.005) {
+      const next = invRes.rows[0].invoiced ? 'INVOICED' : 'PENDING';
+      await client.query(
+        `UPDATE client_profiles
+         SET reg_fee_status = $2, is_registration_fee_paid = false, reg_fee_paid_at = NULL, reg_fee_expires_at = NULL
+         WHERE client_profile_id = $1`, [clientId, next]
+      );
+      effects.push(`Client registration fee is no longer covered - status set back to ${next}`);
+      // The salesperson who was credited for this registration loses that credit and count.
+      const origin = (await client.query(
+        `SELECT id, salesperson_id, credited_amount, is_current FROM client_salesperson_assignments
+         WHERE client_id = $1 AND is_origin = true FOR UPDATE`, [clientId]
+      )).rows[0];
+      if (origin) {
+        await client.query(
+          `UPDATE internal_staff
+           SET registrations_total_amount = GREATEST(registrations_total_amount - $2, 0),
+               registrations_brought_count = GREATEST(registrations_brought_count - 1, 0),
+               updated_at = NOW()
+           WHERE id = $1`,
+          [origin.salesperson_id, num(origin.credited_amount)]
+        );
+        const total = (await client.query('SELECT COUNT(*)::int AS n FROM client_salesperson_assignments WHERE client_id = $1', [clientId])).rows[0].n;
+        if (total === 1) {
+          await client.query('DELETE FROM client_salesperson_assignments WHERE id = $1', [origin.id]);
+        } else {
+          // Keep the switch history; the row just stops being the credited origin.
+          await client.query('UPDATE client_salesperson_assignments SET is_origin = false, credited_amount = 0 WHERE id = $1', [origin.id]);
+        }
+        effects.push(`Salesperson registration credit of ${money(origin.credited_amount)} (and 1 registration count) deducted`);
+      }
+    }
+  }
+
+  const reopened = await restoreWalletFloor(client, clientId);
+
+  if (pt) {
+    // Any booking-side rows still pointing at the payment, then the payment itself
+    // (quote_line_item_payments go with it).
+    const left = (await client.query('SELECT booking_payment_id, booking_id FROM booking_payment_tracking WHERE payment_tracking_id = $1', [pt.payment_id])).rows;
+    for (const b of left) {
+      await client.query('DELETE FROM client_payment_allocations WHERE booking_payment_id = $1', [b.booking_payment_id]);
+      await client.query('DELETE FROM booking_payment_tracking WHERE booking_payment_id = $1', [b.booking_payment_id]);
+      await recomputeBookingPaid(client, b.booking_id);
+    }
+    await client.query('DELETE FROM payment_tracking WHERE payment_id = $1', [pt.payment_id]);
+    effects.push('Quotation payment record deleted (its per-charge allocations too)');
+  }
+  warnings.push('The quotation\'s combined invoice document, if one was generated, was not changed.');
+  return { before, reopened, clientId };
+}
+
+const DELETE_HANDLERS = {
+  CLIENT_PAYMENT: deleteClientPayment,
+  BOOKING_PAYMENT: deleteBookingPayment,
+  PRODUCT_INVOICE: deleteProductInvoicePayment,
+  QUOTE_PAYMENT: deleteQuotePayment,
+};
+
+async function deleteReceiptPayment({ receipt_id, reason, actor, dryRun = false }) {
+  const cleanReason = String(reason || '').trim();
+  if (!dryRun && cleanReason.length < 3) fail(400, 'A reason for deleting is required');
+
+  const client = await db.pool.connect();
+  const effects = [];
+  const warnings = [];
+  let receipt;
+  let chain = [];
+  let result = { before: {}, reopened: [] };
+  try {
+    await client.query('BEGIN');
+    receipt = (await client.query('SELECT * FROM payment_receipts WHERE receipt_id = $1 FOR UPDATE', [receipt_id])).rows[0];
+    if (!receipt) fail(404, 'Receipt not found');
+    if (receipt.voided_at && receipt.replaced_by_receipt_id) {
+      fail(409, 'This receipt was voided and replaced. Delete the current receipt instead - it removes the whole chain.');
+    }
+
+    if (receipt.voided_at) {
+      // Desk-voided: the payment was already reversed; only the leftover receipt remains.
+      effects.push('The payment was already voided and reversed - only the receipt record is removed');
+    } else {
+      const handler = DELETE_HANDLERS[receipt.source_type];
+      if (!handler) fail(422, `Payments of type ${receipt.source_type} cannot be deleted from here`);
+      result = await handler(client, { receipt, effects, warnings });
+    }
+
+    if (receipt.register_session_id) {
+      const s = (await client.query('SELECT status FROM cash_register_sessions WHERE session_id = $1', [receipt.register_session_id])).rows[0];
+      if (s && s.status === 'CLOSED') warnings.push('This payment was taken in a frontdesk register day that is already closed - that day\'s expected cash will no longer match what was counted.');
+    }
+
+    chain = (await client.query(RECEIPT_CHAIN_SQL, [receipt.receipt_id])).rows;
+    effects.push(`${chain.length} receipt${chain.length === 1 ? '' : 's'} deleted (${chain.map((c) => c.receipt_code).join(', ')})`);
+
+    if (dryRun) {
+      await client.query('ROLLBACK');
+      return { dry_run: true, receipt, effects, warnings, reopened: result.reopened };
+    }
+
+    const ids = chain.map((c) => c.receipt_id);
+    // Break the self-links first, then delete the whole chain.
+    await client.query('UPDATE payment_receipts SET replaced_by_receipt_id = NULL, replaces_receipt_id = NULL WHERE receipt_id = ANY($1::uuid[])', [ids]);
+    await client.query('DELETE FROM payment_receipts WHERE receipt_id = ANY($1::uuid[])', [ids]);
+
+    await client.query(
+      `INSERT INTO payment_edit_log
+         (client_id, source_type, source_id, old_receipt_id, new_receipt_id, reason,
+          before_state, after_state, reopened, edited_by, edited_by_name)
+       VALUES ($1,$2,$3,NULL,NULL,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9)`,
+      [receipt.client_id, receipt.source_type, receipt.source_id, cleanReason,
+        JSON.stringify({ ...result.before, receipts: chain.map((c) => c.receipt_code), total_amount: money(receipt.total_amount) }),
+        JSON.stringify({ deleted: true, effects }), JSON.stringify(result.reopened || []),
+        actor.user_id, actor.name]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Receipt PDFs are removed after commit (best effort - a leftover file is harmless).
+  const { deleteGeneratedFileByUrl } = require('../config/s3Config');
+  await Promise.all(chain.map((c) => deleteGeneratedFileByUrl(c.pdf_url)));
+
+  return { dry_run: false, receipt, effects, warnings, reopened: result.reopened, deleted_receipts: chain.map((c) => c.receipt_code) };
+}
+
 // What the edit form needs to open pre-filled: the payment's current details, whether (and
 // why not) its amount can be edited, its allocations, and the client's bookings to pick from.
 async function getEditContext(receipt_id) {
@@ -965,4 +1385,4 @@ async function getEditContext(receipt_id) {
   return ctx;
 }
 
-module.exports = { editReceiptPayment, voidReceiptPayment, getEditContext, PaymentEditError };
+module.exports = { editReceiptPayment, voidReceiptPayment, deleteReceiptPayment, getEditContext, PaymentEditError };

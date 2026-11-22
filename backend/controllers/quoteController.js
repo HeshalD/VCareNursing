@@ -10,6 +10,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials, markRegFeeInvoicedFromQuote } = require('../services/clientBootstrapService');
 const { createRentalAgreementCore, RentalAgreementError } = require('./rentalController');
+const { parseInvoiceDate, DATE_TO_TIMESTAMP_SQL } = require('../services/invoiceDate');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
 const { ensureInvoiceCharge, linkProductQuoteToBooking, payBookingProductInvoicesFromWallet } = require('../services/invoiceCharges');
@@ -2027,7 +2028,7 @@ async function isProductQuoteAccepted(executor, quoteId) {
 // product) what is owed to the vendor. A document-only invoice already raised for the line is
 // converted in place, keeping its invoice number and any payment on it, instead of billing twice.
 // Returns { invoice, vendorBill, created } or null when the line is already billed.
-async function billProductLine(pgClient, { quote, line, vendorDecision = {}, actorUserId = null, dueDate = null }) {
+async function billProductLine(pgClient, { quote, line, vendorDecision = {}, actorUserId = null, dueDate = null, invoiceDate = null }) {
     const existing = (await pgClient.query(`SELECT * FROM invoices WHERE line_item_id = $1 FOR UPDATE`, [line.line_item_id])).rows[0];
     if (existing && existing.category !== 'LINE_ITEM') return null;
 
@@ -2035,15 +2036,20 @@ async function billProductLine(pgClient, { quote, line, vendorDecision = {}, act
     if (existing) {
         invoice = (await pgClient.query(
             `UPDATE invoices SET category = 'PRODUCT', client_id = COALESCE(client_id, $2), walk_in_customer_id = COALESCE(walk_in_customer_id, $3),
-                    due_date = COALESCE(due_date, $4), pdf_url = NULL
+                    due_date = COALESCE(due_date, $4), pdf_url = NULL,
+                    created_at = COALESCE(${invoiceDate ? DATE_TO_TIMESTAMP_SQL('$5') : 'NULL'}, created_at)
              WHERE invoice_id = $1 RETURNING *`,
-            [existing.invoice_id, quote.client_id, quote.walk_in_customer_id, dueDate]
+            invoiceDate
+                ? [existing.invoice_id, quote.client_id, quote.walk_in_customer_id, dueDate, invoiceDate]
+                : [existing.invoice_id, quote.client_id, quote.walk_in_customer_id, dueDate]
         )).rows[0];
     } else {
         invoice = (await pgClient.query(
-            `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, due_date, created_by)
-             VALUES ('PRODUCT', $1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [quote.client_id, quote.walk_in_customer_id, quote.quote_id, line.line_item_id, line.amount, dueDate, actorUserId]
+            `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, due_date, created_by, created_at)
+             VALUES ('PRODUCT', $1, $2, $3, $4, $5, $6, $7, COALESCE(${invoiceDate ? DATE_TO_TIMESTAMP_SQL('$8') : 'NULL'}, CURRENT_TIMESTAMP)) RETURNING *`,
+            invoiceDate
+                ? [quote.client_id, quote.walk_in_customer_id, quote.quote_id, line.line_item_id, line.amount, dueDate, actorUserId, invoiceDate]
+                : [quote.client_id, quote.walk_in_customer_id, quote.quote_id, line.line_item_id, line.amount, dueDate, actorUserId]
         )).rows[0];
     }
     // Puts the invoice on the client's ledger (Total Invoiced, statements).
@@ -2117,7 +2123,7 @@ async function loadBillableLines(pgClient, quoteId) {
 //  - A companion quote built for a lead has no client yet: the lead's client account
 //    is created here (as the first payment would), so its invoices bill the client.
 //  - When the service quotation already has a booking, the invoices are tied to it.
-async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {}, actorUserId = null, dueDate = null } = {}) {
+async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {}, actorUserId = null, dueDate = null, invoiceDate = null } = {}) {
         const quoteResult = await pgClient.query(
             `SELECT * FROM quotations WHERE quote_id = $1 AND quote_type = 'PRODUCT' FOR UPDATE`,
             [quote_id]
@@ -2172,7 +2178,7 @@ async function acceptProductQuoteCore(pgClient, quote_id, { vendorPayments = {},
         // One invoice per remaining non-rental line (a line already invoiced on its own is skipped).
         const invoices = [];
         for (const line of lines.filter((li) => li.product_type !== 'RENTAL' && ['PRODUCT', 'DEPOSIT'].includes(li.item_type) && parseFloat(li.amount) > 0)) {
-            const billed = await billProductLine(pgClient, { quote, line, vendorDecision: vendorPayments[line.line_item_id], actorUserId, dueDate });
+            const billed = await billProductLine(pgClient, { quote, line, vendorDecision: vendorPayments[line.line_item_id], actorUserId, dueDate, invoiceDate });
             if (!billed) continue;
             invoices.push(billed.invoice);
             if (billed.vendorBill) createdVendorBills.push(billed.vendorBill);
@@ -2336,6 +2342,7 @@ exports.acceptProductQuote = async (req, res) => {
             vendorPayments: (req.body || {}).vendor_payments || {},
             actorUserId: req.user?.user_id || null,
             dueDate: (req.body || {}).due_date || null,
+            invoiceDate: parseInvoiceDate((req.body || {}).invoice_date),
         });
         await pgClient.query('COMMIT');
 
@@ -2364,8 +2371,8 @@ exports.acceptProductQuote = async (req, res) => {
         });
     } catch (error) {
         await pgClient.query('ROLLBACK');
-        if (error instanceof AcceptQuoteError) {
-            return res.status(error.status).json({ message: error.message });
+        if (error instanceof AcceptQuoteError || error.statusCode === 400) {
+            return res.status(error.status || 400).json({ message: error.message });
         }
         if (error instanceof RentalAgreementError) {
             return res.status(error.status).json({ message: error.message });

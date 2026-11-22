@@ -191,6 +191,7 @@ const PERMISSIONS = {
   // ── Receipts ──────────────────────────────────────────────────────────────
   RECEIPT_SEND:                { label: 'Send Receipt via WhatsApp',        module: 'Receipts', entity: 'Receipt', verb: 'Send', category: 'action' },
   RECEIPT_EDIT_PAYMENT:        { label: 'Edit Recorded Client Payment (voids & reissues receipt)', module: 'Receipts', entity: 'Receipt', verb: 'Edit Payment', category: 'action' },
+  RECEIPT_DELETE_PAYMENT:      { label: 'Delete Recorded Client Payment (reverses ledger, wallet & invoices; deletes receipts)', module: 'Receipts', entity: 'Receipt', verb: 'Delete Payment', category: 'action' },
 
   // ── Bank Accounts (Company) ───────────────────────────────────────────────
   BANK_ACCOUNT_CREATE:         { label: 'Create Bank Account',              module: 'Bank Accounts', entity: 'Company Bank Account', verb: 'Create',                   category: 'action' },

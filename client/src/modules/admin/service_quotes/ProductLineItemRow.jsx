@@ -9,13 +9,14 @@ const fmt = (n) =>
 // Product / Rental / Deposit line-item row (companion PRODUCT quotation).
 // Shared by ModularQuoteBuilder and CreateQuotationDrawer so both quote-
 // building surfaces render an identical table.
-const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onUpdate, onDelete }) => {
+const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onUpdate, onDelete, onProductCreated }) => {
   const rental = !!products.find((p) => p.product_id === item.product_id && p.product_type === 'RENTAL');
 
   const set = (patch) => onUpdate({ ...item, ...patch });
 
-  const selectProduct = (productId) => {
-    const product = products.find((p) => p.product_id === productId);
+  // `picked` is passed for a just-created product, which the parent's list doesn't hold yet.
+  const selectProduct = (productId, picked) => {
+    const product = picked || products.find((p) => p.product_id === productId);
     if (product) {
       set({ product_id: productId, description: product.name, unit_price: product.price, unit_id: '' });
     } else {
@@ -80,6 +81,7 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
             products={products}
             item={item}
             onSelectProduct={selectProduct}
+            onProductCreated={onProductCreated}
             onChangeDescription={(description) => set({ description })}
           />
         </td>

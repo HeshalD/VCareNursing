@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2, X, Search, Check, AlertCircle, Download, ChevronDown, ChevronLeft, ChevronRight,
-  MoreHorizontal, Upload, Tag, ExternalLink, ArrowUp, ArrowDown, RotateCcw, Image as ImageIcon, Trash2, Pencil, Ban,
+  MoreHorizontal, CalendarDays, Upload, Tag, ExternalLink, ArrowUp, ArrowDown, RotateCcw, Image as ImageIcon, Trash2, Pencil, Ban,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -12,18 +12,20 @@ import { invoicePaymentState, SALE_STATUS, SALE_BUCKET } from '../../../utils/in
 import { withHonorific } from '../../../utils/clientName';
 import { ClientLink } from '../components/EntityLinks';
 import useInvoiceAmountEditor from '../user_managemnet/useInvoiceAmountEditor';
-import DateInput, { todayISO } from '../../../components/common/DateInput';
+import DateInput, { todayISO, toLocalISO } from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
 import { HONORIFICS } from '../../../constants/honorifics';
+import {
+  btn, iconBtn, inputCls, textareaCls, MOTION_CSS, Segmented, Toggle, Field, ErrorBanner, useEscape, UiCtx, useUi,
+  Drawer, CATALOG_CARD_IMAGE_ASPECT, formatMoney,
+} from './productUi';
+import { ProductDrawer } from './ProductDrawer';
+import ProductAutocomplete from '../service_quotes/ProductAutocomplete';
 
-// Matches the public CatalogPage product card image box (square slot).
-const CATALOG_CARD_IMAGE_ASPECT = 1;
 const LOW_STOCK_THRESHOLD = 5;
 const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE'];
 
-const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
-const formatMoney = (v) => money.format(Number(v || 0));
 const formatDate = (v) => {
   if (!v) return '—';
   const d = new Date(v);
@@ -50,30 +52,6 @@ const DaysRemainingBadge = ({ date }) => {
 
 // ==================== DESIGN TOKENS ====================
 
-const BTN_BASE = 'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50';
-const BTN_VARIANT = {
-  primary: 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700',
-  secondary: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
-  danger: 'border-red-200 bg-white text-red-700 hover:bg-red-50',
-  dangerSolid: 'border-red-600 bg-red-600 text-white hover:bg-red-700',
-  success: 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800',
-};
-const BTN_SIZE = { md: 'h-9 px-3.5 text-[13px]', sm: 'h-[30px] px-2.5 text-xs' };
-const btn = (variant = 'secondary', size = 'md') => `${BTN_BASE} ${BTN_VARIANT[variant]} ${BTN_SIZE[size]}`;
-const iconBtn = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-600 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50';
-
-const inputCls = (invalid) => `h-9 w-full rounded-md border bg-white px-3 text-sm text-slate-800 placeholder-slate-500 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 ${invalid ? 'border-red-600' : 'border-slate-300 focus-visible:border-blue-500'}`;
-const textareaCls = (invalid) => `w-full rounded-md border bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-500 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 ${invalid ? 'border-red-600' : 'border-slate-300 focus-visible:border-blue-500'}`;
-
-const MOTION_CSS = `
-@keyframes pp-slide{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
-@keyframes pp-pop{from{transform:scale(.96);opacity:0}to{transform:none;opacity:1}}
-@keyframes pp-rise{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
-@keyframes pp-fade{from{opacity:0}to{opacity:1}}
-.pp-slide{animation:pp-slide 220ms ease-out}.pp-pop{animation:pp-pop 150ms ease-out}
-.pp-rise{animation:pp-rise 180ms ease-out}.pp-fade{animation:pp-fade 160ms ease-out}
-@media (prefers-reduced-motion:reduce){.pp-slide,.pp-pop,.pp-rise,.pp-fade{animation:none}}
-`;
 
 // ==================== SHARED PIECES ====================
 
@@ -121,45 +99,7 @@ function Kpi({ label, value, sub, active, tone, onClick }) {
   );
 }
 
-function Segmented({ options, value, onChange, ariaLabel }) {
-  return (
-    <div role="group" aria-label={ariaLabel} className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-lg bg-slate-100 p-[3px]">
-      {options.map((o) => {
-        const on = o.value === value;
-        return (
-          <button
-            key={String(o.value)}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onChange(o.value)}
-            className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-              on ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            {o.label}
-            {o.count != null && <span className="ml-1.5 font-medium tabular-nums text-slate-500">{o.count}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
-function Toggle({ checked, onChange, label, disabled }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-50 ${checked ? 'bg-blue-600' : 'bg-slate-300'}`}
-    >
-      <span className={`h-4 w-4 rounded-full bg-white transition-transform motion-reduce:transition-none ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
-    </button>
-  );
-}
 
 function SelectCheckbox({ checked, indeterminate = false, onChange, label }) {
   return (
@@ -174,36 +114,7 @@ function SelectCheckbox({ checked, indeterminate = false, onChange, label }) {
   );
 }
 
-function Field({ label, htmlFor, error, hint, children, className = '' }) {
-  return (
-    <div className={className}>
-      {label && <label htmlFor={htmlFor} className="mb-1.5 block text-[13px] font-semibold text-slate-700">{label}</label>}
-      {children}
-      {hint && !error && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
-      {error && <p role="alert" className="mt-1 text-xs text-red-700">{error}</p>}
-    </div>
-  );
-}
 
-function ErrorBanner({ message, onRetry, onDismiss }) {
-  if (!message) return null;
-  return (
-    <div role="alert" className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-      <AlertCircle className="h-4 w-4 shrink-0" />
-      <span className="flex-1">{message}</span>
-      {onRetry && (
-        <button type="button" onClick={onRetry} className={btn('danger', 'sm')}>
-          <RotateCcw className="h-3 w-3" /> Retry
-        </button>
-      )}
-      {onDismiss && (
-        <button type="button" onClick={onDismiss} aria-label="Dismiss error" className="rounded p-1 text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-          <X className="h-4 w-4" />
-        </button>
-      )}
-    </div>
-  );
-}
 
 function SkeletonRows({ rows = 6 }) {
   return (
@@ -325,18 +236,6 @@ function useUrlParams() {
   return [sp, update];
 }
 
-function useEscape(handler) {
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      // A confirm dialog on top handles Escape itself.
-      if (document.querySelector('[role="alertdialog"]') && !e.target.closest?.('[role="alertdialog"]')) return;
-      handler();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [handler]);
-}
 
 // Lets the page header's primary button open the active tab's "new" drawer.
 function useCreateSignal(tick, fn) {
@@ -348,8 +247,6 @@ function useCreateSignal(tick, fn) {
 
 // ==================== TOAST + CONFIRM ====================
 
-const UiCtx = createContext({ toast: () => {}, confirm: () => Promise.resolve(false) });
-const useUi = () => useContext(UiCtx);
 
 function ConfirmDialog({ title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', tone = 'primary', onConfirm, onCancel }) {
   useEscape(onCancel);
@@ -458,48 +355,6 @@ function Modal({ title, subtitle, onClose, footer, children, onSubmit, width = 6
   );
 }
 
-function Drawer({ title, subtitle, onClose, dirty = false, onSubmit, footer, children, width = 500 }) {
-  const { confirm } = useUi();
-  const requestClose = useCallback(async () => {
-    if (dirty) {
-      const ok = await confirm({
-        title: 'Discard unsaved changes?',
-        body: 'You have edits in this form that have not been saved.',
-        confirmLabel: 'Discard changes',
-        cancelLabel: 'Keep editing',
-        tone: 'danger',
-      });
-      if (!ok) return;
-    }
-    onClose();
-  }, [dirty, confirm, onClose]);
-  useEscape(requestClose);
-  const Shell = onSubmit ? 'form' : 'div';
-  const shellProps = onSubmit ? { onSubmit, noValidate: true } : {};
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" aria-label="Close panel" tabIndex={-1} onClick={requestClose} className="pp-fade absolute inset-0 cursor-default bg-slate-900/40" />
-      <Shell
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        {...shellProps}
-        className="pp-slide relative flex h-full w-full flex-col bg-white shadow-xl"
-        style={{ maxWidth: width }}
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
-          </div>
-          <button type="button" onClick={requestClose} aria-label="Close panel" className={iconBtn}><X className="h-4 w-4" /></button>
-        </div>
-        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">{children}</div>
-        {footer && <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3.5">{footer}</div>}
-      </Shell>
-    </div>
-  );
-}
 
 function RowMenu({ items, label = 'More actions' }) {
   const [pos, setPos] = useState(null);
@@ -1370,6 +1225,7 @@ function CatalogTab({ createTick, onCount }) {
           mode={drawer.mode}
           product={drawer.product}
           categories={categories}
+          existingNames={products.map((p) => p.name)}
           vendors={vendors}
           onClose={() => setDrawer(null)}
           onSaved={async ({ addAnother, name, created, visibilityFailed }) => {
@@ -1679,346 +1535,6 @@ function ProductPurchaseHistoryModal({ product, onClose }) {
   );
 }
 
-// ----- Category picker + product drawer -----
-
-const CATEGORY_PAGE_SIZE = 6;
-
-// Paginated, searchable list of existing categories plus an inline "add new" row.
-function CategoryPicker({ categories, value, onChange, onCreated }) {
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [addingNew, setAddingNew] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
-
-  const filtered = categories.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()));
-  const totalPages = Math.max(1, Math.ceil(filtered.length / CATEGORY_PAGE_SIZE));
-  const pageItems = filtered.slice((page - 1) * CATEGORY_PAGE_SIZE, page * CATEGORY_PAGE_SIZE);
-
-  useEffect(() => { setPage(1); }, [search]);
-
-  const selected = categories.find((c) => String(c.category_id) === String(value));
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    setCreateError('');
-    try {
-      const res = await apiClient.createProductCategory({ name: newName.trim() });
-      onCreated(res.data);
-      onChange(res.data.category_id);
-      setNewName('');
-      setAddingNew(false);
-    } catch (err) {
-      setCreateError(err?.message || 'Failed to create category');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const optionCls = (on) => `flex w-full items-center justify-between px-3 py-2 text-left text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${on ? 'bg-blue-50 font-semibold text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`;
-
-  return (
-    <div>
-      <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Category</span>
-      {selected && (
-        <div className="mb-2 flex w-fit items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-          <Tag className="h-3 w-3" /> {selected.name}
-          <button type="button" aria-label="Clear category" onClick={() => onChange('')} className="ml-1 rounded text-blue-700 hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      )}
-      <div className="overflow-hidden rounded-md border border-slate-300 bg-white">
-        <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1.5">
-          <Search className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
-          <input
-            type="text"
-            aria-label="Search categories"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search categories…"
-            className="w-full py-1 text-[13px] text-slate-700 placeholder-slate-500 outline-none"
-          />
-        </div>
-        <div className="divide-y divide-slate-100">
-          <button type="button" onClick={() => onChange('')} className={optionCls(!value)}>None</button>
-          {pageItems.length === 0 ? (
-            <p className="px-3 py-3 text-center text-[13px] text-slate-500">No categories found.</p>
-          ) : pageItems.map((c) => (
-            <button key={c.category_id} type="button" onClick={() => onChange(c.category_id)} className={optionCls(String(value) === String(c.category_id))}>
-              {c.name}
-              {String(value) === String(c.category_id) && <Check className="h-3.5 w-3.5 shrink-0" />}
-            </button>
-          ))}
-        </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-slate-100 px-2 py-1.5">
-            <button type="button" aria-label="Previous categories" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded p-1 text-slate-600 hover:bg-slate-100 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
-            <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
-            <button type="button" aria-label="Next categories" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="rounded p-1 text-slate-600 hover:bg-slate-100 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
-          </div>
-        )}
-        <div className="border-t border-slate-100 px-3 py-2">
-          {addingNew ? (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  autoFocus
-                  aria-label="New category name"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreate(); } }}
-                  placeholder="New category name"
-                  className={inputCls(false)}
-                />
-                <button type="button" onClick={handleCreate} disabled={creating || !newName.trim()} className={btn('primary', 'sm')}>{creating ? '…' : 'Add'}</button>
-                <button type="button" aria-label="Cancel new category" onClick={() => { setAddingNew(false); setNewName(''); setCreateError(''); }} className={iconBtn}><X className="h-4 w-4" /></button>
-              </div>
-              {createError && <p role="alert" className="text-xs text-red-700">{createError}</p>}
-            </div>
-          ) : (
-            <button type="button" onClick={() => setAddingNew(true)} className="rounded text-[13px] font-semibold text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-              + Add new category
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const blankProductForm = () => ({
-  name: '', product_type: 'ITEM', category_id: '', description: '', price: '', cost_price: '', stock_quantity: 0, vendor_id: '',
-});
-const formFromProduct = (p) => (p ? {
-  name: p.name || '',
-  product_type: p.product_type || 'ITEM',
-  category_id: p.category_id || '',
-  description: p.description || '',
-  price: p.price || '',
-  cost_price: p.cost_price ?? '',
-  stock_quantity: p.stock_quantity ?? 0,
-  vendor_id: p.vendor_id || '',
-} : blankProductForm());
-
-const TYPE_HELP = {
-  ITEM: 'Sold per unit with a tracked stock quantity.',
-  RENTAL: 'Rented out by the month. Availability comes from its units.',
-  ONE_TIME_SERVICE: 'Charged per visit or shift. Stock is not tracked.',
-};
-
-function ProductDrawer({ mode, product, categories, vendors, onClose, onSaved }) {
-  const isEdit = mode === 'edit';
-  const isSystem = !!product?.system_key && mode === 'edit';
-  const baselinePublic = isEdit ? product?.is_public !== false : true;
-  const [form, setForm] = useState(() => formFromProduct(product));
-  const [isPublicOn, setIsPublicOn] = useState(() => (product ? product.is_public !== false : true));
-  const [localCategories, setLocalCategories] = useState(categories);
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(product?.image_url || '');
-  const [imageToCrop, setImageToCrop] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState({});
-  const [serverError, setServerError] = useState('');
-  const baseline = useRef({ form: JSON.stringify(formFromProduct(product)), pub: product ? product.is_public !== false : true, image: product?.image_url || '' });
-
-  const dirty = JSON.stringify(form) !== baseline.current.form || isPublicOn !== baseline.current.pub || imagePreview !== baseline.current.image;
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-
-  const handleImageSelect = (file) => { if (file) setImageToCrop(file); };
-  const handleImageCropComplete = (croppedFile) => {
-    setImageToCrop(null);
-    setImageFile(croppedFile);
-    const reader = new FileReader();
-    reader.onloadend = () => setImagePreview(reader.result);
-    reader.readAsDataURL(croppedFile);
-  };
-
-  const priceN = parseFloat(form.price);
-  const costN = parseFloat(form.cost_price);
-  const showMargin = !Number.isNaN(priceN) && !Number.isNaN(costN) && form.cost_price !== '';
-  const margin = priceN - costN;
-  const marginPct = priceN > 0 ? Math.round((margin / priceN) * 100) : 0;
-
-  const resetForNext = () => {
-    const blank = { ...blankProductForm(), product_type: form.product_type };
-    setForm(blank);
-    setIsPublicOn(true);
-    setImageFile(null);
-    setImagePreview('');
-    setErrors({});
-    baseline.current = { form: JSON.stringify(blank), pub: true, image: '' };
-  };
-
-  const submit = async (addAnother) => {
-    setServerError('');
-    const errs = {};
-    if (!form.name) errs.name = 'Enter a product name.';
-    if (!form.price) errs.price = 'Enter a price.';
-    setErrors(errs);
-    if (Object.keys(errs).length) return;
-
-    setSaving(true);
-    try {
-      const payload = { ...form, category_id: form.category_id || '' };
-      let id = product?.product_id;
-      if (isEdit) {
-        await apiClient.updateProduct(product.product_id, { ...payload, is_available: product.is_available }, imageFile);
-      } else {
-        const res = await apiClient.createProduct(payload, imageFile);
-        id = res?.data?.product_id || res?.product_id;
-      }
-      let visibilityFailed = false;
-      if (isPublicOn !== baselinePublic) {
-        try {
-          if (!id) throw new Error('missing id');
-          await apiClient.setProductsVisibility([id], isPublicOn);
-        } catch {
-          visibilityFailed = true;
-        }
-      }
-      await onSaved({ addAnother, name: form.name, created: !isEdit, visibilityFailed });
-      if (addAnother) resetForNext();
-    } catch (err) {
-      setServerError(err?.message || 'Failed to save product');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <Drawer
-        title={isEdit ? 'Edit product' : mode === 'duplicate' ? 'Duplicate product' : 'New product'}
-        subtitle={isEdit ? 'Update this product in your catalog.' : 'Add a product, rental or service to your catalog.'}
-        dirty={dirty}
-        onClose={onClose}
-        onSubmit={(e) => { e.preventDefault(); submit(false); }}
-        footer={(
-          <>
-            <button type="button" onClick={onClose} className={btn('secondary')}>Cancel</button>
-            <span className="flex-1" />
-            {!isEdit && <button type="button" disabled={saving} onClick={() => submit(true)} className={btn('secondary')}>Save and add another</button>}
-            <button type="submit" disabled={saving} className={btn('primary')}>
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isEdit ? 'Save changes' : 'Create product'}
-            </button>
-          </>
-        )}
-      >
-        <ErrorBanner message={serverError} />
-
-        {isSystem && (
-          <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs text-blue-900">
-            This is a system product used by the quotation builders (transport). Its name, type and availability are fixed and it has no stock. You can change its default price, cost and description; the price is also set on each quotation.
-          </p>
-        )}
-
-        {!isSystem && (
-          <div>
-            <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Type</span>
-            <Segmented
-              ariaLabel="Product type"
-              value={form.product_type}
-              onChange={(v) => set({ product_type: v })}
-              options={[{ value: 'ITEM', label: 'Item' }, { value: 'RENTAL', label: 'Rental' }, { value: 'ONE_TIME_SERVICE', label: 'Service' }]}
-            />
-            <p className="mt-1.5 text-xs text-slate-500">{TYPE_HELP[form.product_type]}</p>
-          </div>
-        )}
-
-        <Field label="Name *" htmlFor="pd-name" error={errors.name}>
-          <input id="pd-name" type="text" value={form.name} disabled={isSystem} onChange={(e) => set({ name: e.target.value })} className={inputCls(!!errors.name)} />
-        </Field>
-
-        <CategoryPicker
-          categories={localCategories}
-          value={form.category_id}
-          onChange={(id) => set({ category_id: id })}
-          onCreated={(cat) => setLocalCategories((prev) => [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
-        />
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label={form.product_type === 'RENTAL' ? 'Rate per month (LKR) *' : 'Price (LKR) *'} htmlFor="pd-price" error={errors.price}>
-            <input id="pd-price" type="number" min="0" step="0.01" value={form.price} onChange={(e) => set({ price: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(!!errors.price)} />
-          </Field>
-          <Field label="Cost price (LKR)" htmlFor="pd-cost" hint="Used for the Profit & Loss report's COGS.">
-            <input id="pd-cost" type="number" min="0" step="0.01" value={form.cost_price} onChange={(e) => set({ cost_price: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
-          </Field>
-        </div>
-        {showMargin && (
-          <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px]">
-            <span className="text-slate-500">Estimated margin</span>
-            <b className={`tabular-nums ${margin >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatMoney(margin)} ({marginPct}%)</b>
-          </div>
-        )}
-
-        {form.product_type === 'ITEM' && !isSystem && (
-          <Field label="Stock quantity" htmlFor="pd-stock" className="max-w-[200px]">
-            <input id="pd-stock" type="number" value={form.stock_quantity} onChange={(e) => set({ stock_quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
-          </Field>
-        )}
-
-        {!isSystem && <Field label="Vendor" htmlFor="pd-vendor" hint="If this is sourced from an outside vendor, selecting it lets you record what's owed to them when it's sold or rented.">
-          <select id="pd-vendor" value={form.vendor_id} onChange={(e) => set({ vendor_id: e.target.value })} className={inputCls(false)}>
-            <option value="">In-house stock (no vendor)</option>
-            {vendors.map((v) => <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>)}
-          </select>
-        </Field>}
-
-        <Field label="Description" htmlFor="pd-desc">
-          <textarea id="pd-desc" rows={3} value={form.description} onChange={(e) => set({ description: e.target.value })} className={textareaCls(false)} />
-        </Field>
-
-        <div>
-          <span className="mb-1 block text-[13px] font-semibold text-slate-700">Image</span>
-          <p className="mb-2 text-xs text-slate-500">Crop to match how it appears on the public catalog card.</p>
-          {imagePreview ? (
-            <div className="flex items-center gap-4">
-              <img src={imagePreview} alt="Product preview" className="h-24 rounded-lg border border-slate-200 object-cover" style={{ aspectRatio: CATALOG_CARD_IMAGE_ASPECT }} />
-              <div className="flex flex-col gap-2">
-                <input type="file" id="product-image-change" className="sr-only" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); e.target.value = ''; }} />
-                <label htmlFor="product-image-change" className={`${btn('secondary', 'sm')} cursor-pointer`}><Upload className="h-3.5 w-3.5" /> Change</label>
-                <button type="button" onClick={() => { setImagePreview(''); setImageFile(null); }} className={btn('danger', 'sm')}>Remove</button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <input type="file" id="product-image-upload" className="sr-only" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); e.target.value = ''; }} />
-              <label htmlFor="product-image-upload" className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-600 transition-colors hover:bg-slate-100 focus-within:ring-2 focus-within:ring-blue-500">
-                <Upload className="mb-1 h-5 w-5" />
-                <span className="text-[13px] font-semibold">Click to upload</span>
-                <span className="text-xs text-slate-500">JPG or PNG</span>
-              </label>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 px-3.5 py-3">
-          <div>
-            <b className="text-sm text-slate-900">Show on public catalog</b>
-            <p className="text-xs text-slate-500">Customers can see this product on the website.</p>
-          </div>
-          <Toggle checked={isPublicOn} onChange={setIsPublicOn} label="Show on public catalog" />
-        </div>
-      </Drawer>
-
-      {imageToCrop && (
-        <div className="fixed inset-0 z-[60]">
-          <ImageCropModal
-            imageFile={imageToCrop}
-            aspect={CATALOG_CARD_IMAGE_ASPECT}
-            onCancel={() => setImageToCrop(null)}
-            onCropComplete={handleImageCropComplete}
-          />
-        </div>
-      )}
-    </>
-  );
-}
 
 // ==================== QUOTES & INVOICES TAB ====================
 
@@ -2414,6 +1930,7 @@ function QuotesTab({ createTick, onCount }) {
                                     <span className="min-w-0">
                                       <span className="flex flex-wrap items-center gap-2">
                                         <span className="font-mono text-[13px] text-slate-600">{inv.invoice_code}</span>
+                                        <span className="text-xs text-slate-500">{formatDate(inv.created_at)}</span>
                                         <StatusChip tone={state.tone}>{state.label}</StatusChip>
                                       </span>
                                       {inv.item_summary && <span className="block truncate text-xs text-slate-500">{inv.item_summary}</span>}
@@ -2426,6 +1943,11 @@ function QuotesTab({ createTick, onCount }) {
                                       {!state.settled && can('INVOICE_EDIT_AMOUNT') && (
                                         <button type="button" aria-label={`Edit amount of ${inv.invoice_code}`} title="Edit amount" onClick={() => openInvoiceEdit({ kind: 'PRODUCT', invoiceId: inv.invoice_id, currentAmount: inv.amount, paid: Number(inv.amount_paid || 0), label: inv.item_summary || 'Invoice', code: inv.invoice_code })} className={iconBtn}>
                                           <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                      )}
+                                      {inv.status !== 'CANCELLED' && can('INVOICE_EDIT_AMOUNT') && (
+                                        <button type="button" aria-label={`Change date of ${inv.invoice_code}`} title="Change invoice date" onClick={() => openInvoiceEdit({ kind: 'DATE', invoiceId: inv.invoice_id, currentDate: toLocalISO(inv.created_at), label: inv.item_summary || 'Invoice', code: inv.invoice_code })} className={iconBtn}>
+                                          <CalendarDays className="h-3.5 w-3.5" />
                                         </button>
                                       )}
                                       {!state.settled && can('INVOICE_CANCEL') && inv.category === 'PRODUCT' && inv.line_item_id && !(Number(inv.amount_paid) > 0.005) && (
@@ -2796,9 +2318,13 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
   const updateLineItem = (idx, patch) => setLineItems((items) => items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   const removeLineItem = (idx) => setLineItems((items) => items.filter((_, i) => i !== idx));
 
-  const selectProductForLine = (idx, productId) => {
-    const product = products.find((p) => p.product_id === productId);
-    updateLineItem(idx, { product_id: productId, description: product ? product.name : '', unit_price: product ? product.price : '', unit_id: '' });
+  // `picked` is a just-created product, which isn't in `products` until the state update lands.
+  const selectProductForLine = (idx, productId, picked) => {
+    const product = picked || products.find((p) => p.product_id === productId);
+    updateLineItem(idx, product
+      ? { product_id: productId, description: product.name, unit_price: product.price, unit_id: '' }
+      // Typing away from a chosen product detaches it; the typed text stays so the search continues.
+      : { product_id: '', unit_id: '' });
   };
 
   const lineTotal = (it) => (parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0);
@@ -2959,12 +2485,16 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
             return (
               <div key={idx} className={`space-y-2.5 rounded-lg border p-2.5 ${rental ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
                 <div className={LINE_GRID}>
-                  <select aria-label={`Product, line ${idx + 1}`} value={it.product_id} onChange={(e) => selectProductForLine(idx, e.target.value)} className={`${inputCls(false)} col-span-3 sm:col-span-1`}>
-                    <option value="">Select a product…</option>
-                    {products.map((p) => (
-                      <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
-                    ))}
-                  </select>
+                  <div className="col-span-3 sm:col-span-1 min-w-0">
+                    <ProductAutocomplete
+                      variant="boxed"
+                      products={products}
+                      item={it}
+                      onSelectProduct={(productId, picked) => selectProductForLine(idx, productId, picked)}
+                      onChangeDescription={(description) => updateLineItem(idx, { description })}
+                      onProductCreated={(np) => setProducts((prev) => [...prev, np])}
+                    />
+                  </div>
                   <input type="number" min="0" step="1" aria-label={`Quantity, line ${idx + 1}`} placeholder="Qty" value={it.quantity} onChange={(e) => updateLineItem(idx, { quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={`${inputCls(false)} tabular-nums`} />
                   <input type="number" min="0" step="0.01" aria-label={`Unit price, line ${idx + 1}`} placeholder="Unit price" value={it.unit_price} onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })} onWheel={(e) => e.target.blur()} className={`${inputCls(false)} tabular-nums`} />
                   <b className="text-right text-sm tabular-nums text-slate-900"><span className="sr-only">Line total </span>{formatMoney(lineTotal(it))}</b>
@@ -3424,6 +2954,8 @@ function RentalsTab({ createTick, onCount }) {
   const search = sp.get('search') || '';
   const filter = ['ending', 'overdue', 'recurring', 'deposit'].includes(sp.get('filter')) ? sp.get('filter') : '';
 
+  const { hasPermission: canDoRentals } = useAdminAuth();
+  const canCreateProduct = !!canDoRentals?.('PRODUCT_CREATE');
   const [rentalProducts, setRentalProducts] = useState([]);
   const [agreements, setAgreements] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3453,9 +2985,9 @@ function RentalsTab({ createTick, onCount }) {
 
   const openCreate = useCallback(() => {
     if (loading) { toast('Rentals are still loading — try again in a moment.'); return; }
-    if (rentalProducts.length === 0) { toast('Create a rental product in the Catalog tab first.'); return; }
+    if (rentalProducts.length === 0 && !canCreateProduct) { toast('Create a rental product in the Catalog tab first.'); return; }
     setDrawerOpen(true);
-  }, [loading, rentalProducts.length, toast]);
+  }, [loading, rentalProducts.length, canCreateProduct, toast]);
   useCreateSignal(createTick, openCreate);
 
   const recipientName = (a) => a.client_name || a.walk_in_name || '—';
@@ -3595,7 +3127,7 @@ function RentalsTab({ createTick, onCount }) {
       {drawerOpen && (
         <NewRentalAgreementDrawer
           rentalProducts={rentalProducts}
-          onClose={() => setDrawerOpen(false)}
+          onClose={() => { setDrawerOpen(false); fetchAll(); }}
           onCreated={() => { setDrawerOpen(false); fetchAll(); toast('Rental agreement created.'); }}
         />
       )}
@@ -3878,12 +3410,15 @@ function DepositsPanel() {
   );
 }
 
-function NewRentalAgreementDrawer({ rentalProducts, onClose, onCreated }) {
+function NewRentalAgreementDrawer({ rentalProducts: initialRentalProducts, onClose, onCreated }) {
+  // A rental product can be added from the product search, so the list is local to this drawer.
+  const [rentalProducts, setLocalRentalProducts] = useState(initialRentalProducts);
   const clientsState = useClientsList();
   const bank = useBankAccounts();
   const [units, setUnits] = useState([]);
   const [unitsError, setUnitsError] = useState('');
-  const [productId, setProductId] = useState(rentalProducts[0]?.product_id || '');
+  const [productId, setProductId] = useState(initialRentalProducts[0]?.product_id || '');
+  const [productQuery, setProductQuery] = useState(initialRentalProducts[0]?.name || '');
   const [recipientType, setRecipientType] = useState('client');
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
@@ -3921,12 +3456,11 @@ function NewRentalAgreementDrawer({ rentalProducts, onClose, onCreated }) {
 
   const selectedProduct = rentalProducts.find((p) => p.product_id === productId);
   const freeOf = (pid) => units.filter((u) => u.product_id === pid && u.status === 'AVAILABLE').length;
-  const totalOf = (pid) => units.filter((u) => u.product_id === pid).length;
 
-  const handleProductChange = (id) => {
+  const handleProductChange = (id, picked) => {
     setProductId(id);
-    const product = rentalProducts.find((p) => p.product_id === id);
-    if (product) setRate(product.price);
+    const product = picked || rentalProducts.find((p) => p.product_id === id);
+    if (product) { setRate(product.price); setProductQuery(product.name); }
     setVendorAmount(product?.cost_price || '');
     setVendorPayNow(false);
   };
@@ -4024,13 +3558,17 @@ function NewRentalAgreementDrawer({ rentalProducts, onClose, onCreated }) {
           error={errors.product}
           hint={productId && units.length > 0 ? 'The next free unit for this product is assigned automatically.' : undefined}
         >
-          <select id="ra-product" value={productId} onChange={(e) => handleProductChange(e.target.value)} className={inputCls(!!errors.product)}>
-            {rentalProducts.map((p) => (
-              <option key={p.product_id} value={p.product_id}>
-                {p.name}{units.length > 0 ? ` — ${freeOf(p.product_id)} of ${totalOf(p.product_id)} units free` : ''}
-              </option>
-            ))}
-          </select>
+          <ProductAutocomplete
+            variant="boxed"
+            products={rentalProducts}
+            typeFilter={['RENTAL']}
+            lockedType="RENTAL"
+            item={{ product_id: productId, description: productQuery }}
+            placeholder="Search rental products…"
+            onSelectProduct={(id, picked) => { if (id) handleProductChange(id, picked); else setProductId(''); }}
+            onChangeDescription={setProductQuery}
+            onProductCreated={(np) => setLocalRentalProducts((prev) => [...prev, np])}
+          />
           {productId && units.length > 0 && free === 0 && (
             <p role="alert" className="mt-1 text-xs font-semibold text-amber-700">No units are free for this product right now.</p>
           )}

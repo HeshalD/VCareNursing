@@ -10,7 +10,7 @@
 // ACLs because modern buckets have ACLs disabled (Object Ownership = Bucket
 // owner enforced), which would make `acl: 'public-read'` throw.
 
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 const REGION = process.env.AWS_REGION;
 const BUCKET = process.env.AWS_S3_BUCKET_NAME;
@@ -40,4 +40,22 @@ async function uploadBufferToS3(buffer, key, contentType = 'application/pdf') {
   return publicUrl(key);
 }
 
-module.exports = { s3, BUCKET, publicUrl, uploadBufferToS3 };
+// Best-effort removal of a generated document by its public URL. Only keys under one of the
+// allowed prefixes are ever deleted, so a stray/foreign URL can never remove something else.
+// Returns true if a delete was issued; never throws (a leftover file is harmless).
+async function deleteGeneratedFileByUrl(url, allowedPrefixes = ['payment_receipts/']) {
+  try {
+    if (!url || !BUCKET) return false;
+    const prefix = `https://${BUCKET}.s3.${REGION}.amazonaws.com/`;
+    if (!String(url).startsWith(prefix)) return false;
+    const key = decodeURIComponent(String(url).slice(prefix.length).split('?')[0]);
+    if (!allowedPrefixes.some((p) => key.startsWith(p)) || key.includes('..')) return false;
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+    return true;
+  } catch (err) {
+    console.error('[S3] delete failed:', err.message);
+    return false;
+  }
+}
+
+module.exports = { s3, BUCKET, publicUrl, uploadBufferToS3, deleteGeneratedFileByUrl };
