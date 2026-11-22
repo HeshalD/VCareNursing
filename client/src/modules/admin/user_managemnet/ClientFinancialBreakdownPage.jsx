@@ -172,7 +172,7 @@ function SectionCard({ section, open, onToggle, rows, onRowClick }) {
           <p className="border-t border-slate-100 px-5 py-6 text-sm text-slate-400">{section.empty}</p>
         ) : (
           <div className="overflow-x-auto border-t border-slate-200">
-            <div className="min-w-[640px]">
+            <div className="w-max min-w-full">
               <div className="grid items-center gap-x-3 border-b border-slate-200 bg-slate-50 px-4 py-2" style={{ gridTemplateColumns: cols }}>
                 {section.columns.map((c) => (
                   <div

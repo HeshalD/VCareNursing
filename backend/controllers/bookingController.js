@@ -43,6 +43,7 @@ const { closeActivePatternForPause } = require('../services/shiftPatternService'
 const { createApprovedLeave, notifyLeaveApproved, markOnLeaveIfActiveToday, findLeaveConflicts } = require('../services/staffLeaveService');
 const { drawWalletForBooking, getEarmarkedTotal } = require('../services/walletService');
 const { chargeRegistrationFeeForBooking } = require('../services/registrationFeeService');
+const { ensureRegFeeInvoiceDocs } = require('../services/regFeeInvoiceDocs');
 const { warnIfRegistrationIncomplete, blockIfRegistrationMissing } = require('../services/registrationFeeGuard');
 const { applyRegistrationChoice } = require('../services/regFeeAdminAction');
 const { isServiceDay } = require('../services/repeatDays');
@@ -1208,6 +1209,10 @@ const convertToBookingInternal = async (req, res) => {
         // Step 2C (Staff Assignment): POST /api/bookings/:booking_id/assign-staff (via staffAssignmentController)
 
         await client.query('COMMIT');
+
+        // The conversion may have booked the registration fee on the ledger; give it its invoice
+        // document now (no-op if one exists). Never blocks or fails the conversion.
+        if (clientProfileId) ensureRegFeeInvoiceDocs({ clientId: clientProfileId }).catch(() => {});
 
         try {
             const actorName = await getActorName(req.user.user_id);

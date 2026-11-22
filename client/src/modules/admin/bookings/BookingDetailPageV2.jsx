@@ -17,6 +17,9 @@ import { backdatedOldAmount, backdatedNewAmount } from './backdatedSwapPay';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import BookingSwitcherSidebar from './BookingSwitcherSidebar';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
+import { isRepeatDay } from '../../../utils/repeatDays';
+import { buildServiceCalendar, computeServedDays, computeServedShifts } from './careTimelineMath';
+import { formatDMY, formatRs, formatTimeWithDayOffset, formatWeekdayDMY, localDateISO } from './dayDisplay';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import TimeInput from '../../../components/common/TimeInput';
 import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
@@ -41,7 +44,7 @@ const formatDate   = (v) => { if (!v) return '-'; const d = new Date(v); return 
 const formatDT     = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); };
 const formatTime   = (t) => { if (!t) return '-'; const m = String(t).match(/^(\d{1,2}):(\d{2})/); if (!m) return '-'; return `${String(m[1]).padStart(2, '0')}:${m[2]}`; };
 const toDTLocal    = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); if (isNaN(d)) return ''; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
+const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : localDateISO(d); };
 // Local calendar date (not UTC) as YYYY-MM-DD — service_start_date/service_end_date are
 // UTC timestamps from Postgres, so slicing the raw ISO string misreads the day for
 // timezones ahead of UTC (e.g. Sri Lanka). Used for any same-day comparison against dates
@@ -884,7 +887,9 @@ const BookingDetailPageV2 = () => {
   const shiftsPerDay = shiftSlots.length || 0;
   const perDayCharge = isShiftBased ? shiftRate * shiftsPerDay : dailyRate;
   const daysUsed = dailyInvoiceRecords.filter(r => !r.shift_slot_id && r.status === 'INVOICED').length;
-  const paidDays = perDayCharge > 0 ? daysUsed + Math.floor(fundedForService / perDayCharge) : 0;
+  const paidDaysRaw = perDayCharge > 0 ? daysUsed + Math.floor(fundedForService / perDayCharge) : 0;
+  // A visit is a single day, however much has been paid in advance.
+  const paidDays = isVisiting ? Math.min(1, paidDaysRaw) : paidDaysRaw;
   // Plan length: for shift bookings the paid shifts spill onto a final partial
   // day when they don't divide evenly (e.g. 7 shifts @ 2/day = 4 days, last day
   // one shift) — ceil, so that odd shift isn't silently truncated off the plan.
@@ -893,30 +898,50 @@ const BookingDetailPageV2 = () => {
       if (!shiftRate || !shiftsPerDay || !shiftBank) return 0;
       return Math.ceil(shiftBank.paid / shiftsPerDay);
     }
-    return !dailyRate ? 0 : daysUsed + Math.floor(fundedForService / dailyRate);
-  }, [isShiftBased, shiftBank, shiftRate, shiftsPerDay, dailyRate, daysUsed, fundedForService]);
-  const servedDays = useMemo(() => {
-    // VISITING is a one-time visit — it only ever has a single service day, so
-    // servedDays is always 1, not the count of calendar days elapsed since start.
-    if (isVisiting) return 1;
-    if (!bookingSummary.start_date) return 0;
-    const today = new Date(); today.setHours(0,0,0,0);
-    const s = new Date(bookingSummary.start_date); s.setHours(0,0,0,0);
-    return Math.max(0, Math.floor((today - s) / 86400000) + 1);
-  }, [bookingSummary.start_date, isVisiting]);
-
-  const simServedDays = useMemo(() => {
-    if (isVisiting) return simDate ? 1 : null;
-    if (!simDate || !bookingSummary.start_date) return null;
-    const s = new Date(bookingSummary.start_date); s.setHours(0,0,0,0);
-    const e = new Date(simDate); e.setHours(0,0,0,0);
-    return Math.max(0, Math.floor((e - s) / 86400000) + 1);
-  }, [simDate, bookingSummary.start_date, isVisiting]);
+    if (!dailyRate) return 0;
+    const days = daysUsed + Math.floor(fundedForService / dailyRate);
+    return isVisiting ? Math.min(1, days) : days;
+  }, [isShiftBased, isVisiting, shiftBank, shiftRate, shiftsPerDay, dailyRate, daysUsed, fundedForService]);
+  // Day counts come from the same code the Care Timeline uses (pauses and weekly repeat
+  // days squeezed out), so the header cards and the timeline always agree. They stop at
+  // the real end of a COMPLETED / TERMINATED booking.
+  const careStart = useMemo(() => {
+    if (!bookingSummary.start_date) return null;
+    const d = new Date(bookingSummary.start_date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, [bookingSummary.start_date]);
+  const bookingCal = useMemo(() => buildServiceCalendar({
+    start: careStart, pauses: bookingPauses, serviceModel: bookingSummary.service_model,
+    repeatDays: bookingSummary.repeat_days || null, shiftSlots, reschedules: shiftReschedules,
+  }), [careStart, bookingPauses, bookingSummary.service_model, bookingSummary.repeat_days, shiftSlots, shiftReschedules]);
+  const capToBookingEnd = (base) => {
+    const d = new Date(base);
+    d.setHours(0, 0, 0, 0);
+    if (['completed', 'terminated'].includes((bookingSummary.status || '').toLowerCase()) && bookingSummary.actual_end_time) {
+      const end = new Date(bookingSummary.actual_end_time);
+      end.setHours(0, 0, 0, 0);
+      if (!isNaN(end.getTime()) && end < d) return end;
+    }
+    return d;
+  };
+  const servedDays = useMemo(
+    () => computeServedDays({ cal: bookingCal, start: careStart, today: capToBookingEnd(new Date()), serviceModel: bookingSummary.service_model }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bookingCal, careStart, bookingSummary.service_model, bookingSummary.status, bookingSummary.actual_end_time]
+  );
+  const simServedDays = useMemo(
+    () => (simDate
+      ? computeServedDays({ cal: bookingCal, start: careStart, today: capToBookingEnd(simDate), serviceModel: bookingSummary.service_model })
+      : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [simDate, bookingCal, careStart, bookingSummary.service_model, bookingSummary.status, bookingSummary.actual_end_time]
+  );
 
   // Shifts elapsed (servedDays × shifts/day) — what the "Shifts served" stat and
   // shift-based overdue projections use instead of dailyRate-based day math.
-  const servedShifts = servedDays * shiftsPerDay;
-  const simServedShifts = simServedDays !== null ? simServedDays * shiftsPerDay : null;
+  const servedShifts = computeServedShifts({ cal: bookingCal, servedDays, shiftsPerDay });
+  const simServedShifts = simServedDays !== null ? computeServedShifts({ cal: bookingCal, servedDays: simServedDays, shiftsPerDay }) : null;
   const shiftsPaidCount = shiftBank?.paid ?? 0;
 
   const simOutstanding = useMemo(() => {
@@ -1405,6 +1430,13 @@ const BookingDetailPageV2 = () => {
         if (hasSuccessor) return false;
       }
       return true;
+    }).map(a => {
+      // A standing shift whose weekday pattern skips this date isn't due — keep the row (so the
+      // day isn't silently missing) but flag it so the modal greys it out, like the calendar does.
+      if (!a.shift_slot_id || a.reschedule_id) return a;
+      const slot = shiftSlots.find(s => s.shift_slot_id === a.shift_slot_id);
+      const runs = !slot || isRepeatDay(Array.isArray(slot.repeat_days) ? slot.repeat_days.map(Number) : null, day);
+      return runs ? a : { ...a, _notScheduled: true };
     });
   };
 
@@ -3329,7 +3361,7 @@ const BookingDetailPageV2 = () => {
               <button onClick={fetchDetail} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' }}>
                 <RefreshCw style={{ width: 14, height: 14 }} /> Refresh
               </button>
-              {!isTerminated && !isPaused && !isScheduledStart && !normCurrentStaff && (
+              {!isTerminated && bookingStatus !== 'completed' && !isPaused && !isScheduledStart && activeAssignments.length === 0 && !currentStaff?.staff_profile_id && (
                 <button type="button" onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#2563eb', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
                 >
@@ -3345,7 +3377,7 @@ const BookingDetailPageV2 = () => {
                   <Pause style={{ width: 14, height: 14 }} /> Pause
                 </button>
               )}
-              {!isTerminated && !scheduledFinalization && (
+              {!isTerminated && bookingStatus !== 'completed' && !scheduledFinalization && (
                 <button onClick={openActionsModal} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#1e293b', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}>
                   <ShieldCheck style={{ width: 14, height: 14 }} /> Actions
                 </button>
@@ -3408,7 +3440,6 @@ const BookingDetailPageV2 = () => {
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13px] text-gray-500">
                   <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" />{bookingSummary.service_model || '—'}</span>
                   <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{salesData?.current?.salesperson_name || 'Unassigned'}</span>
-                  <span className="font-mono">{bookingSummary.booking_code || '—'}</span>
                   {clientDetails.client_name && (
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5" />
@@ -3515,7 +3546,7 @@ const BookingDetailPageV2 = () => {
           {/* ══════════════════════════════════════════════════════
               TABS — icon-only, tooltip on hover
           ══════════════════════════════════════════════════════ */}
-          <div className="flex gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit">
+          <div className="flex flex-wrap gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit max-w-full">
             {tabs.map(tab => {
               const Icon = tab.icon;
               return (
@@ -3524,13 +3555,14 @@ const BookingDetailPageV2 = () => {
                     type="button"
                     onClick={() => setActiveSection(tab.id)}
                     aria-label={tab.label}
-                    className={`flex items-center justify-center w-9 h-9 rounded-md transition-all ${
+                    className={`flex items-center justify-center h-9 rounded-md transition-all ${
                       activeSection === tab.id
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
+                        ? 'bg-white text-slate-900 shadow-sm gap-1.5 px-3'
+                        : 'text-slate-500 hover:text-slate-700 w-9'
                     }`}
                   >
                     <Icon className="w-4 h-4" />
+                    {activeSection === tab.id && <span className="text-xs font-semibold whitespace-nowrap">{tab.label}</span>}
                   </button>
                   <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
                     {tab.label}
@@ -3569,8 +3601,8 @@ const BookingDetailPageV2 = () => {
                       </div>
                       <div style={{ fontSize: 12.5, color: invoicingMode === 'AUTO' ? '#3F6B52' : '#8A4B45', marginTop: 2 }}>
                         {invoicingMode === 'AUTO'
-                          ? 'Billed automatically every night at 23:59. Staff salary is always automatic for LIVE_IN bookings.'
-                          : 'Confirm each day\'s client charge from the care timeline below. Staff salary stays automatic either way.'}
+                          ? 'Billed automatically every night at 23:59. Staff salary is automatic on middle days; the first and last day of each assignment are confirmed by you.'
+                          : 'Confirm each day\'s client charge from the care timeline below. Staff salary follows the same rule: automatic on middle days, confirmed by you on the first and last day of each assignment.'}
                       </div>
                       {autoBlockedByTwoStaff && (
                         <div style={{ fontSize: 12.5, color: '#b45309', marginTop: 4, fontWeight: 600 }}>{AUTO_BLOCKED_REASON}</div>
@@ -3743,6 +3775,8 @@ const BookingDetailPageV2 = () => {
                     dailyRate={dailyRate}
                     shiftRate={shiftRate}
                     totalPaid={totalPaid}
+                    paidDays={isShiftBased ? undefined : paidDays}
+                    paidShifts={isShiftBased ? (shiftBank?.paid ?? null) : null}
                     staffAssignments={staffHistory}
                     serviceModel={bookingSummary.service_model}
                     shiftSlots={shiftSlots}
@@ -6826,8 +6860,24 @@ const BookingDetailPageV2 = () => {
           STAFF_SALARY_CONFIRMED: 'Salary Calculated',
           STAFF_SALARY_SKIPPED: 'Salary Skipped',
           DAY_REVOKED: 'Revoked',
+          DAY_CONFIRMED: 'Day Confirmed',
+          DAILY_INVOICE_CONFIRMED: 'Invoice Confirmed',
+          DAILY_INVOICE_SKIPPED: 'Invoice Skipped',
+          SHIFT_INVOICE_CONFIRMED: 'Shift Invoice Confirmed',
+          SHIFT_INVOICE_SKIPPED: 'Shift Invoice Skipped',
+          SHIFT_OCCURRENCE_WAIVED: 'Shift Waived',
+          ATTENDANCE_TIME_EDITED: 'Time Edited',
+          AMOUNT_CORRECTED: 'Amount Corrected',
         };
-        const slotIds = [...new Set(dayModal.assignments.map(a => a.shift_slot_id).filter(Boolean))];
+        const slotIds = [...new Set(dayModal.assignments.filter(a => !a._notScheduled).map(a => a.shift_slot_id).filter(Boolean))];
+        // Shifts whose weekday pattern skips this date — shown greyed out, nothing to log or bill.
+        const offSlotIds = [...new Set(dayModal.assignments.filter(a => a._notScheduled && !attendanceRecords.some(r => r.assignment_id === a.assignment_id && r.service_date?.slice(0, 10) === dayModal.dateISO)).map(a => a.shift_slot_id))].filter(id => !slotIds.includes(id));
+        const invStatusLabel = (st) => (st === 'INVOICED' ? 'Invoiced' : st === 'REVOKED' ? 'Revoked' : 'Skipped');
+        const revokeCaption = (rec) => {
+          const text = [rec?.revoke_reason, SETTLEMENT_ACTION_LABELS[rec?.settlement_action], rec?.revoked_by_name ? `by ${rec.revoked_by_name}` : null].filter(Boolean).join(' — ');
+          return text ? <div className="mt-1 text-[10.5px] text-gray-500 max-w-[260px]">{text}</div> : null;
+        };
+        const hospitalizedToday = hospitalizationPeriods.some(p => p.started_date && dayModal.dateISO >= String(p.started_date).slice(0, 10) && (!p.ended_date || dayModal.dateISO <= String(p.ended_date).slice(0, 10)));
         // LIVE_IN AUTO bookings normally bill automatically overnight, but the client
         // is only with us for part of the first/last day — the cron leaves those days
         // PENDING (see cron/dailyInvoicing.js, bookingsStartingToday/bookingsEndingToday)
@@ -6870,14 +6920,21 @@ const BookingDetailPageV2 = () => {
               {/* Header */}
               <div className="flex items-center justify-between px-6 py-4 shrink-0" style={{ borderBottom: '1px solid #e5e7eb' }}>
                 <div>
-                  <h2 className="text-base font-semibold text-gray-900">Day {dayModal.dayNum} &mdash; {formatDate(dayModal.dateISO)}</h2>
+                  <h2 className="text-base font-semibold text-gray-900">Day {dayModal.dayNum} &mdash; {formatWeekdayDMY(dayModal.dateISO)}</h2>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: sm.bg, color: sm.col, borderRadius: 999, padding: '2px 8px', fontSize: 10.5, fontWeight: 600 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: sm.dot }} />{statusLabel}
+                    </span>
+                    {isOverdueBalance && <span style={{ background: '#fef2f2', color: '#991b1b', borderRadius: 999, padding: '2px 8px', fontSize: 10.5, fontWeight: 600 }}>Overdue balance</span>}
+                    {hospitalizedToday && <span style={{ background: '#FDF2F2', color: '#BC4338', borderRadius: 999, padding: '2px 8px', fontSize: 10.5, fontWeight: 600 }}>Hospitalized</span>}
+                  </div>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {dayModalStep === 'preview'
                       ? 'Review everything below — nothing is final until you confirm.'
                       : 'Enter attendance and invoicing — nothing is saved for real until you confirm.'}
                   </p>
                 </div>
-                <button onClick={closeDayModal} className="p-1.5 rounded-lg hover:bg-gray-100 transition ml-4">
+                <button aria-label="Close" onClick={closeDayModal} className="p-1.5 rounded-lg hover:bg-gray-100 transition ml-4">
                   <XCircle className="h-5 w-5 text-gray-400" />
                 </button>
               </div>
@@ -6942,12 +6999,12 @@ const BookingDetailPageV2 = () => {
                                   <StaffLink id={r.staffProfileId}><span className="font-medium text-gray-900">{r.staffName}</span></StaffLink>
                                   {r.kind === 'WAIVED' && <span className="text-xs text-amber-700">Waived — no pay</span>}
                                   {r.kind === 'ABSENT' && <span className="text-xs text-red-700">Absent — no pay</span>}
-                                  {r.kind === 'EXCEPTION' && <span className="text-xs text-orange-700">{EXCEPTION_LABELS[r.exception.attendance_status]} — no pay</span>}
+                                  {r.kind === 'EXCEPTION' && <span className="text-xs text-orange-700">{EXCEPTION_LABELS[r.exception.attendance_status]} — no pay{r.exception.notes ? ` · “${r.exception.notes}”` : ''}</span>}
                                   {(r.kind === 'TIME' || r.kind === 'PRESENT') && (
                                     <span className="text-xs text-gray-600">
-                                      {r.kind === 'TIME' ? `${formatHoursMins(r.saved.hours_served)} served` : 'Present'} —{' '}
+                                      {r.kind === 'TIME' ? `${fmtTime(r.saved.in_time)}–${formatTimeWithDayOffset(r.saved.out_time, r.saved.service_date)} · ${formatHoursMins(r.saved.hours_served)} served` : 'Present'} —{' '}
                                       {r.decision
-                                        ? (r.decision.approve ? `Rs.${Number(r.decision.amount).toLocaleString()} salary` : 'salary skipped')
+                                        ? (r.decision.approve ? `${formatRs(Number(r.decision.amount))} salary` : 'salary skipped')
                                         : r.payAtEnd ? 'pay settled when this assignment ends' : 'salary not yet decided'}
                                     </span>
                                   )}
@@ -6964,7 +7021,7 @@ const BookingDetailPageV2 = () => {
                               {invoicePreviewRows.map((r, idx) => (
                                 <div key={r.key} className="flex items-center justify-between px-4 py-2.5 text-sm" style={idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
                                   <span className="font-medium text-gray-900">{r.label}</span>
-                                  <span className="text-xs text-gray-600">{r.dec.approve ? `Rs.${Number(r.dec.amount).toLocaleString()}` : 'Skipped'}</span>
+                                  <span className="text-xs text-gray-600">{r.dec.approve ? `${formatRs(Number(r.dec.amount))}` : 'Skipped'}</span>
                                 </div>
                               ))}
                               {waivedSlotIds.map((slotId, idx) => {
@@ -6983,11 +7040,11 @@ const BookingDetailPageV2 = () => {
 
                         <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between text-sm">
                           <span className="text-gray-500">Total salary payout</span>
-                          <span className="font-semibold text-gray-900">Rs.{totalSalary.toLocaleString()}</span>
+                          <span className="font-semibold text-gray-900">{formatRs(totalSalary)}</span>
                         </div>
                         <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between text-sm">
                           <span className="text-gray-500">Total client charge</span>
-                          <span className="font-semibold text-gray-900">Rs.{totalInvoice.toLocaleString()}</span>
+                          <span className="font-semibold text-gray-900">{formatRs(totalInvoice)}</span>
                         </div>
                         {/* The totals above only cover what THIS confirm will apply — a day
                             already invoiced (earlier confirm, or the LIVE_IN nightly cron)
@@ -6997,7 +7054,7 @@ const BookingDetailPageV2 = () => {
                             .filter(r => r.status === 'INVOICED')
                             .reduce((sum, r) => sum + Number(r.amount || 0), 0);
                           return alreadyInvoiced > 0 ? (
-                            <p className="text-xs text-gray-400 -mt-2">Already invoiced for this day: Rs.{alreadyInvoiced.toLocaleString()} (not charged again)</p>
+                            <p className="text-xs text-gray-400 -mt-2">Already invoiced for this day: {formatRs(alreadyInvoiced)} (not charged again)</p>
                           ) : null;
                         })()}
                       </>
@@ -7067,8 +7124,8 @@ const BookingDetailPageV2 = () => {
                     {dayModal.assignments.length === 0 ? (
                       <p className="text-sm text-gray-400 py-4 text-center">No staff assigned on this day.</p>
                     ) : (
-                      <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                        <table className="w-full text-sm border-collapse">
+                      <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflowX: 'auto' }}>
+                        <table className="w-full min-w-[640px] text-sm border-collapse">
                           <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                             <tr>
                               <th className={thCls}>Staff</th>
@@ -7083,6 +7140,18 @@ const BookingDetailPageV2 = () => {
                           <tbody>
                             {dayModal.assignments.map((a, idx) => {
                               const record = dateRecords.find(r => r.assignment_id === a.assignment_id);
+                              if (a._notScheduled && !record) {
+                                const slotName = a.shift_label || (a.shift_number ? `Shift ${a.shift_number}` : 'This shift');
+                                return (
+                                  <tr key={a.assignment_id} style={{ ...(idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}), background: '#f9fafb', opacity: 0.6 }}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-500">{a.full_name || a.staff_name || 'Staff'}</span>
+                                      <span className="ml-2 text-[10px] font-semibold bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">{slotName}</span>
+                                    </td>
+                                    <td className={tdCls + ' text-xs text-gray-500 italic'} colSpan={6}>Not scheduled — this shift doesn&apos;t run on this weekday. Nothing to log or bill.</td>
+                                  </tr>
+                                );
+                              }
                               const staffName = a.full_name || a.staff_name || 'Staff';
                               const shiftLabel = a.shift_label || (a.shift_number ? `Shift ${a.shift_number}` : null);
                               // A time can already be on record here without going through this
@@ -7154,7 +7223,7 @@ const BookingDetailPageV2 = () => {
                                     className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : revoked ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
                                   >
                                     <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : revoked ? 'bg-red-500' : 'bg-gray-400'}`} />
-                                    {paid ? `Salary Calculated · Rs.${Number(record.salary_amount).toLocaleString()}` : revoked ? 'Revoked' : (exceptionLabel || (isAbsent ? 'Absent' : 'Skipped'))}
+                                    {paid ? `Salary Calculated · ${formatRs(Number(record.salary_amount))}` : revoked ? 'Revoked' : (exceptionLabel || (isAbsent ? 'Absent' : 'Skipped'))}
                                   </span>
                                 );
                                 return (
@@ -7167,13 +7236,13 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? (
-                                      <td className={tdCls} colSpan={5}>{statusBadge}</td>
+                                      <td className={tdCls} colSpan={5}>{statusBadge}{revoked && revokeCaption(record)}</td>
                                     ) : (
                                       <>
                                         {assignedCell}
-                                        <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
+                                        <td className={tdCls + ' text-gray-500 text-xs'}>{formatDMY(record.service_date)}</td>
                                         <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
-                                        <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
+                                        <td className={tdCls + ' tabular-nums'}>{formatTimeWithDayOffset(record.out_time, record.service_date?.slice(0, 10) || dayModal.dateISO)}</td>
                                         <td className={tdCls}><HoursBadge served={record.hours_served !== null ? Number(record.hours_served) : null} assigned={assignedHours} /></td>
                                       </>
                                     )}
@@ -7200,6 +7269,7 @@ const BookingDetailPageV2 = () => {
                                         )}
                                         {alreadyCovered && <span className="text-[10.5px] text-gray-400">Covered by another staff member</span>}
                                       </div>
+                                      {!isFlatMarkDay && revoked && revokeCaption(record)}
                                     </td>
                                   </tr>
                                 );
@@ -7217,7 +7287,7 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
-                                    <td className={tdCls} colSpan={3}>
+                                    <td className={tdCls} colSpan={4}>
                                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700">
                                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                                         Waived (draft) — no charge, no pay
@@ -7245,7 +7315,7 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
-                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 3}>
+                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 4}>
                                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-red-50 text-red-700">
                                         <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
                                         Absent (draft)
@@ -7280,7 +7350,7 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
-                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 3}>
+                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 4}>
                                       <span title={draftExceptionInfo.notes} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-orange-50 text-orange-700">
                                         <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
                                         {EXCEPTION_LABELS[draftExceptionInfo.attendance_status]} (draft)
@@ -7323,7 +7393,7 @@ const BookingDetailPageV2 = () => {
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${salaryDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
                                             <span className={`w-1.5 h-1.5 rounded-full ${salaryDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
-                                            {salaryDecision.approve ? `Salary (draft) · Rs.${Number(salaryDecision.amount).toLocaleString()}` : 'Salary Skipped (draft)'}
+                                            {salaryDecision.approve ? `Salary (draft) · ${formatRs(Number(salaryDecision.amount))}` : 'Salary Skipped (draft)'}
                                           </span>
                                           <button onClick={() => undoSalaryDecision(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
                                         </div>
@@ -7335,7 +7405,7 @@ const BookingDetailPageV2 = () => {
                                             onChange={e => setSalaryAmountInputs(p => ({ ...p, [a.assignment_id]: e.target.value }))}
                                             onWheel={e => e.currentTarget.blur()}
                                             className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
-                                            placeholder="0.00"
+                                            placeholder="Salary Rs." aria-label="Salary for this day (Rs.)"
                                           />
                                           <button onClick={() => decideSalary(a.assignment_id, true, a.daily_rate)} title="Calculates their earnings for this day off the flat daily rate" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition">Calculate Salary</button>
                                           <button onClick={() => decideSalary(a.assignment_id, false)} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Skip</button>
@@ -7361,9 +7431,9 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
-                                    <td className={tdCls + ' text-gray-500 text-xs'}>{draftSaved.service_date}</td>
+                                    <td className={tdCls + ' text-gray-500 text-xs'}>{formatDMY(draftSaved.service_date)}</td>
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(draftSaved.in_time)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(draftSaved.out_time)}</td>
+                                    <td className={tdCls + ' tabular-nums'}>{formatTimeWithDayOffset(draftSaved.out_time, draftSaved.service_date)}</td>
                                     <td className={tdCls}><HoursBadge served={Number(draftSaved.hours_served)} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
                                       {/* A LIVE_IN assignment's first and last day are paid for at
@@ -7378,7 +7448,7 @@ const BookingDetailPageV2 = () => {
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${salaryDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
                                             <span className={`w-1.5 h-1.5 rounded-full ${salaryDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
-                                            {salaryDecision.approve ? `Salary (draft) · Rs.${Number(salaryDecision.amount).toLocaleString()}` : 'Salary Skipped (draft)'}
+                                            {salaryDecision.approve ? `Salary (draft) · ${formatRs(Number(salaryDecision.amount))}` : 'Salary Skipped (draft)'}
                                           </span>
                                           <button onClick={() => undoSalaryDecision(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
                                           <button onClick={() => editAttendanceTimes(a)} title="Correct the logged in/out time" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
@@ -7391,7 +7461,7 @@ const BookingDetailPageV2 = () => {
                                             onChange={e => setSalaryAmountInputs(p => ({ ...p, [a.assignment_id]: e.target.value }))}
                                             onWheel={e => e.currentTarget.blur()}
                                             className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
-                                            placeholder="0.00"
+                                            placeholder="Salary Rs." aria-label="Salary for this day (Rs.)"
                                           />
                                           <button onClick={() => decideSalary(a.assignment_id, true, a.daily_rate)} title="Calculates their earnings for this shift — actual payout is handled separately on the Staff Salaries page" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition">Calculate Salary</button>
                                           <button onClick={() => decideSalary(a.assignment_id, false)} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Skip</button>
@@ -7419,9 +7489,9 @@ const BookingDetailPageV2 = () => {
                                       </StaffLink>
                                     </td>
                                     {assignedCell}
-                                    <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
+                                    <td className={tdCls + ' text-gray-500 text-xs'}>{formatDMY(record.service_date)}</td>
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
+                                    <td className={tdCls + ' tabular-nums'}>{formatTimeWithDayOffset(record.out_time, record.service_date?.slice(0, 10) || dayModal.dateISO)}</td>
                                     <td className={tdCls}><HoursBadge served={loggedHours} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -7551,6 +7621,9 @@ const BookingDetailPageV2 = () => {
                                   {assignedCell}
                                   <td className={tdCls}>
                                     <DateInput value={inputs.date || dayModal.dateISO} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, date: e.target.value } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" />
+                                    {inputs.date && inputs.date !== dayModal.dateISO && (
+                                      <span className="block text-[10px] text-amber-600 mt-0.5">Saves to {formatDMY(inputs.date)}, not this day</span>
+                                    )}
                                   </td>
                                   <td className={tdCls}>
                                     {onlyEnd ? (
@@ -7620,8 +7693,8 @@ const BookingDetailPageV2 = () => {
                         <p className="text-xs text-amber-700 mt-1">Two staff are on duty today, but the client has already been invoiced for the whole day, so it can't also be billed per staff member. Use Correct to change the amount, or revoke the day's invoice first to split it.</p>
                       )}
                     </div>
-                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                      <table className="w-full text-sm border-collapse">
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflowX: 'auto' }}>
+                      <table className="w-full min-w-[640px] text-sm border-collapse">
                         <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                           <tr>
                             <th className={thCls}>{isShiftBased ? 'Shift' : splitInvoicePerStaff ? 'Staff' : 'Day'}</th>
@@ -7640,12 +7713,12 @@ const BookingDetailPageV2 = () => {
                               return (
                                 <tr key={a.assignment_id} style={rowBorder}>
                                   <td className={tdCls + ' font-medium text-gray-900'}>{staffLabel}</td>
-                                  <td className={tdCls + ' tabular-nums'}>{invoiced ? `Rs.${Number(assignmentInvoiceRecord.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{invoiced ? `${formatRs(Number(assignmentInvoiceRecord.amount))}` : '—'}</td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiced ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiced ? 'bg-green-50 text-green-700' : assignmentInvoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
                                         <span className={`w-1.5 h-1.5 rounded-full ${invoiced ? 'bg-green-500' : 'bg-gray-400'}`} />
-                                        {invoiced ? 'Invoiced' : 'Skipped'}
+                                        {invStatusLabel(assignmentInvoiceRecord.status)}
                                       </span>
                                       {invoiced && correctEnabled && (
                                         <button
@@ -7661,6 +7734,7 @@ const BookingDetailPageV2 = () => {
                                       )}
                                       {invoiced && <EditedAmountBadge record={assignmentInvoiceRecord} />}
                                     </div>
+                                    {assignmentInvoiceRecord.status === 'REVOKED' && revokeCaption(assignmentInvoiceRecord)}
                                   </td>
                                 </tr>
                               );
@@ -7669,7 +7743,7 @@ const BookingDetailPageV2 = () => {
                               return (
                                 <tr key={a.assignment_id} style={rowBorder}>
                                   <td className={tdCls + ' font-medium text-gray-900'}>{staffLabel}</td>
-                                  <td className={tdCls + ' tabular-nums'}>{draftDecision.approve ? `Rs.${Number(draftDecision.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{draftDecision.approve ? `${formatRs(Number(draftDecision.amount))}` : '—'}</td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5">
                                       <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${draftDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -7696,7 +7770,7 @@ const BookingDetailPageV2 = () => {
                                 </td>
                               </tr>
                             );
-                          }) : isShiftBased && slotIds.length > 0 ? slotIds.map((slotId, idx) => {
+                          }) : isShiftBased ? [...slotIds.map((slotId, idx) => {
                             const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
                             const shiftLabel = slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift');
                             const slotInvoiceRecord = dateInvoiceRecords.find(r => r.shift_slot_id === slotId);
@@ -7708,12 +7782,13 @@ const BookingDetailPageV2 = () => {
                               return (
                                 <tr key={slotId} style={rowBorder}>
                                   <td className={tdCls + ' font-medium text-gray-900'}>{shiftLabel}</td>
-                                  <td className={tdCls + ' tabular-nums'}>{invoiced ? `Rs.${Number(slotInvoiceRecord.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{invoiced ? `${formatRs(Number(slotInvoiceRecord.amount))}` : '—'}</td>
                                   <td className={tdCls}>
-                                    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiced ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiced ? 'bg-green-50 text-green-700' : slotInvoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
                                       <span className={`w-1.5 h-1.5 rounded-full ${invoiced ? 'bg-green-500' : 'bg-gray-400'}`} />
-                                      {invoiced ? 'Invoiced' : 'Skipped'}
+                                      {invStatusLabel(slotInvoiceRecord.status)}
                                     </span>
+                                    {slotInvoiceRecord.status === 'REVOKED' && revokeCaption(slotInvoiceRecord)}
                                   </td>
                                 </tr>
                               );
@@ -7739,7 +7814,7 @@ const BookingDetailPageV2 = () => {
                               return (
                                 <tr key={slotId} style={rowBorder}>
                                   <td className={tdCls + ' font-medium text-gray-900'}>{shiftLabel}</td>
-                                  <td className={tdCls + ' tabular-nums'}>{draftDecision.approve ? `Rs.${Number(draftDecision.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{draftDecision.approve ? `${formatRs(Number(draftDecision.amount))}` : '—'}</td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5">
                                       <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${draftDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -7767,12 +7842,25 @@ const BookingDetailPageV2 = () => {
                                 </td>
                               </tr>
                             );
-                          }) : (
+                          }), ...offSlotIds.map((slotId) => {
+                            const a = dayModal.assignments.find(x => x.shift_slot_id === slotId);
+                            const slotName = a?.shift_label || (a?.shift_number ? `Shift ${a.shift_number}` : 'Shift');
+                            return (
+                              <tr key={`off-${slotId}`} style={{ background: '#f9fafb', opacity: 0.6, borderTop: '1px solid #f3f4f6' }}>
+                                <td className={tdCls + ' font-medium text-gray-500'}>{slotName}</td>
+                                <td className={tdCls + ' text-xs text-gray-500 italic'} colSpan={2}>Not scheduled on this weekday — nothing to bill</td>
+                              </tr>
+                            );
+                          }), ...(slotIds.length === 0 && offSlotIds.length === 0 ? [(
+                            <tr key="no-shifts">
+                              <td className={tdCls + ' text-xs text-gray-500 italic'} colSpan={3}>No shifts to invoice on this day.</td>
+                            </tr>
+                          )] : [])] : (
                             <tr>
                               <td className={tdCls + ' font-medium text-gray-900'}>Day {dayModal.dayNum}</td>
                               {invoiceRecord && invoiceRecord.status !== 'PENDING' ? (
                                 <>
-                                  <td className={tdCls + ' tabular-nums'}>{invoiceRecord.status === 'INVOICED' ? `Rs.${Number(invoiceRecord.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{invoiceRecord.status === 'INVOICED' ? `${formatRs(Number(invoiceRecord.amount))}` : '—'}</td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span
@@ -7780,8 +7868,9 @@ const BookingDetailPageV2 = () => {
                                         className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiceRecord.status === 'INVOICED' ? 'bg-green-50 text-green-700' : invoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
                                       >
                                         <span className={`w-1.5 h-1.5 rounded-full ${invoiceRecord.status === 'INVOICED' ? 'bg-green-500' : invoiceRecord.status === 'REVOKED' ? 'bg-red-500' : 'bg-gray-400'}`} />
-                                        {invoiceRecord.status === 'INVOICED' ? 'Invoiced' : invoiceRecord.status === 'REVOKED' ? 'Revoked' : 'Skipped'}
+                                        {invStatusLabel(invoiceRecord.status)}
                                       </span>
+                                      {invoiceRecord.status === 'REVOKED' && <div className="basis-full">{revokeCaption(invoiceRecord)}</div>}
                                       {/* The day was correctly billable — only the figure was wrong. */}
                                       {invoiceRecord.status === 'INVOICED' && correctEnabled && (
                                         <button
@@ -7801,7 +7890,7 @@ const BookingDetailPageV2 = () => {
                                 </>
                               ) : draftInvoiceDecisions.day ? (
                                 <>
-                                  <td className={tdCls + ' tabular-nums'}>{draftInvoiceDecisions.day.approve ? `Rs.${Number(draftInvoiceDecisions.day.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{draftInvoiceDecisions.day.approve ? `${formatRs(Number(draftInvoiceDecisions.day.amount))}` : '—'}</td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5">
                                       <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${draftInvoiceDecisions.day.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -7833,12 +7922,50 @@ const BookingDetailPageV2 = () => {
                   </div>
                 )}
 
+                {/* ── Client invoice, read-only — LIVE_IN days that bill automatically ── */}
+                {!showInvoiceSection && (() => {
+                  const auto = invoiceRecord || dateInvoiceRecords.find(r => r.status === 'INVOICED') || dateInvoiceRecords[0] || null;
+                  return (
+                    <div className="px-6 pt-2 pb-6">
+                      <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Client Invoice</p>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm flex items-center justify-between gap-3 flex-wrap">
+                        {auto ? (
+                          <>
+                            <span className="flex items-center gap-2 flex-wrap">
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${auto.status === 'INVOICED' ? 'bg-green-50 text-green-700' : auto.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                                {invStatusLabel(auto.status)}
+                              </span>
+                              {auto.status === 'INVOICED' && <span className="tabular-nums text-gray-800">{formatRs(auto.amount)}</span>}
+                              <EditedAmountBadge record={auto} />
+                              {auto.status === 'REVOKED' && revokeCaption(auto)}
+                            </span>
+                            {auto.status === 'INVOICED' && correctEnabled && auto.daily_invoice_id && (
+                              <button
+                                onClick={() => openCorrection({
+                                  kind: 'INVOICE', id: auto.daily_invoice_id, dateISO: dayModal.dateISO,
+                                  currentAmount: Number(auto.amount), who: clientDetails.client_name || 'the client',
+                                })}
+                                title="The day was correctly billed, but this amount is wrong — restate it"
+                                className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition"
+                              >
+                                Correct
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-xs text-gray-500">Billed automatically overnight — nothing to decide for this day.</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* ── History ── */}
                 {dayHistory.length > 0 && (
                   <div className="px-6 pt-2 pb-6">
                     <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-3">History</p>
-                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                      <table className="w-full text-sm border-collapse">
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflowX: 'auto' }}>
+                      <table className="w-full min-w-[640px] text-sm border-collapse">
                         <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                           <tr>
                             <th className={thCls}>When</th>
@@ -7852,14 +7979,15 @@ const BookingDetailPageV2 = () => {
                             const d = h.details || {};
                             const detailBits = [
                               d.hours_served != null ? `${formatHoursMins(d.hours_served)} served` : null,
-                              d.amount != null ? `Rs.${Number(d.amount).toLocaleString()}` : null,
+                              d.amount != null ? `${/INVOICE/.test(h.action_type) ? 'Invoice ' : /SALARY/.test(h.action_type) ? 'Salary ' : ''}${formatRs(d.amount)}` : null,
+                              d.net_delta != null ? `net change ${formatRs(d.net_delta)}` : null,
                               d.reason || null,
                               d.notes && d.notes !== 'Marked absent — no-show' ? d.notes : null,
                             ].filter(Boolean);
                             return (
                               <tr key={h.log_id} style={idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
                                 <td className={tdCls + ' text-xs text-gray-500 whitespace-nowrap'}>
-                                  {new Date(h.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                                  {formatDMY(h.created_at)} {fmtTime(h.created_at)}
                                 </td>
                                 <td className={tdCls}>{HISTORY_ACTION_LABEL[h.action_type] || h.action_type}</td>
                                 <td className={tdCls + ' text-xs text-gray-600'}>{h.actor_name}{h.actor_role ? ` (${h.actor_role})` : ''}</td>
@@ -7929,7 +8057,7 @@ const BookingDetailPageV2 = () => {
                     {formatDate(correctionTarget.dateISO)} · {correctionTarget.who}
                   </p>
                 </div>
-                <button onClick={closeCorrection} className="p-1.5 rounded-lg hover:bg-gray-100 transition">
+                <button aria-label="Close" onClick={closeCorrection} className="p-1.5 rounded-lg hover:bg-gray-100 transition">
                   <XCircle className="h-5 w-5 text-gray-400" />
                 </button>
               </div>
@@ -7945,7 +8073,7 @@ const BookingDetailPageV2 = () => {
                   <div>
                     <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Current</label>
                     <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm tabular-nums text-gray-500">
-                      Rs.{Number(correctionTarget.currentAmount).toLocaleString()}
+                      {formatRs(Number(correctionTarget.currentAmount))}
                     </div>
                   </div>
                   <div>
@@ -7967,11 +8095,11 @@ const BookingDetailPageV2 = () => {
                   <div className={`rounded-lg border px-3 py-2.5 text-xs ${delta > 0 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
                     {isSalary
                       ? (delta > 0
-                          ? `Rs.${Math.abs(delta).toLocaleString()} will be added to ${correctionTarget.who}'s wallet.`
-                          : `Rs.${Math.abs(delta).toLocaleString()} will be clawed back from ${correctionTarget.who}'s wallet.`)
+                          ? `${formatRs(Math.abs(delta))} will be added to ${correctionTarget.who}'s wallet.`
+                          : `${formatRs(Math.abs(delta))} will be clawed back from ${correctionTarget.who}'s wallet.`)
                       : (delta > 0
-                          ? `The client will be charged an extra Rs.${Math.abs(delta).toLocaleString()}, drawn from their wallet if it holds enough.`
-                          : `The client's charge drops by Rs.${Math.abs(delta).toLocaleString()}. No money leaves the company — settle any surplus when the booking closes.`)}
+                          ? `The client will be charged an extra ${formatRs(Math.abs(delta))}, drawn from their wallet if it holds enough.`
+                          : `The client's charge drops by ${formatRs(Math.abs(delta))}. No money leaves the company — settle any surplus when the booking closes.`)}
                   </div>
                 )}
                 {delta === 0 && (

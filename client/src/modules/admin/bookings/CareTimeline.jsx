@@ -1,7 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock, Undo2, Check, Cross, CalendarOff } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
-import { isRepeatDay, describeRepeatDays } from '../../../utils/repeatDays';
+import { describeRepeatDays } from '../../../utils/repeatDays';
+import { buildServiceCalendar, computeServedDays, shiftDays, toLocalISO } from './careTimelineMath';
+import {
+  formatDMY, formatShortDay, formatFullDay, formatRs, formatTimeHM, formatTimeWithDayOffset,
+  localDateISO, ATTENDANCE_STATUS_LABELS, SALARY_STATUS_LABELS,
+} from './dayDisplay';
 
 const useIsMobile = (query = '(max-width: 639px)') => {
   const [match, setMatch] = useState(
@@ -44,6 +49,7 @@ const EVENT_CFG = {
   STAFF_SCHEDULED:           { color: '#7C3AED', Icon: UserCheck,     label: 'Scheduled staff change' },
   CLIENT_TERMINATION_REQUEST:{ color: '#F59E0B', Icon: AlertTriangle, label: 'Termination requested by client' },
   BOOKING_END:               { color: '#6B7280', Icon: CheckCircle2,  label: 'Planned booking end' },
+  ASSIGNMENT_END:            { color: '#7C3AED', Icon: UserCheck,     label: 'Staff assignment ends' },
 };
 
 // Per-service-model badge colours
@@ -60,13 +66,12 @@ const metaLabel = (meta, doneWord) => {
   if (meta.status === 'AWAITING_PAY') return 'Day confirmed — pay settled at end';
   if (meta.status === 'SKIPPED') return 'Skipped';
   if (meta.status === 'REVOKED') return 'Revoked';
-  return `${doneWord} Rs ${Number(meta.amount || 0).toLocaleString('en-US')}`;
+  return `${doneWord} ${formatRs(meta.amount)}`;
 };
 
-const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-const fmtFull  = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-const shiftDays = (base, n) => { const d = new Date(base); d.setDate(d.getDate() + n); return d; };
-const toLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const fmtShort = formatShortDay;
+const fmtFull  = formatFullDay;
+const metaColor = (status) => META_COLOR[status] || '#B4AEA3';
 
 // Returns CSS background value for a cell based on service model and assigned nurses
 const buildCellBackground = (nurses, delivered, serviceModel) => {
@@ -95,6 +100,8 @@ const CareTimeline = ({
   dailyRate,
   shiftRate = 0,         // SHIFT_BASED: client charge per shift — daily figures derive from this, never dailyRate
   totalPaid,
+  paidDays: paidDaysProp = null, // service days the booking's funding covers — computed by the page from the ledger (totalPaid is only the wallet still unspent)
+  paidShifts = null,     // SHIFT_BASED: shifts covered by funding (delivered + still fundable)
   staffAssignments = [],
   serviceModel,          // 'LIVE_IN' | 'VISITING' | 'SHIFT_BASED'
   shiftSlots = [],       // [{ shift_slot_id, shift_number, label, start_time, repeat_days }]
@@ -125,7 +132,7 @@ const CareTimeline = ({
   // rather than Super-Admin-only, so the two flags are independent.
   correctEnabled = false,
   onCorrectDays,         // async ({ service_dates, target, invoice_amount, salary_amount, reason }) => void
-  hospitalizationPeriods = [], // [{ started_date, ended_date }] — booking_hospitalizations rows, ended_date null = ongoing
+  hospitalizationPeriods = [], // [{ started_date, ended_date, hospital_name }] — booking_hospitalizations rows, ended_date null = ongoing
 }) => {
   const [monthOffset,   setMonthOffset]   = useState(null);
   const [hoveredDay,    setHoveredDay]    = useState(null);
@@ -230,198 +237,39 @@ const CareTimeline = ({
     return d;
   }, [startDate]);
 
-  const effectiveToday = useMemo(() => {
+  // The date the viewer is "at" (real today, or the simulated date) — used for the Today marker.
+  const markerToday = useMemo(() => {
     const d = simDate ? new Date(simDate) : new Date();
     d.setHours(0, 0, 0, 0);
     return d;
   }, [simDate]);
+  const todayISO = toLocalISO(markerToday);
 
-  // ── Pause windows ─────────────────────────────────────────────────────────
-  // A pause blanks out the calendar days between when it started and when it (or its
-  // target resume date) ends — those days look locked/greyed, don't count as service,
-  // and don't get their own "Day N" number. Everything from the resume day onward picks
-  // the numbering back up right where the pause began, so a week-long pause never makes
-  // the client's day count jump by a week for nothing.
-  const pauseWindows = useMemo(() => {
-    if (!start || !pauses.length) return [];
-    const dayNumOf = (dateStr) => {
-      if (!dateStr) return null;
-      const d = new Date(dateStr);
-      if (isNaN(d)) return null;
-      d.setHours(0, 0, 0, 0);
-      return Math.round((d - start) / 86400000) + 1;
-    };
-    return pauses
-      .map((p) => ({
-        pausedDayNum: dayNumOf(p.paused_date),
-        // An already-resumed pause is bounded by when it ACTUALLY resumed, not the
-        // (possibly missed/changed) target resume_date it was set to.
-        endDayNum: p.resumed_date ? dayNumOf(p.resumed_date) : dayNumOf(p.resume_date),
-        openEnded: !p.resumed_date && !p.resume_date,
-      }))
-      .filter((w) => w.pausedDayNum != null)
-      .sort((a, b) => a.pausedDayNum - b.pausedDayNum);
-  }, [pauses, start]);
-
-  // Resolves a raw (uncompressed) calendar day-number to whether it falls inside a
-  // locked gap, and — if not — its display day-number with prior gaps squeezed out.
-  const resolvePauseOnly = (rawDayNum) => {
-    let locked = false;
-    let compress = 0;
-    for (const w of pauseWindows) {
-      if (w.openEnded) {
-        if (rawDayNum > w.pausedDayNum) locked = true;
-        continue;
-      }
-      const gapStart = w.pausedDayNum + 1;
-      const gapEnd = w.endDayNum - 1;
-      if (gapEnd < gapStart) continue; // resumed same/next day — no visible gap
-      if (rawDayNum >= gapStart && rawDayNum <= gapEnd) locked = true;
-      else if (rawDayNum > gapEnd) compress += (gapEnd - gapStart + 1);
+  // Day counts stop at the real end of a COMPLETED / TERMINATED booking — days after
+  // it were never served, so they must not keep growing as overdue.
+  const effectiveToday = useMemo(() => {
+    const d = new Date(markerToday);
+    if (completionDate && ['COMPLETED', 'TERMINATED'].includes((bookingStatus || '').toUpperCase())) {
+      const end = new Date(completionDate);
+      end.setHours(0, 0, 0, 0);
+      if (!Number.isNaN(end.getTime()) && end < d) return end;
     }
-    return { locked, displayDayNum: rawDayNum - compress };
-  };
+    return d;
+  }, [markerToday, completionDate, bookingStatus]);
 
-  // Inverse of resolvePauseOnly's compression — plannedDays/paidDays are day-COUNTS
-  // (effective/compressed scale, e.g. "9 days of paid service"), but the calendar grid
-  // needs a RAW calendar day-number to know how many real dates to render. Without
-  // this, a paused booking's grid gets cut short by exactly the length of its pause
-  // gap(s) — the last few paid days after resuming never appear.
-  const pauseCountToRawDay = (target) => {
-    let raw = target;
-    for (const w of pauseWindows) {
-      if (w.openEnded) break; // nothing meaningfully "beyond" an open-ended pause
-      const gapStart = w.pausedDayNum + 1;
-      const gapEnd = w.endDayNum - 1;
-      if (gapEnd < gapStart) continue;
-      if (raw >= gapStart) raw += (gapEnd - gapStart + 1);
-    }
-    return raw;
-  };
-
-  // ── Weekly repeat days ────────────────────────────────────────────────────
-  // A booking (LIVE_IN, via repeatDays) or individual shifts (SHIFT_BASED, via each
-  // slot's repeat_days) can run only on chosen weekdays. A weekday nothing runs on is
-  // a "day off": like a pause gap it gets no Day number, isn't counted as served, paid
-  // or overdue, and the numbering carries on from the next service day — mirroring the
-  // backend, which never bills, pays or seeds anything for those days.
-  // With no repeat days set, every helper below falls straight through to the
-  // pause-only versions, so ordinary bookings behave exactly as before.
-  const hasRepeatDays = useMemo(() => {
-    const restricts = (days) => Array.isArray(days) && days.length > 0 && days.length < 7;
-    if (serviceModel === 'LIVE_IN') return restricts(repeatDays);
-    if (isShiftBased) return shiftSlots.some((s) => restricts(s.repeat_days));
-    return false;
-  }, [serviceModel, isShiftBased, repeatDays, shiftSlots]);
-
-  const slotRunsOn = (slot, date) =>
-    isRepeatDay(Array.isArray(slot?.repeat_days) ? slot.repeat_days.map(Number) : null, date);
-
-  // Lazily-extended day index: how many off days precede a raw day, and which raw day
-  // is the Nth service day. Pause gaps are excluded here (they're already compressed by
-  // resolvePauseOnly), and an open-ended pause is treated like pauseCountToRawDay does.
-  const serviceCalendar = useMemo(() => {
-    const liveInDays = Array.isArray(repeatDays) ? repeatDays.map(Number) : null;
-    const makeupCount = new Map(); // dateISO -> makeup shifts landing there
-    reschedules.forEach((r) => {
-      const key = r.new_date?.slice(0, 10);
-      if (key) makeupCount.set(key, (makeupCount.get(key) || 0) + 1);
-    });
-    const dateOf = (raw) => { const d = shiftDays(start, raw - 1); d.setHours(12, 0, 0, 0); return d; };
-    const inClosedGap = (raw) => pauseWindows.some((w) =>
-      !w.openEnded && raw >= w.pausedDayNum + 1 && raw <= w.endDayNum - 1);
-    // Shifts actually running on a raw day: natural slots repeating that weekday, or —
-    // on a day none repeat — any makeup shifts moved onto it (which make it a service day).
-    const shiftsOn = (raw) => {
-      if (!start) return 0;
-      const date = dateOf(raw);
-      const natural = shiftSlots.filter((s) => slotRunsOn(s, date)).length;
-      return natural > 0 ? natural : (makeupCount.get(toLocalISO(date)) || 0);
-    };
-    const isOff = (raw) => {
-      if (!hasRepeatDays || !start) return false;
-      if (serviceModel === 'LIVE_IN') return !isRepeatDay(liveInDays, dateOf(raw));
-      if (isShiftBased) return shiftSlots.length > 0 && shiftsOn(raw) === 0;
-      return false;
-    };
-
-    const MAX_RAW = 20000;
-    const offPrefix = [0];
-    const serviceRaws = [];
-    let scanned = 0;
-    const extendTo = (raw) => {
-      while (scanned < Math.min(raw, MAX_RAW)) {
-        scanned++;
-        const gap = inClosedGap(scanned);
-        const off = !gap && isOff(scanned);
-        offPrefix[scanned] = offPrefix[scanned - 1] + (off ? 1 : 0);
-        if (!gap && !off) serviceRaws.push(scanned);
-      }
-    };
-    return {
-      isOff,
-      shiftsOn,
-      offCount: (raw) => {
-        if (raw <= 0) return 0;
-        extendTo(raw);
-        return offPrefix[Math.min(raw, scanned)];
-      },
-      nthRaw: (n) => {
-        if (n <= 0) return n;
-        while (serviceRaws.length < n && scanned < MAX_RAW) extendTo(scanned + 64);
-        return serviceRaws[n - 1] ?? (scanned + (n - serviceRaws.length));
-      },
-    };
-  }, [hasRepeatDays, start, serviceModel, isShiftBased, repeatDays, shiftSlots, reschedules, pauseWindows]);
-
-  // Pause- and day-off-aware versions of the two helpers above — used everywhere below.
-  const resolvePauseDay = (rawDayNum) => {
-    const base = resolvePauseOnly(rawDayNum);
-    if (!hasRepeatDays) return { ...base, off: false };
-    return {
-      locked: base.locked,
-      off: !base.locked && serviceCalendar.isOff(rawDayNum),
-      displayDayNum: base.displayDayNum - serviceCalendar.offCount(rawDayNum),
-    };
-  };
-  const effectiveCountToRawDay = (target) =>
-    hasRepeatDays ? serviceCalendar.nthRaw(target) : pauseCountToRawDay(target);
+  // ── Service calendar (pauses + weekly repeat days) — see careTimelineMath.js ──
+  const cal = useMemo(
+    () => buildServiceCalendar({ start, pauses, serviceModel, repeatDays, shiftSlots, reschedules }),
+    [start, pauses, serviceModel, repeatDays, shiftSlots, reschedules]
+  );
+  const { pauseWindows, hasRepeatDays, serviceCalendar, slotRunsOn, resolvePauseDay, effectiveCountToRawDay } = cal;
 
   // ── Day counts ────────────────────────────────────────────────────────────
 
-  const servedDays = useMemo(() => {
-    // VISITING is a one-time visit — it only ever has a single service day, so
-    // servedDays is always 1 (never inflates with elapsed calendar days, and never
-    // drops to 0 before the visit date either).
-    if (serviceModel === 'VISITING') return 1;
-    if (!start) return 0;
-    const rawDayNum = Math.max(0, Math.floor((effectiveToday - start) / 86400000) + 1);
-    if (rawDayNum === 0) return 0;
-    // While "today" sits inside a locked gap (or past an open-ended pause with no
-    // resume date), service isn't actually happening — freeze the count at the day
-    // the pause started rather than let real calendar time keep inflating it.
-    for (const w of pauseWindows) {
-      if (w.openEnded) {
-        if (rawDayNum > w.pausedDayNum) return resolvePauseDay(w.pausedDayNum).displayDayNum;
-        continue;
-      }
-      const gapStart = w.pausedDayNum + 1;
-      const gapEnd = w.endDayNum - 1;
-      if (gapEnd >= gapStart && rawDayNum >= gapStart && rawDayNum <= gapEnd) {
-        return resolvePauseDay(w.pausedDayNum).displayDayNum;
-      }
-    }
-    return resolvePauseDay(rawDayNum).displayDayNum;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, effectiveToday, pauseWindows, hasRepeatDays, serviceCalendar]);
-
-  // Today is a weekday the booking doesn't run on — no cell should claim "Today".
-  const todayIsOff = useMemo(() => {
-    if (!hasRepeatDays || !start) return false;
-    const rawToday = Math.floor((effectiveToday - start) / 86400000) + 1;
-    return rawToday >= 1 && resolvePauseDay(rawToday).off;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasRepeatDays, start, effectiveToday, serviceCalendar]);
+  const servedDays = useMemo(
+    () => computeServedDays({ cal, start, today: effectiveToday, serviceModel }),
+    [cal, start, effectiveToday, serviceModel]
+  );
 
   // SHIFT_BASED bookings are billed per shift, so a "day" of payment covers one
   // full pattern of shifts (shift_rate × shifts/day) — dailyRate plays no part.
@@ -433,8 +281,9 @@ const CareTimeline = ({
     // Shifts repeating on different weekdays: a day is worth however many shifts
     // actually run on it, so walk the service days spending the paid shifts.
     if (isShiftBased && hasRepeatDays) {
-      if (!Number(shiftRate) || !shiftSlots.length) return 0;
-      let budget = Math.floor(Number(totalPaid || 0) / Number(shiftRate));
+      if (!shiftSlots.length) return 0;
+      if (paidShifts == null && !Number(shiftRate)) return 0;
+      let budget = paidShifts != null ? Math.floor(Number(paidShifts)) : Math.floor(Number(totalPaid || 0) / Number(shiftRate));
       let n = 0;
       while (n < 10000) {
         const c = serviceCalendar.shiftsOn(serviceCalendar.nthRaw(n + 1));
@@ -444,14 +293,21 @@ const CareTimeline = ({
       }
       return n;
     }
+    // The page derives funding from the ledger (days already invoiced + what the wallet
+    // still covers). totalPaid alone is only the unspent wallet, so it undercounts any
+    // day that has already been invoiced.
+    if (isShiftBased && paidShifts != null) return shiftSlots.length ? Math.floor(Number(paidShifts) / shiftSlots.length) : 0;
+    if (!isShiftBased && paidDaysProp != null) return Math.max(0, Number(paidDaysProp) || 0);
     if (!effectiveDayRate || effectiveDayRate <= 0) return 0;
     return Math.floor(Number(totalPaid || 0) / effectiveDayRate);
-  }, [totalPaid, effectiveDayRate, isShiftBased, hasRepeatDays, shiftRate, shiftSlots, serviceCalendar]);
+  }, [totalPaid, paidDaysProp, paidShifts, effectiveDayRate, isShiftBased, hasRepeatDays, shiftRate, shiftSlots, serviceCalendar]);
 
   // Plan length in service days. The parent's figure divides paid shifts by a fixed
   // shifts/day, which no longer holds once shifts repeat on different weekdays — then
   // count the service days needed to use up plannedShifts (ceil: a partial last day counts).
   const plannedDays = useMemo(() => {
+    // A visit is a single day, however much has been paid in advance.
+    if (serviceModel === 'VISITING') return Math.min(1, plannedDaysProp || 0);
     if (!(isShiftBased && hasRepeatDays) || plannedShifts == null) return plannedDaysProp;
     let remaining = Number(plannedShifts) || 0;
     let n = 0;
@@ -460,7 +316,7 @@ const CareTimeline = ({
       n++;
     }
     return n;
-  }, [isShiftBased, hasRepeatDays, plannedShifts, plannedDaysProp, serviceCalendar]);
+  }, [serviceModel, isShiftBased, hasRepeatDays, plannedShifts, plannedDaysProp, serviceCalendar]);
 
   // Latest day-number implied by any known future event (a SCHEDULED staff start,
   // an admin-scheduled action, a pending termination request, or a queued shift
@@ -503,9 +359,16 @@ const CareTimeline = ({
   // Overrun ("beyond booking end") only makes sense relative to a real paid plan.
   // An unpaid booking has no plan to exceed — every served day is simply unpaid/
   // overdue, rendered like the others rather than flagged as "beyond booking end".
-  const overrunDays  = hasPlan ? Math.max(0, servedDays - plannedDays) : 0;
-  const overdueCount  = Math.max(0, servedDays - paidDays);
-  const upcomingCount = Math.max(0, (plannedDays || 0) - servedDays);
+  // A visit only counts as delivered once its date has arrived.
+  const visitDelivered = start ? markerToday >= start : false;
+  const servedForCounts = serviceModel === 'VISITING' ? (visitDelivered ? 1 : 0) : servedDays;
+  const overrunDays  = hasPlan ? Math.max(0, servedForCounts - plannedDays) : 0;
+  // paid / overdue / upcoming never overlap: paid is capped at what was delivered, and
+  // prepaid days still ahead are the only "upcoming" ones.
+  const paidShown     = Math.min(paidDays, servedForCounts);
+  const overdueCount  = Math.max(0, servedForCounts - paidDays);
+  const upcomingCount = Math.max(0, (plannedDays || 0) - servedForCounts);
+  const barTotal      = Math.max(plannedDays || 0, servedForCounts, 1);
 
   // Last day-number the booking naturally covers. Standing shift assignments are
   // open-ended in the DB (service_end_date stays NULL until completion actually
@@ -695,11 +558,35 @@ const CareTimeline = ({
       .map((p) => ({
         start: String(p.started_date).slice(0, 10),
         end: p.ended_date ? String(p.ended_date).slice(0, 10) : null,
+        name: p.hospital_name || null,
       }))
   ), [hospitalizationPeriods]);
 
-  const isDateHospitalized = (dateISO) =>
-    hospitalizedRanges.some((r) => dateISO >= r.start && (r.end === null || dateISO <= r.end));
+  const hospitalRangeFor = (dateISO) =>
+    hospitalizedRanges.find((r) => dateISO >= r.start && (r.end === null || dateISO <= r.end)) || null;
+  const isDateHospitalized = (dateISO) => hospitalRangeFor(dateISO) !== null;
+  const hospitalNameFor = (dateISO) => hospitalRangeFor(dateISO)?.name || null;
+
+  // Explains a locked (paused) day, including when the pause ends.
+  const pauseNoteFor = (dateISO) => {
+    const p = pauses.find((x) => {
+      const end = x.resumed_date || x.resume_date;
+      return x.paused_date && String(x.paused_date).slice(0, 10) < dateISO && (!end || String(end).slice(0, 10) > dateISO);
+    });
+    if (!p) return 'Booking paused — no service this day';
+    const end = p.resumed_date || p.resume_date;
+    return `Booking paused — no service this day${end ? ` (resumes ${formatDMY(end)})` : ' (until resumed)'}`;
+  };
+
+  // The attendance row logged for one assignment on one day, if any.
+  const attendanceFor = (assignmentId, dateISO) =>
+    (attendanceByDate.get(dateISO) || []).find((r) => r.assignment_id === assignmentId) || null;
+
+  // First and last day of the booking, for the day tags.
+  const terminalEndISO = completionDate && ['COMPLETED', 'TERMINATED'].includes((bookingStatus || '').toUpperCase())
+    ? String(completionDate).slice(0, 10) : null;
+  const lastDayISO = terminalEndISO
+    || (start && plannedDays > 0 ? toLocalISO(shiftDays(start, effectiveCountToRawDay(plannedDays) - 1)) : null);
 
   // Build a map of dateISO → event list from all event sources
   const eventsByDate = useMemo(() => {
@@ -725,6 +612,27 @@ const CareTimeline = ({
           color: cfg.color,
           Icon:  cfg.Icon,
         });
+      }
+    });
+
+    // Staff changes that have already happened. Scheduled actions drop out of
+    // `scheduledActions` the moment they run, so without these a swap would leave no
+    // trace on the calendar except two nurses sharing a day.
+    const startISO = start ? toLocalISO(start) : null;
+    const endedISO = completionDate ? String(completionDate).slice(0, 10) : null;
+    staffAssignments.forEach((a) => {
+      if (a.reschedule_id) return;
+      const st = (a.status || a.current_status || '').toUpperCase();
+      const name = a.full_name || a.staff_name || 'Staff';
+      const slot = shiftSlots.find((s) => s.shift_slot_id === a.shift_slot_id);
+      const suffix = slot ? ` (${slot.label || `Shift ${slot.shift_number}`})` : '';
+      const sd = a.service_start_date ? toLocalISO(new Date(a.service_start_date)) : null;
+      if (st !== 'SCHEDULED' && sd && sd !== startISO) {
+        add(sd, { type: 'ASSIGNMENT_START', label: `${name} starts${suffix}`, color: EVENT_CFG.ASSIGNMENT_START.color, Icon: EVENT_CFG.ASSIGNMENT_START.Icon });
+      }
+      const ed = a.service_end_date ? toLocalISO(new Date(a.service_end_date)) : null;
+      if (ed && ed !== endedISO) {
+        add(ed, { type: 'ASSIGNMENT_END', label: `${name} ends${suffix}`, color: EVENT_CFG.ASSIGNMENT_END.color, Icon: EVENT_CFG.ASSIGNMENT_END.Icon });
       }
     });
 
@@ -798,7 +706,7 @@ const CareTimeline = ({
     }
 
     return map;
-  }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate, pauseWindows, serviceCalendar]);
+  }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate, effectiveCountToRawDay]);
 
   // True when `dateISO` is the first or last day of the LIVE_IN assignment that owns this
   // attendance record, including a last day that is only scheduled (a termination/completion
@@ -837,7 +745,11 @@ const CareTimeline = ({
       const status = awaitingPay ? 'AWAITING_PAY' : anyPending ? 'PENDING' : anyPaid ? 'PAID' : anyRevoked ? 'REVOKED' : 'SKIPPED';
       const decidedBy = [...new Set(salaryRecs.filter((r) => r.decided_by_name).map((r) => r.decided_by_name))].join(', ') || null;
       const amount = salaryRecs.reduce((sum, r) => sum + (r.salary_status === 'PAID' ? Number(r.salary_amount || 0) : 0), 0);
-      salary = { status, decidedBy, amount };
+      const staff = salaryRecs.map((r) => ({
+        name: r.staff_name || 'Staff', shift: r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : null),
+        status: r.salary_status, amount: Number(r.salary_amount || 0),
+      }));
+      salary = { status, decidedBy, amount, staff };
     } else if (manualSalaryDay && serviceModel !== 'LIVE_IN') {
       // LIVE_IN salary is paid automatically every night, so a day with no attendance
       // record is simply not paid yet — not something the admin has to act on. Real
@@ -902,6 +814,7 @@ const CareTimeline = ({
             shiftStartTime: null,
             shiftNumber: 0,
             assignmentId: a.assignment_id || a.id,
+            attendance:  attendanceFor(a.assignment_id || a.id, toLocalISO(dayDate)),
             startSort:   aStart,
           });
         }
@@ -949,9 +862,12 @@ const CareTimeline = ({
         // render it as "moved" rather than a normal working shift, so it
         // doesn't look like the client was billed/served here.
         if (a.shift_slot_id && movedOrigins.has(`${a.shift_slot_id}__${dateISO}`)) {
+          const mv = reschedules.find((r) => r.shift_slot_id === a.shift_slot_id && r.original_date?.slice(0, 10) === dateISO);
+          const sameDay = mv && mv.new_date?.slice(0, 10) === dateISO;
           matches.push({
             name: a.full_name || a.staff_name || a.name || 'Staff',
             staffCode: a.staff_code || null,
+            movedNote: sameDay ? `covered today by ${mv.makeup_staff_name || 'another staff member'}` : mv?.new_date ? `moved to ${formatDMY(mv.new_date)}` : 'moved to another date',
             designation: '', color: NURSE_COLORS[0], kind: 'MOVED',
             shiftLabel, shiftStartTime: null, shiftNumber: slot?.shift_number ?? 999,
           });
@@ -964,8 +880,9 @@ const CareTimeline = ({
           designation:    a.designation || '',
           color:          nurseColorMap.get(id) || NURSE_COLORS[0],
           shiftLabel,
-          shiftStartTime: slot?.start_time || null,
+          shiftStartTime: slot?.start_time ? formatTimeHM(slot.start_time) : null,
           shiftNumber:    slot?.shift_number ?? 999,
+          attendance:     attendanceFor(a.assignment_id || a.id, dateISO),
           kind: 'NATURAL',
         });
       }
@@ -993,8 +910,10 @@ const CareTimeline = ({
         designation: makeupAssignment?.designation || '',
         color: nurseColorMap.get(id) || NURSE_COLORS[0],
         shiftLabel: r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'Shift'),
-        shiftStartTime: r.new_start_time || null,
+        shiftStartTime: r.new_start_time ? formatTimeHM(r.new_start_time) : null,
         shiftNumber: r.shift_number ?? 999,
+        attendance: attendanceFor(r.assignment_id, dateISO),
+        makeupNote: `covers ${r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'a shift')} of ${formatDMY(r.original_date)}`,
         kind: 'MAKEUP',
       });
     });
@@ -1061,7 +980,7 @@ const CareTimeline = ({
       const { locked: isPaused, off: isOffDay, displayDayNum: dayNum } = resolvePauseDay(rawDayNum);
 
       if (inBooking && isPaused) {
-        cells.push({ type: 'paused', calDay: d, dateISO });
+        cells.push({ type: 'paused', calDay: d, dateISO, isToday: dateISO === todayISO, note: pauseNoteFor(dateISO), cellEvents: eventsByDate.get(dateISO) || [] });
         continue;
       }
 
@@ -1070,7 +989,10 @@ const CareTimeline = ({
       if (inBooking && isOffDay && !isBeyondNaturalFuture(rawDayNum)) {
         cells.push({
           type: 'off', calDay: d, dateISO,
-          isToday: todayIsOff && dateISO === toLocalISO(effectiveToday),
+          isToday: dateISO === todayISO,
+          note: isShiftBased
+            ? "Day off — none of this booking's shifts repeat on this weekday"
+            : "Day off — this booking doesn't repeat on this weekday",
           cellEvents: eventsByDate.get(dateISO) || [],
         });
         continue;
@@ -1088,12 +1010,12 @@ const CareTimeline = ({
       // days with neither of their own are not booking days and grey out like any
       // outside day.
       if (!inBooking || (isBeyondNaturalFuture(rawDayNum) && nurses.length === 0 && cellEvents.length === 0)) {
-        cells.push({ type: 'outside', calDay: d, dateISO });
+        cells.push({ type: 'outside', calDay: d, dateISO, note: 'Outside the booking period' });
       } else {
-        const isToday   = dayNum === servedDays && !todayIsOff;
-        const delivered = dayNum <= servedDays;
+        const isToday   = dateISO === todayISO;
+        const delivered = serviceModel === 'VISITING' ? visitDelivered : dayNum <= servedDays;
         const isOverrun = hasPlan && dayNum > plannedDays;
-        const status    = dayNum <= paidDays ? 'paid' : dayNum <= servedDays ? 'overdue' : 'upcoming';
+        const status    = dayNum <= paidDays ? 'paid' : delivered ? 'overdue' : 'upcoming';
         const { salary: salaryMeta, invoice: invoiceMeta } = getDayMeta(dateISO, delivered);
         cells.push({
           type: 'booking',
@@ -1102,6 +1024,9 @@ const CareTimeline = ({
           tipDate:   `${fmtFull(cellDate)} · Day ${dayNum}${isOverrun ? ' · overrun' : ''}`,
           dateISO, salaryMeta, invoiceMeta, cellEvents,
           isHospitalized: isDateHospitalized(dateISO),
+          hospitalName: hospitalNameFor(dateISO),
+          isFirstDay: rawDayNum === 1,
+          isLastDay: dateISO === lastDayISO,
         });
       }
     }
@@ -1112,16 +1037,16 @@ const CareTimeline = ({
     for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
 
     return {
-      monthLabel: firstOfMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      monthLabel: firstOfMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, scheduledActions, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges, serviceCalendar, todayIsOff, effectiveToday]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, scheduledActions, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges, serviceCalendar, todayISO, visitDelivered, pauses, completionDate, lastDayISO, attendanceByDate]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
     for (const row of calRows) {
-      const c = row.find((cell) => cell.type === 'booking' && cell.dayNum === hoveredDay);
+      const c = row.find((cell) => ['booking', 'off', 'paused'].includes(cell.type) && cell.dateISO === hoveredDay);
       if (c) return c;
     }
     return null;
@@ -1141,6 +1066,7 @@ const CareTimeline = ({
         const id = a.staff_profile_id || a.staffId || a.id;
         const slot = shiftSlots.find((s) => s.shift_slot_id === a.shift_slot_id);
         return {
+          id,
           name:       a.full_name || a.staff_name || a.name || 'Staff',
           staffCode:  a.staff_code || null,
           color:      nurseColorMap.get(id) || NURSE_COLORS[0],
@@ -1165,6 +1091,42 @@ const CareTimeline = ({
   }
 
   const modelChip = MODEL_CHIP[serviceModel] || null;
+
+  // Revoking works on LIVE_IN / SHIFT_BASED (Super Admin); amount correction works on whole-day
+  // bookings only. The toggle appears only when at least one of them can actually be used.
+  const canRevokeHere  = revokeEnabled;
+  const canCorrectHere = correctEnabled && !isShiftBased;
+  const canSelectDays  = canRevokeHere || canCorrectHere;
+
+  const nurseSubline = (nurse) => {
+    const parts = [nurse.shiftLabel, nurse.shiftStartTime ? `from ${nurse.shiftStartTime}` : null, nurse.designation].filter(Boolean);
+    let text = parts.join(' · ');
+    const extra = nurse.kind === 'MOVED' ? nurse.movedNote : nurse.kind === 'MAKEUP' ? nurse.makeupNote : null;
+    if (extra) text = text ? `${text} — ${extra}` : extra;
+    return text;
+  };
+  // What the staff member actually did that day: a status badge or the logged in–out times.
+  const attendanceLine = (nurse, dateISO) => {
+    const a = nurse.attendance;
+    if (!a) return null;
+    const label = ATTENDANCE_STATUS_LABELS[a.attendance_status];
+    if (label) return { label, bad: true };
+    if (!a.in_time && !a.out_time) return null;
+    const hrs = a.hours_served != null && a.hours_served !== '' ? ` · ${Number(a.hours_served).toFixed(1)}h` : '';
+    return { label: `${formatTimeHM(a.in_time)}–${formatTimeWithDayOffset(a.out_time, dateISO)}${hrs}`, bad: false };
+  };
+  // The figure the client is (or would be) charged — the real invoice once one exists.
+  const billedInfo = (cell, working) => {
+    const inv = cell.invoiceMeta;
+    if (cell.delivered && !isShiftBased && inv?.status === 'INVOICED') return { label: 'Invoiced', value: formatRs(inv.amount) };
+    if (cell.delivered && !isShiftBased && ['REVOKED', 'SKIPPED'].includes(inv?.status)) return { label: 'Invoice', value: 'No charge' };
+    if (isShiftBased) return { label: `Rate (${working.length} shift${working.length !== 1 ? 's' : ''})`, value: formatRs(Number(shiftRate || 0) * working.length) };
+    return { label: 'Rate', value: formatRs(dailyRate) };
+  };
+  // The funding pill only adds information while no invoice record speaks for the day.
+  const showFundingPill = (cell) =>
+    !(cell.delivered && cell.invoiceMeta && ['INVOICED', 'REVOKED', 'SKIPPED'].includes(cell.invoiceMeta.status));
+  const salaryStaffRows = (meta) => (meta?.staff?.length > 1 ? meta.staff : []);
 
   return (
     <div className="bg-white border border-[#ECE7DF] rounded-2xl p-4 sm:p-6">
@@ -1213,12 +1175,12 @@ const CareTimeline = ({
         <div className="flex items-center gap-2 flex-shrink-0">
 
           {/* ── Day-selection toggle (revoke and/or correct) ── */}
-          {(revokeEnabled || correctEnabled) && (
+          {canSelectDays && (
             <button
               onClick={() => { if (selectMode) exitSelectMode(); else { setHoveredDay(null); setSelectMode(true); } }}
-              title={revokeEnabled && correctEnabled
+              title={canRevokeHere && canCorrectHere
                 ? 'Correct the amount on settled days, or revoke them outright'
-                : revokeEnabled ? 'Revoke a wrongly paid/invoiced day' : 'Correct a wrong amount on a settled day'}
+                : canRevokeHere ? 'Revoke a wrongly paid/invoiced day' : 'Correct a wrong amount on a settled day'}
               className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg border text-xs font-semibold transition"
               style={selectMode
                 ? { background: '#FDECEA', borderColor: '#F3A9A0', color: '#B3261E' }
@@ -1226,7 +1188,7 @@ const CareTimeline = ({
               }
             >
               <Undo2 style={{ width: 13, height: 13 }} />
-              {selectMode ? 'Cancel' : (revokeEnabled && correctEnabled) ? 'Fix days' : revokeEnabled ? 'Revoke days' : 'Correct amounts'}
+              {selectMode ? 'Cancel' : (canRevokeHere && canCorrectHere) ? 'Fix days' : canRevokeHere ? 'Revoke days' : 'Correct amounts'}
             </button>
           )}
 
@@ -1253,7 +1215,7 @@ const CareTimeline = ({
                   All outstanding, overdue days and staff assignments update to reflect this date.
                 </div>
                 <DateInput
-                  value={simDate || new Date().toISOString().slice(0, 10)}
+                  value={simDate || localDateISO()}
                   onChange={(e) => { onSimDateChange?.(e.target.value || null); setShowSimPicker(false); }}
                   className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm text-[#2A2722] focus:outline-none focus:ring-2 focus:ring-[#137A6B]"
                 />
@@ -1272,6 +1234,7 @@ const CareTimeline = ({
           {/* ── Month navigation ── */}
           <div className="flex items-center gap-1.5">
             <button
+              aria-label="Previous month"
               onClick={() => setMonthOffset(Math.max(0, clampedMonthIdx - 1))}
               disabled={clampedMonthIdx === 0}
               className="w-8 h-8 rounded-lg border border-[#E7E1D6] bg-white text-[#5A554B] disabled:text-[#CFC9BE] disabled:cursor-not-allowed hover:bg-slate-50 transition flex items-center justify-center text-lg leading-none"
@@ -1280,6 +1243,7 @@ const CareTimeline = ({
               {monthLabel}
             </span>
             <button
+              aria-label="Next month"
               onClick={() => setMonthOffset(Math.min(bookingMonths.length - 1, clampedMonthIdx + 1))}
               disabled={clampedMonthIdx >= bookingMonths.length - 1}
               className="w-8 h-8 rounded-lg border border-[#E7E1D6] bg-white text-[#5A554B] disabled:text-[#CFC9BE] disabled:cursor-not-allowed hover:bg-slate-50 transition flex items-center justify-center text-lg leading-none"
@@ -1295,7 +1259,7 @@ const CareTimeline = ({
           style={{ background: '#FEF9C3', border: '1px solid #FDE047', color: '#713F12' }}
         >
           <span>
-            Simulating {effectiveToday.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} as today
+            Simulating {markerToday.toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} as today
             {overrunDays > 0 && ` · booking overrun by ${overrunDays} day${overrunDays !== 1 ? 's' : ''}`}
           </span>
           <button
@@ -1324,7 +1288,7 @@ const CareTimeline = ({
           </div>
           <div className="flex gap-4 flex-wrap">
             {[
-              { count: paidDays,      color: '#2F8A5B', label: 'paid' },
+              { count: paidShown,      color: '#2F8A5B', label: 'paid' },
               { count: overdueCount,  color: '#C2483C', label: 'overdue' },
               { count: upcomingCount, color: '#D5CFC4', label: 'upcoming' },
             ].map(({ count, color, label }) => (
@@ -1336,9 +1300,9 @@ const CareTimeline = ({
           </div>
         </div>
         <div className="flex h-2.5 rounded-full overflow-hidden" style={{ background: '#EAE5DB' }}>
-          {paidDays > 0      && <div style={{ width: `${(paidDays / displayDays) * 100}%`,      background: '#2F8A5B', transition: 'width .3s ease' }} />}
-          {overdueCount > 0  && <div style={{ width: `${(overdueCount / displayDays) * 100}%`,  background: '#C2483C', transition: 'width .3s ease' }} />}
-          {upcomingCount > 0 && <div style={{ width: `${(upcomingCount / displayDays) * 100}%`, background: '#D5CFC4', transition: 'width .3s ease' }} />}
+          {paidShown > 0      && <div style={{ width: `${(paidShown / barTotal) * 100}%`,      background: '#2F8A5B', transition: 'width .3s ease' }} />}
+          {overdueCount > 0  && <div style={{ width: `${(overdueCount / barTotal) * 100}%`,  background: '#C2483C', transition: 'width .3s ease' }} />}
+          {upcomingCount > 0 && <div style={{ width: `${(upcomingCount / barTotal) * 100}%`, background: '#D5CFC4', transition: 'width .3s ease' }} />}
         </div>
       </div>
 
@@ -1364,10 +1328,13 @@ const CareTimeline = ({
                 return <div key={`e-${ri}-${ci}`} style={{ aspectRatio: '1/1', borderRadius: 12 }} />;
               }
 
+              const tapToggle = () => { if (isMobile) setHoveredDay((d) => (d === cell.dateISO ? null : cell.dateISO)); };
+
               if (cell.type === 'outside') {
                 return (
                   <div
                     key={`o-${cell.calDay}`}
+                    title={cell.note}
                     style={{
                       aspectRatio: '1/1', borderRadius: 12,
                       border: '1px dashed #EAE5DB', background: '#FAFAF8',
@@ -1383,32 +1350,43 @@ const CareTimeline = ({
                 return (
                   <div
                     key={`p-${cell.calDay}`}
-                    title="Booking paused — no service this day"
+                    title={cell.note}
+                    onClick={tapToggle}
                     style={{
                       aspectRatio: '1/1', borderRadius: 12,
-                      border: '1px solid #E2DED6', background: 'repeating-linear-gradient(45deg, #EFEBE3, #EFEBE3 6px, #E6E1D7 6px, #E6E1D7 12px)',
-                      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '4px 5px',
+                      border: cell.isToday ? '2px solid #2A2722' : '1px solid #E2DED6',
+                      background: 'repeating-linear-gradient(45deg, #EFEBE3, #EFEBE3 6px, #E6E1D7 6px, #E6E1D7 12px)',
+                      display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '4px 5px',
+                      cursor: isMobile ? 'pointer' : 'default',
                     }}
                   >
-                    <span style={{ fontSize: 10, color: '#A8A199', fontWeight: 500 }}>{cell.calDay}</span>
-                    <Lock style={{ width: 10, height: 10, color: '#A8A199' }} />
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 10, color: '#8A8478', fontWeight: cell.isToday ? 700 : 500 }}>{cell.isToday ? 'Today' : cell.calDay}</span>
+                      <Lock style={{ width: 10, height: 10, color: '#A8A199' }} />
+                    </div>
+                    {cell.cellEvents.length > 0 && (
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        {cell.cellEvents.map((e) => (
+                          <span key={`${e.type}-${e.label}`} style={{ width: 5, height: 5, background: e.color, transform: 'rotate(45deg)', borderRadius: 1 }} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               }
 
               if (cell.type === 'off') {
-                const offTitle = isShiftBased
-                  ? "Day off — none of this booking's shifts repeat on this weekday"
-                  : "Day off — this booking doesn't repeat on this weekday";
                 return (
                   <div
                     key={`off-${cell.calDay}`}
-                    title={[offTitle, ...cell.cellEvents.map((e) => e.label)].join('\n')}
+                    title={[cell.note, ...cell.cellEvents.map((e) => e.label)].join('\n')}
+                    onClick={tapToggle}
                     style={{
                       aspectRatio: '1/1', borderRadius: 12,
                       border: cell.isToday ? '2px solid #2A2722' : '1px dashed #DCD6CB',
                       background: '#F6F4EF',
                       display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '4px 5px',
+                      cursor: isMobile ? 'pointer' : 'default',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -1425,7 +1403,7 @@ const CareTimeline = ({
                     {cell.cellEvents.length > 0 && (
                       <div style={{ display: 'flex', gap: 2 }}>
                         {cell.cellEvents.map((e) => (
-                          <span key={`${e.type}-${e.label}`} style={{ width: 6, height: 6, borderRadius: 999, background: e.color }} />
+                          <span key={`${e.type}-${e.label}`} style={{ width: 5, height: 5, background: e.color, transform: 'rotate(45deg)', borderRadius: 1 }} />
                         ))}
                       </div>
                     )}
@@ -1435,7 +1413,7 @@ const CareTimeline = ({
 
               // ── Booking cell ─────────────────────────────────────────────
 
-              const isHovered    = hoveredDay === cell.dayNum;
+              const isHovered    = hoveredDay === cell.dateISO;
               const nurses       = cell.nurses;
               // Moved-away shifts aren't actually delivered here — exclude them
               // from background/border/legend math, but still list them (and any
@@ -1454,8 +1432,15 @@ const CareTimeline = ({
               // the same bar for both revoking it and correcting its amount.
               const hasSettledMoney = cell.delivered
                 && (cell.salaryMeta?.status === 'PAID' || cell.invoiceMeta?.status === 'INVOICED');
-              const isRevokable  = (revokeEnabled || correctEnabled) && hasSettledMoney;
+              const isRevokable  = canSelectDays && hasSettledMoney;
               const isSelected   = selectedDates.has(cell.dateISO);
+              const billed       = billedInfo(cell, workingNurses);
+              const fundingPill  = showFundingPill(cell);
+              // Keep the tooltip inside the card: below the cell on the first row, and
+              // anchored to the cell's own edge in the Sun / Sat columns.
+              const tipBelow = ri === 0;
+              const tipH = ci === 0 ? { left: 0 } : ci === 6 ? { right: 0 } : { left: '50%', transform: 'translateX(-50%)' };
+              const caretH = ci === 0 ? { left: 22 } : ci === 6 ? { right: 22 } : { left: '50%', transform: 'translateX(-50%)' };
 
               // Background
               let cellBg = buildCellBackground(workingNurses, cell.delivered, serviceModel);
@@ -1466,6 +1451,9 @@ const CareTimeline = ({
                 borderStyle = { border: '1.5px solid #137A6B' };
               } else if (cell.isOverrun) {
                 borderStyle = { border: '1.5px dashed #E8A09A' };
+              } else if (cell.delivered && !primaryNurse && nurses.length > 0) {
+                // Every shift on this day was moved away — the day itself is still delivered.
+                borderStyle = { border: '1px solid #D1D5DB' };
               } else if (!cell.delivered || !primaryNurse) {
                 // Future cell with scheduled events: highlight instead of greying out
                 if (cell.cellEvents.length > 0) {
@@ -1513,14 +1501,14 @@ const CareTimeline = ({
                     transition: 'transform .15s ease, box-shadow .15s ease',
                     zIndex: isHovered ? 30 : 'auto',
                   }}
-                  onMouseEnter={() => { if (!isMobile && !selectMode) setHoveredDay(cell.dayNum); }}
+                  onMouseEnter={() => { if (!isMobile && !selectMode) setHoveredDay(cell.dateISO); }}
                   onMouseLeave={() => { if (!isMobile && !selectMode) setHoveredDay(null); }}
                   onClick={() => {
                     if (selectMode) {
                       if (isRevokable) toggleSelectedDate(cell.dateISO);
                       return;
                     }
-                    if (isMobile) setHoveredDay((d) => (d === cell.dayNum ? null : cell.dayNum));
+                    if (isMobile) setHoveredDay((d) => (d === cell.dateISO ? null : cell.dateISO));
                     else if (isClickable) onDayClick(cell.dateISO, cell.dayNum);
                   }}
                 >
@@ -1534,9 +1522,9 @@ const CareTimeline = ({
                   )}
                   {/* Top row: day number + status icons + nurse dots */}
                   <div className="flex items-center justify-between">
-                    {!isMobile && (
+                    {(
                       <span
-                        className="text-[11px] font-bold leading-none"
+                        className="text-[10px] sm:text-[11px] font-bold leading-none"
                         style={{
                           fontFamily: 'monospace',
                           color: cell.isToday ? '#0C5C50' : cell.delivered ? '#5A554B' : '#B4AEA3',
@@ -1550,10 +1538,10 @@ const CareTimeline = ({
                         <Cross style={{ width: 9, height: 9, color: '#C2483C' }} strokeWidth={2.5} />
                       )}
                       {cell.salaryMeta && (
-                        <Wallet style={{ width: 8, height: 8, color: META_COLOR[cell.salaryMeta.status] }} />
+                        <Wallet style={{ width: 8, height: 8, color: metaColor(cell.salaryMeta.status) }} />
                       )}
                       {cell.invoiceMeta && (
-                        <Receipt style={{ width: 8, height: 8, color: META_COLOR[cell.invoiceMeta.status] }} />
+                        <Receipt style={{ width: 8, height: 8, color: metaColor(cell.invoiceMeta.status) }} />
                       )}
                       {/* One dot per nurse (shift) — hollow for a moved-away shift,
                           ringed for a makeup shift, solid otherwise */}
@@ -1611,13 +1599,18 @@ const CareTimeline = ({
                     <div
                       className="absolute pointer-events-none"
                       style={{
-                        bottom: 'calc(100% + 10px)', left: '50%', transform: 'translateX(-50%)',
+                        [tipBelow ? 'top' : 'bottom']: 'calc(100% + 10px)', ...tipH,
                         width: 204, background: '#23211C', borderRadius: 12,
                         padding: '12px 13px', boxShadow: '0 18px 38px rgba(28,23,15,.36)',
                         border: '1px solid rgba(255,255,255,.08)', zIndex: 50,
                       }}
                     >
                       <div className="text-xs font-bold text-white">{cell.tipDate}</div>
+                      {(cell.isFirstDay || cell.isLastDay) && (
+                        <div className="text-[10px] font-semibold text-[#A8A299] mt-0.5">
+                          {[cell.isFirstDay ? 'First day' : null, cell.isLastDay ? 'Last day' : null].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
 
                       {cell.isOverrun && (
                         <div className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-1" style={{ background: 'rgba(194,72,60,.3)', color: '#E8A09A' }}>
@@ -1628,7 +1621,7 @@ const CareTimeline = ({
                       {cell.isHospitalized && (
                         <div className="flex items-center gap-1.5 mt-1">
                           <Cross style={{ width: 11, height: 11, color: '#E8A09A' }} strokeWidth={2.5} />
-                          <span className="text-[10px] font-bold" style={{ color: '#E8A09A' }}>Hospitalized</span>
+                          <span className="text-[10px] font-bold" style={{ color: '#E8A09A' }}>Hospitalized{cell.hospitalName ? ` — ${cell.hospitalName}` : ''}</span>
                         </div>
                       )}
 
@@ -1636,33 +1629,35 @@ const CareTimeline = ({
                       {nurses.length > 0 && (
                         <>
                           <div className="h-px my-2" style={{ background: 'rgba(255,255,255,.12)' }} />
-                          {nurses.map((nurse, i) => (
-                            <div key={i} style={{ marginTop: i > 0 ? 6 : 0 }}>
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                  className="w-2 h-2 rounded-full flex-shrink-0"
-                                  style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid }}
-                                />
-                                <span className="text-xs font-semibold text-[#F2EFE8] truncate">{nurse.name}</span>
-                                {nurse.staffCode && (
-                                  <span className="text-xs font-bold text-[#F2EFE8] flex-shrink-0">{nurse.staffCode}</span>
-                                )}
-                                {nurse.kind === 'MOVED' && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.24)', color: '#CFC9BE' }}>Moved</span>
-                                )}
-                                {nurse.kind === 'MAKEUP' && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(63,119,181,.24)', color: '#A9C8E6' }}>Makeup</span>
-                                )}
-                              </div>
-                              {(nurse.shiftLabel || nurse.designation) && (
-                                <div className="text-[10px] text-[#A8A299] ml-3.5">
-                                  {[nurse.shiftLabel, nurse.shiftStartTime ? `from ${nurse.shiftStartTime}` : null].filter(Boolean).join(' · ')}
-                                  {nurse.designation ? ` — ${nurse.designation}` : ''}
-                                  {nurse.kind === 'MOVED' ? ' — moved to another date' : ''}
+                          {nurses.map((nurse, i) => {
+                            const att = attendanceLine(nurse, cell.dateISO);
+                            const sub = nurseSubline(nurse);
+                            return (
+                              <div key={i} style={{ marginTop: i > 0 ? 6 : 0 }}>
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className="w-2 h-2 rounded-full flex-shrink-0"
+                                    style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid, opacity: att?.bad ? 0.45 : 1 }}
+                                  />
+                                  <span title={nurse.name} className="text-xs font-semibold text-[#F2EFE8] truncate">{nurse.name}</span>
+                                  {nurse.staffCode && (
+                                    <span className="text-xs font-bold text-[#F2EFE8] flex-shrink-0">{nurse.staffCode}</span>
+                                  )}
+                                  {nurse.kind === 'MOVED' && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: 'rgba(180,174,163,.24)', color: '#CFC9BE' }}>Moved</span>
+                                  )}
+                                  {nurse.kind === 'MAKEUP' && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: 'rgba(63,119,181,.24)', color: '#A9C8E6' }}>Makeup</span>
+                                  )}
+                                  {att?.bad && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: 'rgba(234,88,12,.28)', color: '#FDBA74' }}>{att.label}</span>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          ))}
+                                {sub && <div className="text-[10px] text-[#A8A299] ml-3.5">{sub}</div>}
+                                {att && !att.bad && <div className="text-[10px] text-[#A8A299] ml-3.5">{att.label}</div>}
+                              </div>
+                            );
+                          })}
                         </>
                       )}
 
@@ -1681,18 +1676,16 @@ const CareTimeline = ({
 
                       <div className="h-px my-2" style={{ background: 'rgba(255,255,255,.12)' }} />
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-[#A8A299]">
-                          {isShiftBased ? `Billed (${workingNurses.length} shift${workingNurses.length !== 1 ? 's' : ''})` : 'Billed'}
-                        </span>
-                        <span className="text-xs font-bold text-white">
-                          Rs {Number(isShiftBased ? shiftRate * workingNurses.length : dailyRate || 0).toLocaleString('en-US')}
-                        </span>
+                        <span className="text-[11px] text-[#A8A299]">{billed.label}</span>
+                        <span className="text-xs font-bold text-white">{billed.value}</span>
                       </div>
-                      <div className="mt-2">
-                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.color }}>
-                          {pill.label}
-                        </span>
-                      </div>
+                      {fundingPill && (
+                        <div className="mt-2">
+                          <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.color }}>
+                            {pill.label}
+                          </span>
+                        </div>
+                      )}
 
                       {(cell.salaryMeta || cell.invoiceMeta) && (
                         <>
@@ -1703,10 +1696,16 @@ const CareTimeline = ({
                                 <span className="text-[11px] text-[#A8A299] flex items-center gap-1">
                                   <Wallet style={{ width: 10, height: 10 }} /> Salary
                                 </span>
-                                <span className="text-[11px] font-bold" style={{ color: META_COLOR[cell.salaryMeta.status] }}>
+                                <span className="text-[11px] font-bold" style={{ color: metaColor(cell.salaryMeta.status) }}>
                                   {metaLabel(cell.salaryMeta, 'Paid')}
                                 </span>
                               </div>
+                              {salaryStaffRows(cell.salaryMeta).map((st, k) => (
+                                <div key={k} className="flex items-center justify-between gap-2 text-[10px] text-[#A8A299] ml-4">
+                                  <span className="truncate">{st.name}{st.shift ? ` · ${st.shift}` : ''}</span>
+                                  <span className="flex-shrink-0">{st.status === 'PAID' ? formatRs(st.amount) : (SALARY_STATUS_LABELS[st.status] || st.status)}</span>
+                                </div>
+                              ))}
                               {cell.salaryMeta.decidedBy && (
                                 <div className="text-[10px] text-[#7E786D] ml-4">by {cell.salaryMeta.decidedBy}</div>
                               )}
@@ -1718,7 +1717,7 @@ const CareTimeline = ({
                                 <span className="text-[11px] text-[#A8A299] flex items-center gap-1">
                                   <Receipt style={{ width: 10, height: 10 }} /> Invoice
                                 </span>
-                                <span className="text-[11px] font-bold" style={{ color: META_COLOR[cell.invoiceMeta.status] }}>
+                                <span className="text-[11px] font-bold" style={{ color: metaColor(cell.invoiceMeta.status) }}>
                                   {metaLabel(cell.invoiceMeta, 'Charged')}
                                 </span>
                               </div>
@@ -1740,10 +1739,10 @@ const CareTimeline = ({
                       <div
                         className="absolute"
                         style={{
-                          top: '100%', left: '50%', transform: 'translateX(-50%)',
+                          [tipBelow ? 'bottom' : 'top']: '100%', ...caretH,
                           width: 0, height: 0,
                           borderLeft: '6px solid transparent', borderRight: '6px solid transparent',
-                          borderTop: '7px solid #23211C',
+                          [tipBelow ? 'borderBottom' : 'borderTop']: '7px solid #23211C',
                         }}
                       />
                     </div>
@@ -1760,7 +1759,7 @@ const CareTimeline = ({
         <div className="mt-4 rounded-xl border p-3 flex items-center justify-between gap-3 flex-wrap" style={{ background: '#FDECEA', borderColor: '#F3A9A0' }}>
           <span className="text-xs font-semibold" style={{ color: '#B3261E' }}>
             {selectedDates.size === 0
-              ? 'Tap the day(s) you need to correct'
+              ? (canRevokeHere && canCorrectHere ? 'Tap the day(s) you need to fix' : canRevokeHere ? 'Tap the day(s) to revoke' : 'Tap the day(s) to correct')
               : `${selectedDates.size} day${selectedDates.size !== 1 ? 's' : ''} selected`}
           </span>
           <div className="flex items-center gap-2">
@@ -1769,7 +1768,7 @@ const CareTimeline = ({
             </button>
             {/* Correcting keeps the days; revoking cancels them. Two separate acts,
                 deliberately worded so they can't be mistaken for each other. */}
-            {correctEnabled && !isShiftBased && (
+            {canCorrectHere && (
               <button
                 onClick={() => {
                   setShowCorrectConfirm(true);
@@ -1783,7 +1782,7 @@ const CareTimeline = ({
                 Correct amounts
               </button>
             )}
-            {revokeEnabled && (
+            {canRevokeHere && (
               <button
                 onClick={() => { setShowRevokeConfirm(true); setRevokeStep(isShiftBased ? 'shifts' : 'details'); setSelectedShiftTargets(new Set()); }}
                 disabled={selectedDates.size === 0}
@@ -1812,7 +1811,7 @@ const CareTimeline = ({
                 if (shifts.length === 0) {
                   return (
                     <div key={dateISO}>
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-[#9A9488]">{dateISO}</div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-[#9A9488]">{formatDMY(dateISO)}</div>
                       <div className="text-xs text-[#B4AEA3] mt-1">No paid/invoiced shifts on this day.</div>
                     </div>
                   );
@@ -1822,7 +1821,7 @@ const CareTimeline = ({
                 return (
                   <div key={dateISO}>
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#9A9488]">{dateISO}</span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#9A9488]">{formatDMY(dateISO)}</span>
                       <button
                         onClick={() => toggleAllShiftsForDate(dateISO, shifts)}
                         className="text-[11px] font-semibold"
@@ -2020,7 +2019,7 @@ const CareTimeline = ({
             setShowCorrectConfirm(false);
             exitSelectMode();
           } catch (e) {
-            setCorrectError(e?.message || 'Failed to correct the selected days');
+            setCorrectError(e?.response?.data?.message || e?.message || 'Failed to correct the selected days');
           } finally {
             setCorrectBusy(false);
           }
@@ -2103,15 +2102,15 @@ const CareTimeline = ({
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.dateISO} style={{ borderTop: '1px solid #F1EDE5' }}>
-                        <td className="px-2.5 py-1.5 text-[#3A362F] tabular-nums">{r.dateISO}</td>
+                        <td className="px-2.5 py-1.5 text-[#3A362F] tabular-nums">{formatDMY(r.dateISO)}</td>
                         {wantsInvoice && (
                           <td className="px-2.5 py-1.5 tabular-nums">
                             {r.invSkip
                               ? <span className="text-[#A39D91]">skipped — {r.invSkip}</span>
                               : r.invDelta === null
-                                ? <span className="text-[#A39D91]">Rs.{r.invOld?.toLocaleString()}</span>
+                                ? <span className="text-[#A39D91]">Rs {r.invOld?.toLocaleString()}</span>
                                 : <span className={r.invDelta === 0 ? 'text-[#A39D91]' : r.invDelta > 0 ? 'text-[#8A5C12]' : 'text-[#137A6B]'}>
-                                    Rs.{r.invOld.toLocaleString()} → Rs.{Number(newInvoice).toLocaleString()}
+                                    Rs {r.invOld.toLocaleString()} → Rs {Number(newInvoice).toLocaleString()}
                                     {r.invDelta !== 0 && ` (${r.invDelta > 0 ? '+' : ''}${r.invDelta.toLocaleString()})`}
                                   </span>}
                           </td>
@@ -2123,9 +2122,9 @@ const CareTimeline = ({
                               : r.salCount > 1
                                 ? <span className="text-[#8A5C12]">{r.salCount} staff paid</span>
                                 : r.salDelta === null
-                                  ? <span className="text-[#A39D91]">Rs.{r.salOld?.toLocaleString()}</span>
+                                  ? <span className="text-[#A39D91]">Rs {r.salOld?.toLocaleString()}</span>
                                   : <span className={r.salDelta === 0 ? 'text-[#A39D91]' : r.salDelta > 0 ? 'text-[#8A5C12]' : 'text-[#137A6B]'}>
-                                      Rs.{r.salOld.toLocaleString()} → Rs.{Number(newSalary).toLocaleString()}
+                                      Rs {r.salOld.toLocaleString()} → Rs {Number(newSalary).toLocaleString()}
                                       {r.salDelta !== 0 && ` (${r.salDelta > 0 ? '+' : ''}${r.salDelta.toLocaleString()})`}
                                     </span>}
                           </td>
@@ -2140,12 +2139,12 @@ const CareTimeline = ({
                 <div className="mt-3 rounded-lg px-3 py-2.5 text-xs" style={{ background: '#FBF9F4', color: '#3A362F' }}>
                   {netInvoice !== 0 && (
                     <div>
-                      Client: <strong>{netInvoice > 0 ? 'billed a further' : 'credited back'} Rs.{Math.abs(netInvoice).toLocaleString()}</strong> in total.
+                      Client: <strong>{netInvoice > 0 ? 'billed a further' : 'credited back'} Rs {Math.abs(netInvoice).toLocaleString()}</strong> in total.
                     </div>
                   )}
                   {netSalary !== 0 && (
                     <div className={netInvoice !== 0 ? 'mt-1' : ''}>
-                      Staff: <strong>{netSalary > 0 ? 'paid a further' : 'clawed back'} Rs.{Math.abs(netSalary).toLocaleString()}</strong> in total.
+                      Staff: <strong>{netSalary > 0 ? 'paid a further' : 'clawed back'} Rs {Math.abs(netSalary).toLocaleString()}</strong> in total.
                     </div>
                   )}
                 </div>
@@ -2186,10 +2185,36 @@ const CareTimeline = ({
       {/* ── Mobile detail panel ── */}
       {isMobile && activeCell && (() => {
         const cell        = activeCell;
+        if (cell.type !== 'booking') {
+          return (
+            <div className="mt-4 rounded-xl border border-[#E7E1D6] bg-[#FBF9F4] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-sm font-bold text-[#2A2722]">{formatFullDay(new Date(`${cell.dateISO}T12:00:00`))}</div>
+                <button onClick={() => setHoveredDay(null)} aria-label="Close" className="p-1 -m-1 rounded-lg text-[#9A9488] hover:bg-[#EFEAE0] transition flex-shrink-0">
+                  <X style={{ width: 16, height: 16 }} />
+                </button>
+              </div>
+              <p className="text-xs text-[#6F6A60] mt-1.5">{cell.note}</p>
+              {cell.cellEvents.length > 0 && (
+                <>
+                  <div className="h-px my-3" style={{ background: '#EFEAE0' }} />
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-[#A39D91] mb-1.5">Scheduled</div>
+                  {cell.cellEvents.map((ev, i) => (
+                    <div key={i} className="flex items-start gap-2 mt-1.5">
+                      <ev.Icon style={{ width: 12, height: 12, color: ev.color, flexShrink: 0, marginTop: 1 }} />
+                      <span className="text-xs text-[#3A362F] leading-tight">{ev.label}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          );
+        }
         const nurses      = cell.nurses;
         const workingNurses = nurses.filter((n) => n.kind !== 'MOVED');
         const pill        = PILL[cell.status];
         const isClickable = Boolean(onDayClick) && cell.delivered;
+        const billed      = billedInfo(cell, workingNurses);
         return (
           <div className="mt-4 rounded-xl border border-[#E7E1D6] bg-[#FBF9F4] p-4">
             <div className="flex items-start justify-between gap-3">
@@ -2205,34 +2230,50 @@ const CareTimeline = ({
               </div>
             )}
 
+            {(cell.isFirstDay || cell.isLastDay) && (
+              <div className="text-[11px] font-semibold text-[#9A9488] mt-1">
+                {[cell.isFirstDay ? 'First day' : null, cell.isLastDay ? 'Last day' : null].filter(Boolean).join(' · ')}
+              </div>
+            )}
+
+            {cell.isHospitalized && (
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <Cross style={{ width: 11, height: 11, color: '#C2483C' }} strokeWidth={2.5} />
+                <span className="text-[11px] font-bold" style={{ color: '#C2483C' }}>Hospitalized{cell.hospitalName ? ` — ${cell.hospitalName}` : ''}</span>
+              </div>
+            )}
+
             {nurses.length > 0 && (
               <div className="mt-2.5 space-y-2">
-                {nurses.map((nurse, i) => (
-                  <div key={i}>
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid }}
-                      />
-                      <span className="text-sm font-semibold text-[#3A362F] truncate">{nurse.name}</span>
-                      {nurse.staffCode && (
-                        <span className="text-sm font-bold text-black flex-shrink-0">{nurse.staffCode}</span>
-                      )}
-                      {nurse.kind === 'MOVED' && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.16)', color: '#8A8478' }}>Moved</span>
-                      )}
-                      {nurse.kind === 'MAKEUP' && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(63,119,181,.16)', color: '#3F77B5' }}>Makeup</span>
-                      )}
-                    </div>
-                    {(nurse.shiftLabel || nurse.shiftStartTime || nurse.designation) && (
-                      <div className="text-xs text-[#9A9488] ml-4">
-                        {[nurse.shiftLabel, nurse.shiftStartTime ? `from ${nurse.shiftStartTime}` : null, nurse.designation].filter(Boolean).join(' · ')}
-                        {nurse.kind === 'MOVED' ? ' — moved to another date' : ''}
+                {nurses.map((nurse, i) => {
+                  const att = attendanceLine(nurse, cell.dateISO);
+                  const sub = nurseSubline(nurse);
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                          style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid, opacity: att?.bad ? 0.45 : 1 }}
+                        />
+                        <span className="text-sm font-semibold text-[#3A362F]">{nurse.name}</span>
+                        {nurse.staffCode && (
+                          <span className="text-sm font-bold text-black flex-shrink-0">{nurse.staffCode}</span>
+                        )}
+                        {nurse.kind === 'MOVED' && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.16)', color: '#8A8478' }}>Moved</span>
+                        )}
+                        {nurse.kind === 'MAKEUP' && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(63,119,181,.16)', color: '#3F77B5' }}>Makeup</span>
+                        )}
+                        {att?.bad && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,.14)', color: '#C2410C' }}>{att.label}</span>
+                        )}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {sub && <div className="text-xs text-[#9A9488] ml-4">{sub}</div>}
+                      {att && !att.bad && <div className="text-xs text-[#9A9488] ml-4">{att.label}</div>}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -2252,18 +2293,16 @@ const CareTimeline = ({
             <div className="h-px my-3" style={{ background: '#EFEAE0' }} />
 
             <div className="flex items-center justify-between">
-              <span className="text-xs text-[#6F6A60]">
-                {isShiftBased ? `Billed (${workingNurses.length} shift${workingNurses.length !== 1 ? 's' : ''})` : 'Billed'}
-              </span>
-              <span className="text-sm font-bold text-[#2A2722]">
-                Rs {Number(isShiftBased ? shiftRate * workingNurses.length : dailyRate || 0).toLocaleString('en-US')}
-              </span>
+              <span className="text-xs text-[#6F6A60]">{billed.label}</span>
+              <span className="text-sm font-bold text-[#2A2722]">{billed.value}</span>
             </div>
-            <div className="mt-2">
-              <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.color }}>
-                {pill.label}
-              </span>
-            </div>
+            {showFundingPill(cell) && (
+              <div className="mt-2">
+                <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.color }}>
+                  {pill.label}
+                </span>
+              </div>
+            )}
 
             {(cell.salaryMeta || cell.invoiceMeta) && (
               <>
@@ -2274,10 +2313,16 @@ const CareTimeline = ({
                       <span className="text-xs text-[#6F6A60] flex items-center gap-1.5">
                         <Wallet style={{ width: 12, height: 12 }} /> Salary
                       </span>
-                      <span className="text-xs font-bold" style={{ color: META_COLOR[cell.salaryMeta.status] }}>
+                      <span className="text-xs font-bold" style={{ color: metaColor(cell.salaryMeta.status) }}>
                         {metaLabel(cell.salaryMeta, 'Paid')}
                       </span>
                     </div>
+                    {salaryStaffRows(cell.salaryMeta).map((st, k) => (
+                      <div key={k} className="flex items-center justify-between gap-2 text-[11px] text-[#9A9488] ml-5">
+                        <span className="truncate">{st.name}{st.shift ? ` · ${st.shift}` : ''}</span>
+                        <span className="flex-shrink-0">{st.status === 'PAID' ? formatRs(st.amount) : (SALARY_STATUS_LABELS[st.status] || st.status)}</span>
+                      </div>
+                    ))}
                     {cell.salaryMeta.decidedBy && <div className="text-[10px] text-[#9A9488] ml-5">by {cell.salaryMeta.decidedBy}</div>}
                   </div>
                 )}
@@ -2287,7 +2332,7 @@ const CareTimeline = ({
                       <span className="text-xs text-[#6F6A60] flex items-center gap-1.5">
                         <Receipt style={{ width: 12, height: 12 }} /> Invoice
                       </span>
-                      <span className="text-xs font-bold" style={{ color: META_COLOR[cell.invoiceMeta.status] }}>
+                      <span className="text-xs font-bold" style={{ color: metaColor(cell.invoiceMeta.status) }}>
                         {metaLabel(cell.invoiceMeta, 'Charged')}
                       </span>
                     </div>
@@ -2320,7 +2365,7 @@ const CareTimeline = ({
               {isShiftBased ? 'Staff on shifts' : 'Nurse on duty'}
             </span>
             {legendNurses.map((n) => (
-              <div key={n.name} className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+              <div key={n.id} className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
                 <span className="w-3 h-3 rounded-sm inline-block" style={{ background: n.color.solid }} />
                 {n.name}{n.shiftLabel ? ` (${n.shiftLabel})` : ''}
               </div>
@@ -2342,6 +2387,22 @@ const CareTimeline = ({
             <span className="w-3 h-3 rounded-sm inline-block" style={{ background: '#F6F4EF', border: '1px dashed #DCD6CB' }} />Day off
           </div>
         )}
+        {pauses.length > 0 && (
+          <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+            <span className="w-3 h-3 rounded-sm inline-block" style={{ background: 'repeating-linear-gradient(45deg, #EFEBE3, #EFEBE3 3px, #E6E1D7 3px, #E6E1D7 6px)', border: '1px solid #E2DED6' }} />Paused
+          </div>
+        )}
+        {hospitalizedRanges.length > 0 && (
+          <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+            <Cross style={{ width: 10, height: 10, color: '#C2483C' }} strokeWidth={2.5} />Hospitalized
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+          <span className="w-3 h-3 rounded-sm inline-block" style={{ border: '1.5px solid #137A6B' }} />Today
+        </div>
+        <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+          <span className="inline-block" style={{ width: 7, height: 7, background: '#7C3AED', transform: 'rotate(45deg)', borderRadius: 1 }} />Scheduled / staff change
+        </div>
         {reschedules.length > 0 && (
           <>
             <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">

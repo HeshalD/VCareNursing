@@ -56,6 +56,7 @@ const { initWhatsappSocket } = require('./realtime/whatsappSocket');
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 const startRentalInvoicing = require('./cron/rentalInvoicing');
 const startRegFeeExpiry = require('./cron/regFeeExpiry');
+const startRegFeeInvoiceDocs = require('./cron/regFeeInvoiceDocs');
 const startStaffLeaveStatus = require('./cron/staffLeaveStatus');
 const startLedgerHealth = require('./cron/ledgerHealth');
 
@@ -85,6 +86,7 @@ startRentalInvoicing();
 
 // Start the registration-fee (membership) 365-day expiry cron job
 startRegFeeExpiry();
+startRegFeeInvoiceDocs();
 
 // Start the staff leave status cron job (flips current_status ON_LEAVE/AVAILABLE
 // as leaves start/expire on their own, without needing an admin action that day)
