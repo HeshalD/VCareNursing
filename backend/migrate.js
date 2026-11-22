@@ -1560,6 +1560,36 @@ async function runMigration() {
     );
   }
 
+  // Protected system products (Transport Charges): code finds them by this key, never by name, so
+  // renaming is harmless and the product can't be deleted or hidden (see productController).
+  await db.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS system_key VARCHAR(30)`);
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_system_key ON products(system_key) WHERE system_key IS NOT NULL`);
+  await db.query(`
+    UPDATE products SET system_key = 'TRANSPORT', product_type = 'ONE_TIME_SERVICE', stock_quantity = 0, is_available = true
+    WHERE product_id = (SELECT product_id FROM products WHERE name = 'Transport Charges' ORDER BY created_at LIMIT 1)
+      AND NOT EXISTS (SELECT 1 FROM products WHERE system_key = 'TRANSPORT')
+  `);
+  // Stock taken off a product when a line is invoiced, so cancelling the invoice puts back exactly that.
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS stock_deducted INTEGER NOT NULL DEFAULT 0`);
+  // One row per cancelled product invoice: the invoice is removed (with its ledger charge), this keeps who/why.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS invoice_cancellations (
+      cancellation_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      invoice_code      VARCHAR(20),
+      client_id         UUID,
+      walk_in_customer_id UUID,
+      booking_id        UUID,
+      quote_id          UUID,
+      amount            NUMERIC(12,2) NOT NULL,
+      description       TEXT,
+      reason            TEXT NOT NULL,
+      cancelled_by      UUID,
+      cancelled_by_name VARCHAR(255),
+      cancelled_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_invoice_cancellations_client ON invoice_cancellations(client_id)`);
+
   // Lets an admin generate a standalone invoice for a single quote line item
   // (independent of ensureCombinedInvoice's all-or-nothing combined invoice,
   // and independent of payment allocation — this is a documentation action,

@@ -19,6 +19,14 @@ router.patch(
   invoiceController.editInvoiceAmount
 );
 
+// Cancel an unpaid per-line product invoice (removes it and its ledger charge, restores stock).
+router.post(
+  '/:invoice_id/cancel',
+  protect,
+  requirePermission('INVOICE_CANCEL'),
+  invoiceController.cancelProductInvoice
+);
+
 router.post(
   '/from-quote/:quote_id',
   protect,

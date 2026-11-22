@@ -17,6 +17,7 @@ const { resolveBankAccountId } = require('../utils/pettyCash');
 const { parsePaymentDate } = require('../utils/paymentDate');
 const { editInvoiceAmount: editInvoiceAmountCore, editQuoteLineAmounts, getQuoteLinesForEdit } = require('../services/invoiceAmountEdits');
 const { ensureInvoiceCharge, linkProductQuoteToBooking } = require('../services/invoiceCharges');
+const { cancelProductInvoice: cancelProductInvoiceCore } = require('../services/invoiceCancellation');
 const { bookingChargeSql, bookingSettledSql } = require('../services/clientFinancials');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -922,6 +923,36 @@ exports.editInvoiceAmount = async (req, res) => {
   } catch (error) {
     await pgClient.query('ROLLBACK');
     sendEditError(res, error, 'Failed to edit the invoice amount');
+  } finally {
+    pgClient.release();
+  }
+};
+
+// POST /api/product-invoices/:invoice_id/cancel — body { reason }. Cancels an unpaid per-line product
+// invoice: removes it and its ledger charge, puts stock back, drops the line (services/invoiceCancellation.js).
+exports.cancelProductInvoice = async (req, res) => {
+  const { invoice_id } = req.params;
+  const pgClient = await db.pool.connect();
+  try {
+    await pgClient.query('BEGIN');
+    const actorName = await getActorName(req.user?.user_id);
+    const result = await cancelProductInvoiceCore(pgClient, {
+      invoice_id, reason: req.body?.reason, actorUserId: req.user?.user_id || null, actorName,
+    });
+    await pgClient.query('COMMIT');
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorName,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'INVOICE_CANCELLED',
+      entityType: 'INVOICE',
+      entityId: invoice_id,
+      details: { ...result, reason: String(req.body.reason).trim() },
+    });
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    sendEditError(res, error, 'Failed to cancel the invoice');
   } finally {
     pgClient.release();
   }

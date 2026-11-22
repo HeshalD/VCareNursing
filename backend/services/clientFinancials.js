@@ -59,25 +59,35 @@ const refundedReversalSql = (alias = '') => {
 // A product/rental invoice that is not part of a booking (a standalone sale, or a quotation's
 // products before any booking exists) has no booking ledger to be "overdue" on, so it counts on
 // its own: the moment it is unpaid, like a care day, unless a due date was set and has not passed.
-// Rental invoices keep their own rule: they count once the nightly job marks them OVERDUE after
-// the billing period. Invoices that belong to a booking are NOT counted here. Their charge is
+// Rent counts the same way (as soon as it is unpaid). A refundable deposit NEVER counts as overdue:
+// a stand-alone deposit invoice is left out, and the deposit bundled into a rental's first invoice is
+// taken off its overdue figure (invoiceOverdueSql). Invoices that belong to a booking are NOT counted here. Their charge is
 // already on that booking's balance, so counting them again would double the debt.
 // `a` is the invoices table alias. Shared by the client page, its Overdue breakdown and the
 // Finances dashboard so all three always agree.
 const unbookedDueInvoiceSql = (a = 'i') => `(
   ${a}.booking_id IS NULL AND ${a}.status <> 'PAID'
-  AND (${a}.category = 'PRODUCT' OR (${a}.category IN ('RENTAL_ONE_TIME', 'RENTAL_RECURRING') AND ${a}.status = 'OVERDUE'))
+  AND ${a}.category IN ('PRODUCT', 'RENTAL_ONE_TIME', 'RENTAL_RECURRING')
+  AND NOT EXISTS (SELECT 1 FROM quote_line_items dl WHERE dl.line_item_id = ${a}.line_item_id AND dl.item_type = 'DEPOSIT')
   AND (${a}.due_date IS NULL OR ${a}.due_date <= CURRENT_DATE)
 )`;
 const invoiceUnpaidSql = (a = 'i') =>
   `GREATEST(${a}.amount - COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = ${a}.invoice_id), 0), 0)`;
 
+// The part of an unpaid invoice that can be overdue: what is still unpaid, less the refundable deposit
+// bundled into a rental agreement's first invoice (the deposit is treated as the last part to be paid).
+const invoiceOverdueSql = (a = 'i') => `GREATEST(LEAST(${invoiceUnpaidSql(a)}, ${a}.amount - COALESCE((
+    SELECT ra.deposit_amount FROM rental_agreements ra
+    WHERE ra.rental_agreement_id = ${a}.rental_agreement_id
+      AND ${a}.invoice_id = (SELECT i2.invoice_id FROM invoices i2 WHERE i2.rental_agreement_id = ra.rental_agreement_id ORDER BY i2.created_at ASC LIMIT 1)
+  ), 0)), 0)`;
+
 async function queryUnbookedInvoiceRows(clientId) {
   const result = await db.query(
     `SELECT i.invoice_id, i.invoice_code, i.category, i.status, i.amount, i.created_at AS date, i.due_date,
-            ${invoiceUnpaidSql('i')} AS owing
+            ${invoiceOverdueSql('i')} AS owing
      FROM invoices i
-     WHERE i.client_id = $1 AND ${unbookedDueInvoiceSql('i')} AND ${invoiceUnpaidSql('i')} > 0.005
+     WHERE i.client_id = $1 AND ${unbookedDueInvoiceSql('i')} AND ${invoiceOverdueSql('i')} > 0.005
      ORDER BY i.created_at`,
     [clientId]
   );
@@ -276,6 +286,7 @@ module.exports = {
   refundedReversalSql,
   unbookedDueInvoiceSql,
   invoiceUnpaidSql,
+  invoiceOverdueSql,
   queryUnbookedInvoiceRows,
   queryRegistrationOutstanding,
   getClientFinancialTotals,

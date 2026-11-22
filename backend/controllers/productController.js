@@ -216,13 +216,17 @@ exports.updateProduct = async (req, res) => {
   const { name, category_id, description, price, cost_price, stock_quantity, product_type, is_available, vendor_id } = req.body;
 
   try {
-    const existing = await db.query('SELECT image_url FROM products WHERE product_id = $1', [id]);
+    const existing = await db.query('SELECT * FROM products WHERE product_id = $1', [id]);
     if (existing.rows.length === 0) {
       return res.status(404).json({ message: 'Product not found' });
     }
+    const current = existing.rows[0];
 
-    const image_url = req.file ? req.file.location : existing.rows[0].image_url;
+    const image_url = req.file ? req.file.location : current.image_url;
 
+    // A system product (Transport Charges) keeps its name, type, vendor and availability and has no
+    // stock; the price, cost and description stay editable (the price is also set per quotation).
+    const isSystem = !!current.system_key;
     const result = await db.query(
       `UPDATE products
        SET name = $1, category_id = $2, description = $3, price = $4, cost_price = $5, stock_quantity = $6,
@@ -230,16 +234,16 @@ exports.updateProduct = async (req, res) => {
        WHERE product_id = $11
        RETURNING *`,
       [
-        name,
+        isSystem ? current.name : name,
         category_id || null,
         description,
         price,
         cost_price || 0,
-        stock_quantity || 0,
+        isSystem ? 0 : (stock_quantity || 0),
         image_url,
-        normalizeProductType(product_type),
-        is_available === undefined ? true : is_available === 'true' || is_available === true,
-        vendor_id || null,
+        isSystem ? current.product_type : normalizeProductType(product_type),
+        isSystem ? true : (is_available === undefined ? true : is_available === 'true' || is_available === true),
+        isSystem ? current.vendor_id : (vendor_id || null),
         id,
       ]
     );
@@ -270,9 +274,10 @@ exports.setProductsVisibility = async (req, res) => {
   }
 
   try {
+    // System products (Transport Charges) stay visible.
     const result = await db.query(
       `UPDATE products SET is_public = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE product_id = ANY($2::uuid[]) RETURNING product_id`,
+       WHERE product_id = ANY($2::uuid[]) AND system_key IS NULL RETURNING product_id`,
       [is_public, product_ids]
     );
 
@@ -296,6 +301,10 @@ exports.deactivateProduct = async (req, res) => {
   const { id } = req.params;
 
   try {
+    const sys = await db.query('SELECT system_key FROM products WHERE product_id = $1', [id]);
+    if (sys.rows[0]?.system_key) {
+      return res.status(403).json({ message: 'This is a system product used by the quotation builders. It cannot be deactivated.' });
+    }
     const result = await db.query(
       `UPDATE products SET is_available = false, updated_at = CURRENT_TIMESTAMP
        WHERE product_id = $1 RETURNING *`,

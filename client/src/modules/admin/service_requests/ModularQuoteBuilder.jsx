@@ -527,7 +527,7 @@ const ModularQuoteBuilder = () => {
 
   // Transport is always the catalogue "Transport Charges" product (its price can
   // be changed per quotation), never a free-form charge.
-  const transportProduct = products.find((p) => p.name === TRANSPORT_PRODUCT_NAME && p.product_type !== 'RENTAL');
+  const transportProduct = products.find((p) => p.system_key === 'TRANSPORT') || products.find((p) => p.name === TRANSPORT_PRODUCT_NAME && p.product_type !== 'RENTAL');
   const addTransportLine = () => {
     if (!transportProduct) return;
     setProductLineItems((prev) => [...prev, {

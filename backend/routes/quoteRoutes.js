@@ -166,6 +166,18 @@ router.get(
 );
 
 /**
+ * @route   GET /api/quotes/product/client-bookings/:client_id
+ * @desc    A client's bookings a stand-alone product sale can be tied to (live ones first)
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.get(
+    '/product/client-bookings/:client_id',
+    protect,
+    requirePermission('VIEW_QUOTATIONS'),
+    quoteController.listClientBookingsForSale
+);
+
+/**
  * @route   GET /api/quotes/product/:quote_id
  * @desc    Get a PRODUCT-type quotation with its line items
  * @access  Private (Admin/Coordinator/Accounts)

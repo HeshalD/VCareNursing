@@ -605,6 +605,8 @@ exports.createModularQuotation = async (req, res) => {
     } = req.body;
     let { client_id } = req.body;
     const isProductQuote = quote_type === 'PRODUCT';
+    // Optional: the booking a stand-alone product sale belongs to (its invoices are tied to it on acceptance).
+    const saleBookingId = isProductQuote && !linked_quote_id ? (req.body.booking_id || null) : null;
 
     try {
         if (!line_items || !Array.isArray(line_items) || line_items.length === 0) {
@@ -648,6 +650,22 @@ exports.createModularQuotation = async (req, res) => {
             }
         } else if (!request_id) {
             return res.status(400).json({ message: 'request_id is required for SERVICE quotes' });
+        }
+
+        // A stand-alone sale may be tied to one of the client's bookings. It must be that client's own
+        // booking, so the invoices never land on someone else's account.
+        if (saleBookingId) {
+            if (!client_id) {
+                return res.status(400).json({ message: 'A booking can only be chosen for a registered client.' });
+            }
+            const ownBooking = await db.query(
+                `SELECT 1 FROM bookings b JOIN service_requests sr ON sr.request_id = b.request_id
+                 WHERE b.booking_id = $1 AND sr.client_id = $2`,
+                [saleBookingId, client_id]
+            );
+            if (ownBooking.rows.length === 0) {
+                return res.status(400).json({ message: 'That booking does not belong to this client.' });
+            }
         }
 
         // One companion product quotation per service quotation (the payment form and the
@@ -845,8 +863,8 @@ exports.createModularQuotation = async (req, res) => {
         const quoteQuery = `
             INSERT INTO quotations (
                 estimate_number, request_id, registration_fee, daily_rate, qty_days, per_shift_rate, qty_shifts, transport_fee,
-                sub_total, total_amount, terms_conditions, quote_type, client_id, walk_in_customer_id, linked_quote_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                sub_total, total_amount, terms_conditions, quote_type, client_id, walk_in_customer_id, linked_quote_id, booking_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING *;
         `;
 
@@ -857,6 +875,7 @@ exports.createModularQuotation = async (req, res) => {
             isProductQuote ? (client_id || null) : null,
             isProductQuote ? (walk_in_customer_id || null) : null,
             isProductQuote ? (linked_quote_id || null) : null,
+            saleBookingId,
         ]);
 
         const quote_id = quoteResult.rows[0].quote_id;
@@ -1309,7 +1328,8 @@ exports.listProductQuotes = async (req, res) => {
                        WHERE li.quote_id = q.quote_id
                    ), 0) as total_deposit_amount,
                    (SELECT COUNT(*)::int FROM (${unbilledLinesSql('q.quote_id')}) ub) AS unbilled_line_count,
-                   sq.status AS service_status,
+                   sq.status AS service_status, sq.request_id AS linked_request_id,
+                   (q.linked_quote_id IS NOT NULL) AS is_companion,
                    COALESCE(inv.invoice_count, 0) AS invoice_count,
                    COALESCE(inv.invoiced_total, 0) AS invoiced_total,
                    COALESCE(inv.paid_total, 0) AS paid_total,
@@ -1341,6 +1361,29 @@ exports.listProductQuotes = async (req, res) => {
     } catch (error) {
         console.error('List Product Quotes Error:', error);
         res.status(500).json({ message: 'Failed to fetch product quotes' });
+    }
+};
+
+// Bookings a stand-alone product sale can be tied to, for the Products page's "New quotation" form.
+// Live bookings first (newest first), then finished ones; cancelled ones are left out. The first
+// row is what the form pre-selects.
+exports.listClientBookingsForSale = async (req, res) => {
+    try {
+        const { client_id } = req.params;
+        const result = await db.query(
+            `SELECT b.booking_id, b.booking_code, b.status, b.start_date, sr.service_type,
+                    COALESCE((SELECT NULLIF(CONCAT_WS(' ', NULLIF(pph.honorific, ''), pph.full_name), '') FROM patient_profiles pph WHERE pph.patient_id = sr.patient_id), sr.patient_name) AS patient_name,
+                    (b.status NOT IN ('COMPLETED', 'CANCELLED', 'REJECTED')) AS is_live
+             FROM bookings b
+             JOIN service_requests sr ON sr.request_id = b.request_id
+             WHERE sr.client_id = $1 AND b.status <> 'CANCELLED'
+             ORDER BY (b.status NOT IN ('COMPLETED', 'CANCELLED', 'REJECTED')) DESC, b.created_at DESC`,
+            [client_id]
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('List client bookings for sale error:', error);
+        res.status(500).json({ message: 'Failed to load the client\'s bookings' });
     }
 };
 
@@ -2006,6 +2049,24 @@ async function billProductLine(pgClient, { quote, line, vendorDecision = {}, act
     // Puts the invoice on the client's ledger (Total Invoiced, statements).
     await ensureInvoiceCharge(pgClient, invoice.invoice_id);
 
+    // Stock goes down when a physical item is invoiced (and comes back if the invoice is cancelled).
+    // It never goes below zero, and only what was actually taken is recorded, so a cancel returns exactly that.
+    if (line.product_id) {
+        const stock = (await pgClient.query(
+            `SELECT p.product_type, p.system_key, p.stock_quantity, COALESCE(li.stock_deducted, 0) AS stock_deducted
+             FROM products p JOIN quote_line_items li ON li.line_item_id = $2
+             WHERE p.product_id = $1 FOR UPDATE OF p`,
+            [line.product_id, line.line_item_id]
+        )).rows[0];
+        if (stock && stock.product_type === 'ITEM' && !stock.system_key && Number(stock.stock_deducted) === 0) {
+            const take = Math.max(0, Math.min(Math.round(parseFloat(line.quantity) || 0), Number(stock.stock_quantity) || 0));
+            if (take > 0) {
+                await pgClient.query(`UPDATE products SET stock_quantity = stock_quantity - $2, updated_at = CURRENT_TIMESTAMP WHERE product_id = $1`, [line.product_id, take]);
+                await pgClient.query(`UPDATE quote_line_items SET stock_deducted = $2 WHERE line_item_id = $1`, [line.line_item_id, take]);
+            }
+        }
+    }
+
     let vendorBill = null;
     if (line.vendor_id) {
         const decision = vendorDecision || {};
@@ -2141,7 +2202,7 @@ async function convertLegacyTransportLines(pgClient, { serviceQuoteId, bookingId
     );
     if (linesRes.rows.length === 0) return { converted: 0, quoteIds: [] };
 
-    const prod = (await pgClient.query(`SELECT product_id, name, cost_price FROM products WHERE name = 'Transport Charges' LIMIT 1`)).rows[0];
+    const prod = (await pgClient.query(`SELECT product_id, name, cost_price FROM products WHERE system_key = 'TRANSPORT' OR name = 'Transport Charges' ORDER BY (system_key = 'TRANSPORT') DESC NULLS LAST LIMIT 1`)).rows[0];
     if (!prod) return { converted: 0, quoteIds: [], warning: 'The "Transport Charges" product is missing, so the transport line was left as it is.' };
     // The billing client: the booking's, or (before any booking) the lead's, which may not exist yet.
     const clientId = bookingId

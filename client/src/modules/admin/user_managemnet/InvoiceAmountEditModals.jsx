@@ -98,6 +98,52 @@ function SaveButtons({ busy, disabled, onClose, onSave }) {
   );
 }
 
+// ── Cancel an unpaid product invoice ─────────────────────────────────────────
+// Removes the invoice and its ledger charge (Total Invoiced, statements and Overdue drop), puts stock back and
+// takes the line off its quotation. Paid invoices are refused by the server: refund the client first.
+export function CancelInvoiceModal({ target, onClose, onSaved }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    if (!reason.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await apiClient.cancelProductInvoice(target.invoiceId, { reason: reason.trim() });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Failed to cancel the invoice');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Shell
+      title="Cancel invoice"
+      subtitle={[target.label, target.code].filter(Boolean).join(' · ')}
+      onClose={onClose}
+      busy={busy}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} disabled={busy} className="rounded-md border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">Keep invoice</button>
+          <button type="button" onClick={save} disabled={busy || !reason.trim()} className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50">
+            {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Cancel invoice
+          </button>
+        </>
+      )}
+    >
+      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+        This removes the {fmtMoney(target.currentAmount)} invoice and its charge from the client's account, puts any stock back, and takes the item off its quotation. It cannot be undone. An invoice that has any payment on it must be refunded first.
+      </p>
+      <ReasonField value={reason} onChange={setReason} disabled={busy} />
+      <ErrorNote message={error} />
+    </Shell>
+  );
+}
+
 // ── One amount (care day, registration fee, product/rental, extra charge) ────
 export function SingleAmountModal({ target, clientId, onClose, onSaved }) {
   const [amount, setAmount] = useState(String(target.currentAmount ?? ''));

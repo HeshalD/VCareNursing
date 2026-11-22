@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SingleAmountModal, QuotationAmountsModal } from './InvoiceAmountEditModals';
+import { SingleAmountModal, QuotationAmountsModal, CancelInvoiceModal } from './InvoiceAmountEditModals';
 
 /**
  * const [openEdit, editModal] = useInvoiceAmountEditor({ clientId, onSaved });
@@ -8,6 +8,7 @@ import { SingleAmountModal, QuotationAmountsModal } from './InvoiceAmountEditMod
  *   REG_FEE   — invoiceId, currentAmount
  *   PRODUCT / EXTRA — invoiceId, currentAmount, paid
  *   COMBINED  — quoteId
+ *   CANCEL    — invoiceId, currentAmount (cancels an unpaid product invoice)
  *   all       — optional label, code (shown as the dialog subtitle)
  */
 export default function useInvoiceAmountEditor({ clientId, onSaved }) {
@@ -16,7 +17,9 @@ export default function useInvoiceAmountEditor({ clientId, onSaved }) {
   const saved = () => onSaved?.();
 
   let modal = null;
-  if (target?.kind === 'COMBINED') {
+  if (target?.kind === 'CANCEL') {
+    modal = <CancelInvoiceModal key={`cancel-${target.invoiceId}`} target={target} onClose={close} onSaved={saved} />;
+  } else if (target?.kind === 'COMBINED') {
     modal = <QuotationAmountsModal key={target.quoteId} target={target} onClose={close} onSaved={saved} />;
   } else if (target) {
     modal = <SingleAmountModal key={`${target.kind}-${target.invoiceId || target.dailyInvoiceId}`} target={target} clientId={clientId} onClose={close} onSaved={saved} />;

@@ -3046,6 +3046,11 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     return this.request(`/quotes/product/${quoteId}`);
   }
 
+  // Bookings a stand-alone product sale can be tied to (live ones first)
+  async getClientBookingsForSale(clientId) {
+    return this.request(`/quotes/product/client-bookings/${clientId}`);
+  }
+
   async getProductQuotes(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/quotes/product/list?${qs}` : '/quotes/product/list');
@@ -3186,6 +3191,14 @@ Add the registration fee to the quotation, or settle it from the client page.`);
   }
 
   // Restate a product/rental or extra-charge invoice's amount (marks it edited).
+  // Cancels an unpaid per-line product invoice (removes it and its ledger charge, restores stock).
+  async cancelProductInvoice(invoiceId, { reason }) {
+    return this.request(`/product-invoices/${invoiceId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
   async editInvoiceAmount(invoiceId, { new_amount, reason }) {
     return this.request(`/product-invoices/${invoiceId}/amount`, {
       method: 'PATCH',

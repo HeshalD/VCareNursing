@@ -950,13 +950,15 @@ const ClientDetailPage = () => {
   const canEditCare = hasPermission('BOOKING_CORRECT_AMOUNT');
   const canEditRegFee = hasPermission('CLIENT_EDIT');
   const canEditInvoiceAmount = hasPermission('INVOICE_EDIT_AMOUNT');
+  const canCancelInvoice = hasPermission('INVOICE_CANCEL');
   const invoiceEditPermissions = useMemo(() => ({
     CARE: canEditCare,
     REG_FEE: canEditRegFee,
     PRODUCT: canEditInvoiceAmount,
     EXTRA: canEditInvoiceAmount,
     COMBINED: canEditInvoiceAmount,
-  }), [canEditCare, canEditRegFee, canEditInvoiceAmount]);
+    CANCEL: canCancelInvoice,
+  }), [canEditCare, canEditRegFee, canEditInvoiceAmount, canCancelInvoice]);
 
   // An edit can move the client's totals, wallet/ledger and every invoice list.
   const refreshAfterInvoiceEdit = async () => {

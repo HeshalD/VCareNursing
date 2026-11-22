@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertCircle, AlertTriangle, ChevronDown, ChevronRight, Download, Info, Loader2, MessageCircle, Pencil, RotateCcw, Search, Wallet, X,
+  AlertCircle, AlertTriangle, Ban, ChevronDown, ChevronRight, Download, Info, Loader2, MessageCircle, Pencil, RotateCcw, Search, Wallet, X,
 } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
 import EditedAmountBadge from '../components/EditedAmountBadge';
@@ -100,7 +100,7 @@ const iconBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bord
 const resendBtn = 'inline-flex h-7 w-7 items-center justify-center rounded-md bg-green-600 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50';
 const fieldCls = 'rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
-function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit, onPay }) {
+function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit, onPay, onCancel }) {
   return (
     <div className="flex items-center justify-end gap-1">
       {onPay && (
@@ -111,6 +111,11 @@ function Actions({ busy, onPreview, previewDisabled, download, onResend, onEdit,
       {onEdit && (
         <button type="button" disabled={busy} onClick={onEdit} title="Edit amount" className={iconBtn}>
           <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {onCancel && (
+        <button type="button" disabled={busy} onClick={onCancel} title="Cancel this unpaid invoice" className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40">
+          <Ban className="h-3.5 w-3.5" />
         </button>
       )}
       <PreviewButton onClick={onPreview} disabled={previewDisabled} className={iconBtn} />
@@ -263,6 +268,11 @@ export default function ClientInvoicesPanel({
         download: { onClick: () => actions.downloadProduct(inv) },
         resend: () => actions.resendProduct(inv),
         editRecord: inv,
+        // An unpaid per-line product invoice can be cancelled (paid ones must be refunded first).
+        cancel: type === 'PRODUCT' && canEdit.CANCEL && onEdit && !inv.is_duplicate && inv.line_item_id && inv.category === 'PRODUCT'
+          && !state.settled && !(Number(inv.amount_paid) > 0.005)
+          ? () => onEdit({ kind: 'CANCEL', invoiceId: inv.invoice_id, currentAmount: inv.amount, label: inv.item_summary || 'Product', code: inv.invoice_code })
+          : null,
         // A duplicate only mirrors another invoice's payment — edit that one instead.
         edit: inv.is_duplicate ? null : edit(type, {
           invoiceId: inv.invoice_id, currentAmount: inv.amount, paid: Number(inv.amount_paid || 0),
@@ -671,6 +681,7 @@ export default function ClientInvoicesPanel({
                         download={r.download}
                         onResend={r.resend}
                         onEdit={r.edit}
+                        onCancel={r.cancel}
                       />
                     </td>
                   </tr>

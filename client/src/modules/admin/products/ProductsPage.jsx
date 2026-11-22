@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, createContext
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2, X, Search, Check, AlertCircle, Download, ChevronDown, ChevronLeft, ChevronRight,
-  MoreHorizontal, Upload, Tag, ExternalLink, ArrowUp, ArrowDown, RotateCcw, Image as ImageIcon, Trash2,
+  MoreHorizontal, Upload, Tag, ExternalLink, ArrowUp, ArrowDown, RotateCcw, Image as ImageIcon, Trash2, Pencil, Ban,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -11,6 +11,7 @@ import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { invoicePaymentState, SALE_STATUS, SALE_BUCKET } from '../../../utils/invoiceState';
 import { withHonorific } from '../../../utils/clientName';
 import { ClientLink } from '../components/EntityLinks';
+import useInvoiceAmountEditor from '../user_managemnet/useInvoiceAmountEditor';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
@@ -1276,10 +1277,11 @@ function CatalogTab({ createTick, onCount }) {
               const menuItems = [
                 { label: 'Edit product', onClick: () => setDrawer({ mode: 'edit', product: p }) },
                 { label: 'Purchase history', onClick: () => setHistoryProduct(p) },
-                { label: 'Duplicate', onClick: () => handleDuplicate(p) },
-                p.is_available
+                ...(p.system_key ? [] : [{ label: 'Duplicate', onClick: () => handleDuplicate(p) }]),
+                // A system product (Transport Charges) is used by the quotation builders: it cannot be deactivated.
+                ...(p.system_key ? [] : [p.is_available
                   ? { label: 'Deactivate', danger: true, onClick: () => handleDeactivate(p) }
-                  : { label: 'Reactivate', onClick: () => reactivate(p) },
+                  : { label: 'Reactivate', onClick: () => reactivate(p) }]),
               ];
               return (
                 <React.Fragment key={p.product_id}>
@@ -1292,6 +1294,7 @@ function CatalogTab({ createTick, onCount }) {
                           <div className="truncate font-semibold text-slate-900">{p.name}</div>
                           <div className="flex items-center gap-2 text-xs text-slate-500">
                             {meta.label}
+                            {p.system_key && <StatusChip tone="blue" className="!py-px">System product</StatusChip>}
                             {!p.is_available && <StatusChip tone="slate" className="!py-px">Deactivated</StatusChip>}
                           </div>
                         </div>
@@ -1787,6 +1790,7 @@ const TYPE_HELP = {
 
 function ProductDrawer({ mode, product, categories, vendors, onClose, onSaved }) {
   const isEdit = mode === 'edit';
+  const isSystem = !!product?.system_key && mode === 'edit';
   const baselinePublic = isEdit ? product?.is_public !== false : true;
   const [form, setForm] = useState(() => formFromProduct(product));
   const [isPublicOn, setIsPublicOn] = useState(() => (product ? product.is_public !== false : true));
@@ -1885,19 +1889,27 @@ function ProductDrawer({ mode, product, categories, vendors, onClose, onSaved })
       >
         <ErrorBanner message={serverError} />
 
-        <div>
-          <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Type</span>
-          <Segmented
-            ariaLabel="Product type"
-            value={form.product_type}
-            onChange={(v) => set({ product_type: v })}
-            options={[{ value: 'ITEM', label: 'Item' }, { value: 'RENTAL', label: 'Rental' }, { value: 'ONE_TIME_SERVICE', label: 'Service' }]}
-          />
-          <p className="mt-1.5 text-xs text-slate-500">{TYPE_HELP[form.product_type]}</p>
-        </div>
+        {isSystem && (
+          <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs text-blue-900">
+            This is a system product used by the quotation builders (transport). Its name, type and availability are fixed and it has no stock. You can change its default price, cost and description; the price is also set on each quotation.
+          </p>
+        )}
+
+        {!isSystem && (
+          <div>
+            <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Type</span>
+            <Segmented
+              ariaLabel="Product type"
+              value={form.product_type}
+              onChange={(v) => set({ product_type: v })}
+              options={[{ value: 'ITEM', label: 'Item' }, { value: 'RENTAL', label: 'Rental' }, { value: 'ONE_TIME_SERVICE', label: 'Service' }]}
+            />
+            <p className="mt-1.5 text-xs text-slate-500">{TYPE_HELP[form.product_type]}</p>
+          </div>
+        )}
 
         <Field label="Name *" htmlFor="pd-name" error={errors.name}>
-          <input id="pd-name" type="text" value={form.name} onChange={(e) => set({ name: e.target.value })} className={inputCls(!!errors.name)} />
+          <input id="pd-name" type="text" value={form.name} disabled={isSystem} onChange={(e) => set({ name: e.target.value })} className={inputCls(!!errors.name)} />
         </Field>
 
         <CategoryPicker
@@ -1922,18 +1934,18 @@ function ProductDrawer({ mode, product, categories, vendors, onClose, onSaved })
           </div>
         )}
 
-        {form.product_type === 'ITEM' && (
+        {form.product_type === 'ITEM' && !isSystem && (
           <Field label="Stock quantity" htmlFor="pd-stock" className="max-w-[200px]">
             <input id="pd-stock" type="number" min="0" value={form.stock_quantity} onChange={(e) => set({ stock_quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
           </Field>
         )}
 
-        <Field label="Vendor" htmlFor="pd-vendor" hint="If this is sourced from an outside vendor, selecting it lets you record what's owed to them when it's sold or rented.">
+        {!isSystem && <Field label="Vendor" htmlFor="pd-vendor" hint="If this is sourced from an outside vendor, selecting it lets you record what's owed to them when it's sold or rented.">
           <select id="pd-vendor" value={form.vendor_id} onChange={(e) => set({ vendor_id: e.target.value })} className={inputCls(false)}>
             <option value="">In-house stock (no vendor)</option>
             {vendors.map((v) => <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>)}
           </select>
-        </Field>
+        </Field>}
 
         <Field label="Description" htmlFor="pd-desc">
           <textarea id="pd-desc" rows={3} value={form.description} onChange={(e) => set({ description: e.target.value })} className={textareaCls(false)} />
@@ -2064,7 +2076,8 @@ function QuotesTab({ createTick, onCount }) {
         apiClient.getProductInvoices({ category: 'RENTAL_ONE_TIME' }),
         apiClient.getProductInvoices({ category: 'RENTAL_RECURRING' }),
       ]);
-      setQuotes(Array.isArray(qRes?.data) ? qRes.data : []);
+      // A companion quote of a rejected service quotation was never going to be sold: keep it off this page.
+      setQuotes((Array.isArray(qRes?.data) ? qRes.data : []).filter((q) => !(q.linked_quote_id && q.service_status === 'REJECTED')));
       setInvoices([
         ...(Array.isArray(prodInvRes?.data) ? prodInvRes.data : []),
         ...(Array.isArray(rentalOneTimeRes?.data) ? rentalOneTimeRes.data : []),
@@ -2078,6 +2091,9 @@ function QuotesTab({ createTick, onCount }) {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+  // Edit an invoice's amount or cancel an unpaid one (same dialogs as the client's Invoices tab).
+  const { hasPermission: can } = useAdminAuth();
+  const [openInvoiceEdit, invoiceEditModal] = useInvoiceAmountEditor({ clientId: null, onSaved: fetchAll });
   useEffect(() => { if (!loading && !loadError) onCount('quotes', quotes.length); }, [loading, loadError, quotes.length, onCount]);
 
   const openCreate = useCallback(() => setQuoteDrawerOpen(true), []);
@@ -2234,6 +2250,7 @@ function QuotesTab({ createTick, onCount }) {
     <>
       <ErrorBanner message={loadError} onRetry={fetchAll} />
       <ErrorBanner message={error} onDismiss={() => setError('')} />
+      {invoiceEditModal}
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
         <Kpi label="Total quotes" value={quotes.length} sub="All time" active={statusTab === 'all'} onClick={() => setStatus('all')} />
@@ -2317,7 +2334,15 @@ function QuotesTab({ createTick, onCount }) {
                       {Number(q.amount_owing) > 0.005 && <div className="mt-0.5 text-xs text-slate-500">{formatMoney(q.amount_owing)} owing</div>}
                     </Cell>
                     <Cell right>
-                      {bucket === 'pending' && (
+                      {bucket === 'pending' && q.linked_quote_id && (
+                        // Products that belong to a service quotation are invoiced with it (at the first payment or
+                        // when the booking is created), never from here, so this page cannot create the client's
+                        // account or send them a welcome message.
+                        <button type="button" onClick={() => navigate(`/admin/quotations/${q.linked_quote_id}`)} className={btn('secondary', 'sm')}>
+                          Part of {q.linked_estimate_number || 'service quotation'} <ExternalLink className="h-3 w-3" />
+                        </button>
+                      )}
+                      {bucket === 'pending' && !q.linked_quote_id && (
                         <button type="button" disabled={busy} onClick={() => handleAccept(q)} className={btn('success', 'sm')}>
                           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                           {q.sale_status === 'PARTLY_INVOICED' ? 'Invoice remaining lines' : isRentalQuote ? 'Accept and create rental' : 'Accept and invoice'}
@@ -2376,6 +2401,16 @@ function QuotesTab({ createTick, onCount }) {
                                         <b className="block tabular-nums text-slate-900">{formatMoney(inv.amount)}</b>
                                         {!state.settled && state.due !== Number(inv.amount) && <span className="block text-xs text-slate-500">{formatMoney(state.due)} due</span>}
                                       </span>
+                                      {!state.settled && can('INVOICE_EDIT_AMOUNT') && (
+                                        <button type="button" aria-label={`Edit amount of ${inv.invoice_code}`} title="Edit amount" onClick={() => openInvoiceEdit({ kind: 'PRODUCT', invoiceId: inv.invoice_id, currentAmount: inv.amount, paid: Number(inv.amount_paid || 0), label: inv.item_summary || 'Invoice', code: inv.invoice_code })} className={iconBtn}>
+                                          <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                      )}
+                                      {!state.settled && can('INVOICE_CANCEL') && inv.category === 'PRODUCT' && inv.line_item_id && !(Number(inv.amount_paid) > 0.005) && (
+                                        <button type="button" aria-label={`Cancel ${inv.invoice_code}`} title="Cancel this unpaid invoice" onClick={() => openInvoiceEdit({ kind: 'CANCEL', invoiceId: inv.invoice_id, currentAmount: inv.amount, label: inv.item_summary || 'Invoice', code: inv.invoice_code })} className={`${iconBtn} hover:text-red-700`}>
+                                          <Ban className="h-3.5 w-3.5" />
+                                        </button>
+                                      )}
                                       {!state.settled && <button type="button" onClick={() => setPaymentModalInvoice(inv)} className={btn('primary', 'sm')}>Pay</button>}
                                     </span>
                                   </div>
@@ -2692,6 +2727,29 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState('');
+  // Which of the client's bookings this sale belongs to ('' = none). Defaults to their latest live booking.
+  const [clientBookings, setClientBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingId, setBookingId] = useState('');
+
+  useEffect(() => {
+    setBookingId('');
+    setClientBookings([]);
+    if (recipientType !== 'client' || !selectedClientId) return undefined;
+    let cancelled = false;
+    setBookingsLoading(true);
+    apiClient.getClientBookingsForSale(selectedClientId)
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res?.data) ? res.data : [];
+        setClientBookings(rows);
+        const latestLive = rows.find((b) => b.is_live);
+        if (latestLive) setBookingId(latestLive.booking_id);
+      })
+      .catch(() => { if (!cancelled) setClientBookings([]); })
+      .finally(() => { if (!cancelled) setBookingsLoading(false); });
+    return () => { cancelled = true; };
+  }, [recipientType, selectedClientId]);
 
   const snap = () => JSON.stringify({ recipientType, selectedClientId, walkInClient, lineItems });
   const baseline = useRef(null);
@@ -2732,6 +2790,11 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
     const lineErrs = {};
     const validIdx = [];
     lineItems.forEach((it, idx) => {
+      // Everything but a refundable deposit must be a catalogue product (transport is the Transport Charges product).
+      if (!it.isStandaloneDeposit && !it.product_id && (it.unit_price !== '' || it.description)) {
+        lineErrs[idx] = 'Pick a product from the catalogue.';
+        return;
+      }
       if (!(it.description && it.unit_price !== '')) return;
       validIdx.push(idx);
       if (isRentalLine(it) && it.rental_billing_type === 'ONE_TIME' && !it.rental_end_date) {
@@ -2754,6 +2817,7 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
 
       await apiClient.createProductQuotation({
         client_id: recipientType === 'client' ? selectedClientId : walkInClientId || undefined,
+        booking_id: recipientType === 'client' && bookingId ? bookingId : undefined,
         line_items: validItems.map((it) => {
           if (it.isStandaloneDeposit) {
             return { item_type: 'DEPOSIT', description: it.description, quantity: 1, unit_price: parseFloat(it.unit_price) || 0 };
@@ -2815,6 +2879,28 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
         errors={errors}
       />
 
+      {recipientType === 'client' && selectedClientId && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-slate-900">Booking</h3>
+          <Field
+            label="Which booking is this for?"
+            htmlFor="pq-booking"
+            hint={bookingId
+              ? 'Its invoices are added to this booking, so they count towards what the booking owes and can use its wallet reservation.'
+              : 'Not tied to a booking: the invoices stand on their own on the client\'s account.'}
+          >
+            <select id="pq-booking" value={bookingId} disabled={bookingsLoading} onChange={(e) => setBookingId(e.target.value)} className={inputCls(false)}>
+              <option value="">{bookingsLoading ? 'Loading bookings…' : 'No booking (stand-alone sale)'}</option>
+              {clientBookings.map((b) => (
+                <option key={b.booking_id} value={b.booking_id}>
+                  {b.booking_code} · {String(b.status || '').toLowerCase()}{b.patient_name ? ` · ${b.patient_name}` : ''}{b.is_live ? '' : ' (finished)'}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </section>
+      )}
+
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-900">2. Line items</h3>
@@ -2852,7 +2938,7 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
               <div key={idx} className={`space-y-2.5 rounded-lg border p-2.5 ${rental ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
                 <div className={LINE_GRID}>
                   <select aria-label={`Product, line ${idx + 1}`} value={it.product_id} onChange={(e) => selectProductForLine(idx, e.target.value)} className={`${inputCls(false)} col-span-3 sm:col-span-1`}>
-                    <option value="">Custom item…</option>
+                    <option value="">Select a product…</option>
                     {products.map((p) => (
                       <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
                     ))}
@@ -2863,9 +2949,7 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
                   {removeBtn}
                 </div>
 
-                {!it.product_id && (
-                  <input type="text" aria-label={`Description, line ${idx + 1}`} placeholder="Describe the custom item" value={it.description} onChange={(e) => updateLineItem(idx, { description: e.target.value })} className={inputCls(false)} />
-                )}
+                {errors.lineErrs?.[idx] && !rental && <p role="alert" className="text-xs text-red-700">{errors.lineErrs[idx]}</p>}
                 {overStock && <p role="alert" className="text-xs font-semibold text-amber-700">Only {product.stock_quantity} in stock — this line asks for {it.quantity}.</p>}
 
                 {rental && (
