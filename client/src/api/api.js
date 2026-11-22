@@ -3152,6 +3152,11 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     });
   }
 
+  // Permanent delete of a never-used product (needs the PRODUCT_DELETE permission)
+  async deleteProduct(productId) {
+    return this.request(`/products/${productId}`, { method: 'DELETE' });
+  }
+
   async deactivateProduct(productId) {
     return this.request(`/products/${productId}/deactivate`, { method: 'PATCH' });
   }

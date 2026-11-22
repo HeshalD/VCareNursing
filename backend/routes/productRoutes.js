@@ -59,4 +59,12 @@ router.patch(
   productController.deactivateProduct
 );
 
+// Permanently delete a product that has never been used (SUPER_ADMIN by default, see PRODUCT_DELETE).
+router.delete(
+  '/:id',
+  protect,
+  requirePermission('PRODUCT_DELETE'),
+  productController.deleteProduct
+);
+
 module.exports = router;

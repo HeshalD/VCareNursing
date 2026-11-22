@@ -3902,17 +3902,30 @@ const ClientDetailPage = () => {
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-4 @xl:px-6">
             <div className="flex min-w-0 items-center gap-3 @xl:gap-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-lg font-bold text-white">
-                {(clientProfile.full_name || 'C').charAt(0).toUpperCase()}
+                {((clientProfile.client_type === 'CORPORATE_PROXY' && clientProfile.company_name ? clientProfile.company_name : clientProfile.full_name) || 'C').charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-[15px] font-semibold text-gray-900 break-words @xl:text-[17px]">
-                    {clientProfile.honorific ? `${clientProfile.honorific} ` : ''}{clientProfile.full_name || 'Client Profile'}
-                  </h1>
-                  {clientProfile.company_name && (
-                    <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
-                      <Building2 className="h-3 w-3" />{clientProfile.company_name}
-                    </span>
+                  {clientProfile.client_type === 'CORPORATE_PROXY' && clientProfile.company_name ? (
+                    <>
+                      <h1 className="text-[15px] font-semibold text-gray-900 break-words @xl:text-[17px]">
+                        {clientProfile.company_name}
+                      </h1>
+                      <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                        <Building2 className="h-3 w-3" />{withHonorific(clientProfile.honorific, clientProfile.full_name) || 'Client Profile'}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <h1 className="text-[15px] font-semibold text-gray-900 break-words @xl:text-[17px]">
+                        {clientProfile.honorific ? `${clientProfile.honorific} ` : ''}{clientProfile.full_name || 'Client Profile'}
+                      </h1>
+                      {clientProfile.company_name && (
+                        <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                          <Building2 className="h-3 w-3" />{clientProfile.company_name}
+                        </span>
+                      )}
+                    </>
                   )}
                   <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${clientProfile.is_active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' : 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'}`}>
                     {clientProfile.is_active ? 'Active' : 'Inactive'}

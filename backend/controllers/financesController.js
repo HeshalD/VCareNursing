@@ -1153,7 +1153,8 @@ async function computeBalanceSheet({ date }) {
 
   // Current-value lines (no dated history available):
   const inventoryQuery = `
-    SELECT COALESCE(SUM(stock_quantity * cost_price), 0) AS amount
+    -- A negative stock (sold ahead of restocking) is not an asset: only stock on hand counts.
+    SELECT COALESCE(SUM(GREATEST(stock_quantity, 0) * cost_price), 0) AS amount
     FROM products
     WHERE product_type = 'ITEM'
   `;

@@ -2050,7 +2050,9 @@ async function billProductLine(pgClient, { quote, line, vendorDecision = {}, act
     await ensureInvoiceCharge(pgClient, invoice.invoice_id);
 
     // Stock goes down when a physical item is invoiced (and comes back if the invoice is cancelled).
-    // It never goes below zero, and only what was actually taken is recorded, so a cancel returns exactly that.
+    // Selling more than is in stock is allowed: the stock simply goes negative (a back-order to be
+    // restocked). The full quantity is recorded on the line, so cancelling returns exactly that.
+    // Rentals are not stock: they are tracked by their units.
     if (line.product_id) {
         const stock = (await pgClient.query(
             `SELECT p.product_type, p.system_key, p.stock_quantity, COALESCE(li.stock_deducted, 0) AS stock_deducted
@@ -2059,7 +2061,7 @@ async function billProductLine(pgClient, { quote, line, vendorDecision = {}, act
             [line.product_id, line.line_item_id]
         )).rows[0];
         if (stock && stock.product_type === 'ITEM' && !stock.system_key && Number(stock.stock_deducted) === 0) {
-            const take = Math.max(0, Math.min(Math.round(parseFloat(line.quantity) || 0), Number(stock.stock_quantity) || 0));
+            const take = Math.max(0, Math.round(parseFloat(line.quantity) || 0));
             if (take > 0) {
                 await pgClient.query(`UPDATE products SET stock_quantity = stock_quantity - $2, updated_at = CURRENT_TIMESTAMP WHERE product_id = $1`, [line.product_id, take]);
                 await pgClient.query(`UPDATE quote_line_items SET stock_deducted = $2 WHERE line_item_id = $1`, [line.line_item_id, take]);

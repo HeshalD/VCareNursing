@@ -331,6 +331,55 @@ exports.deactivateProduct = async (req, res) => {
   }
 };
 
+// Permanently deletes a product. Only a product nothing has ever referenced can go: once it has been
+// quoted, sold, rented or billed it is part of the books, so it is refused (deactivate it instead).
+// The Transport system product can never be deleted.
+exports.deleteProduct = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const found = await db.query('SELECT * FROM products WHERE product_id = $1', [id]);
+    if (found.rows.length === 0) return res.status(404).json({ message: 'Product not found' });
+    const product = found.rows[0];
+    if (product.system_key) {
+      return res.status(403).json({ message: 'This is a system product used by the quotation builders. It cannot be deleted.' });
+    }
+
+    const use = (await db.query(
+      `SELECT (SELECT COUNT(*)::int FROM quote_line_items WHERE product_id = $1) AS quotations,
+              (SELECT COUNT(*)::int FROM rental_agreements WHERE product_id = $1) AS rentals,
+              (SELECT COUNT(*)::int FROM vendor_bills WHERE product_id = $1) AS vendor_bills`,
+      [id]
+    )).rows[0];
+    if (use.quotations + use.rentals + use.vendor_bills > 0) {
+      const parts = [
+        use.quotations && `${use.quotations} quotation line${use.quotations === 1 ? '' : 's'}`,
+        use.rentals && `${use.rentals} rental agreement${use.rentals === 1 ? '' : 's'}`,
+        use.vendor_bills && `${use.vendor_bills} vendor bill${use.vendor_bills === 1 ? '' : 's'}`,
+      ].filter(Boolean).join(', ');
+      return res.status(409).json({ message: `"${product.name}" has been used (${parts}), so it can't be deleted. Deactivate it instead to take it off the catalogue.` });
+    }
+
+    // A rental product's own units go with it (they are ON DELETE CASCADE).
+    await db.query('DELETE FROM products WHERE product_id = $1', [id]);
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'PRODUCT_DELETED',
+      entityType: 'PRODUCT',
+      entityId: id,
+      details: { name: product.name, product_type: product.product_type, price: product.price },
+    });
+    res.status(200).json({ status: 'success', message: 'Product deleted' });
+  } catch (error) {
+    if (error.code === '23503') {
+      return res.status(409).json({ message: "Something still refers to this product, so it can't be deleted. Deactivate it instead." });
+    }
+    console.error('Delete Product Error:', error);
+    res.status(500).json({ message: 'Error deleting product' });
+  }
+};
+
 // ==================== CATEGORIES ====================
 
 exports.getCategories = async (req, res) => {

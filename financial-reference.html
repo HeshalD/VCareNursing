@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Client financial breakdown — reference</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- REFERENCE ONLY: visual + behaviour spec for ClientFinancialBreakdownPage. Re-implement in React + Tailwind using the app's real API data. The DATA block below is sample data. -->
+<style>
+body{margin:0;background:#f8fafc;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;font-size:14px}
+*{box-sizing:border-box}button,input{font-family:inherit}button{cursor:pointer}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:13px;font-weight:600}.btn:hover{background:#f1f5f9}
+button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:10px 2px 12px;margin-right:28px;text-align:left;display:flex;flex-direction:column;gap:2px;color:#64748b}.tab b{font-size:14px;font-weight:600}.tab span{font-size:13px}.tab.on{color:#1d4ed8;border-bottom-color:#2563eb}
+.field{height:36px;width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:0 10px;font-size:14px;background:#fff;outline:none}.field:focus{border-color:#2563eb;box-shadow:0 0 0 3px #dbeafe}
+.chip{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600}.chip.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}.chip.flag.on{background:#fffbeb;border-color:#fcd34d;color:#b45309}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px}
+.sec{display:flex;align-items:center;gap:12px;width:100%;background:#fff;border:0;padding:14px 18px;text-align:left}.sec:hover{background:#f8fafc}
+.g{display:grid;grid-template-columns:110px 100px minmax(120px,1fr) 130px 130px 76px;column-gap:12px;align-items:center;padding:0 18px}
+.hd{min-height:36px;background:#f8fafc;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.row{width:100%;background:#fff;border:0;border-bottom:1px solid #f1f5f9;min-height:48px;text-align:left;font-size:14px;color:#334155}.row:hover{background:#f1f5f9}
+.ok{background:#ecfdf5;color:#047857}.bad{background:#fef2f2;color:#b91c1c}.warn{background:#fffbeb;color:#b45309}.mute{background:#f1f5f9;color:#475569}
+.pill{display:inline-flex;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.lbl{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.num{font-variant-numeric:tabular-nums}.neg{color:#b91c1c}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,100%);z-index:50;background:#fff;box-shadow:-12px 0 32px rgba(15,23,42,.18);display:none;flex-direction:column;animation:sl .2s ease-out}
+#scrim{position:fixed;inset:0;z-index:40;background:rgba(15,23,42,.35);border:0;display:none}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:#0f172a;color:#f8fafc;border-radius:8px;padding:10px 16px;display:none}
+@keyframes sl{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+</style></head>
+<body>
+<div style="max-width:1240px;margin:0 auto;padding:20px 28px 64px;display:flex;flex-direction:column;gap:20px">
+  <div>
+    <div style="font-size:13px;color:#64748b">Clients &rsaquo; <span id="cname">Nimali Perera</span> &rsaquo; <b id="crumb" style="color:#0f172a"></b></div>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:6px">
+      <h1 style="margin:0;font-size:22px;font-weight:600">Financial breakdown <span style="font-weight:400;color:#64748b;font-size:15px">· Nimali Perera · CL-0231</span></h1>
+      <div style="display:flex;align-items:center;gap:10px"><span style="font-size:13px;color:#64748b">Last calculated <span id="calc">07:20</span></span>
+        <button class="btn" id="refresh">Refresh</button><button class="btn" id="export">Export CSV</button></div>
+    </div>
+  </div>
+  <div id="tabs" role="tablist" style="display:flex;flex-wrap:wrap;border-bottom:1px solid #e2e8f0"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+    <div style="flex:1 1 640px;min-width:0;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+        <div style="flex:1 1 240px;max-width:340px"><input id="q" class="field" aria-label="Search entries" placeholder="Search booking, category, notes…"></div>
+        <div id="cats" style="display:contents"></div><span id="flagbtn" style="display:contents"></span>
+      </div>
+      <div id="secs" style="display:flex;flex-direction:column;gap:16px"></div>
+    </div>
+    <aside id="aside" style="flex:0 1 340px;min-width:300px;position:sticky;top:16px;display:flex;flex-direction:column;gap:14px"></aside>
+  </div>
+</div>
+<button id="scrim" aria-label="Close details"></button><div id="drawer" role="dialog" aria-label="Entry details"></div><div id="toast" role="status"></div>
+
+<script>
+/* ---------- SAMPLE DATA: replace with the real API response. Shape per metric:
+   {k,label,headline (figure shown on client page), rules[], checks[[passed,label,detail?]],
+    secs:[{key,title,desc,inc (1 = counted in total, 0 = context only),rows:[{d,code,cat,method,amt (signed),note,flag,t}]}]} */
+const R=(d,code,cat,method,amt,note,flag)=>({d,code,cat,method,amt,note:note||'No notes on this entry.',flag:flag||'',t:'10:42'});
+const DATA=[
+{k:'pay',label:'Payments Made',headline:184500,rules:['Every payment received from this client counts, whatever the method.','Refunds are deducted from the total.','Voided or bounced payments are shown for reference and never counted.'],
+ checks:[[1,'Every payment is linked to a booking'],[1,'No duplicate reference numbers'],[1,'Refunds never exceed payments received']],
+ secs:[{key:'a',title:'Payments received',desc:'Money received from the client',inc:1,rows:[R('12 Nov 2026','BK-1042','Advance','Bank transfer',80000,'Transfer ref 88213.'),R('03 Nov 2026','BK-1042','Instalment','Cash',45000),R('28 Oct 2026','BK-1031','Final payment','Cheque',62500),R('15 Oct 2026','BK-1031','Advance','Cash',25000)]},
+ {key:'b',title:'Refunds',desc:'Money returned to the client',inc:1,rows:[R('02 Nov 2026','BK-1038','Refund','Bank transfer',-28000,'Cancelled visit, refunded in full.')]},
+ {key:'c',title:'Voided payments',desc:'Shown for context only',inc:0,rows:[R('20 Oct 2026','BK-1029','Bounced cheque','Cheque',15000,'Cheque returned by the bank.')]}]},
+{k:'inv',label:'Total Invoiced',headline:310000,rules:['All issued invoices count at their current amount.','Credit notes are deducted.','Draft invoices are not counted.'],
+ checks:[[1,'Every invoice belongs to a booking'],[0,'One invoice was edited after it was sent','INV-2207 changed from 90,000 to 85,000 after sending.'],[1,'No invoice is counted twice']],
+ secs:[{key:'a',title:'Invoices issued',desc:'Sent to the client',inc:1,rows:[R('14 Nov 2026','BK-1042','Invoice','Bank transfer',120000),R('05 Nov 2026','BK-1038','Invoice','Cash',85000,'Amount edited after sending.','Amount was edited after the invoice was sent. Original 90,000.'),R('22 Oct 2026','BK-1031','Invoice','Cheque',135000)]},
+ {key:'b',title:'Credit notes',desc:'Reduces what the client owes',inc:1,rows:[R('02 Nov 2026','BK-1038','Credit note','Bank transfer',-30000)]},
+ {key:'c',title:'Draft invoices',desc:'Not sent yet, so not counted',inc:0,rows:[R('20 Nov 2026','BK-1050','Draft','—',40000)]}]},
+{k:'due',label:'Overdue Amount',headline:96000,rules:['An invoice is overdue once its due date has passed and it is unpaid.','Partly paid invoices count only for the unpaid part.','Disputed invoices are not counted until resolved.'],
+ checks:[[0,'Entries add up to the client page figure','The entries are 7,500 short of the figure shown on the client page.'],[1,'No paid invoice is listed as overdue']],
+ secs:[{key:'a',title:'Overdue invoices',desc:'Past due and unpaid',inc:1,rows:[R('05 Oct 2026','BK-1031','Invoice','—',42000),R('12 Oct 2026','BK-1033','Invoice','—',31500),R('18 Oct 2026','BK-1036','Invoice','—',15000,'Part-payment of 5,000 received.')]},
+ {key:'c',title:'Disputed',desc:'Not counted until resolved',inc:0,rows:[R('21 Oct 2026','BK-1037','Invoice','—',7500,'Client disputes the transport charge.','Counted on the client page but missing from these entries.')]}]},
+{k:'wal',label:'Wallet Balance',headline:12000,rules:['Top-ups add to the wallet.','Money spent on bookings is deducted.','The balance is never allowed to go below zero.'],
+ checks:[[1,'Balance never goes below zero'],[1,'Every deduction is linked to a booking']],
+ secs:[{key:'a',title:'Top-ups',desc:'Money added to the wallet',inc:1,rows:[R('01 Nov 2026','—','Top-up','Bank transfer',25000),R('10 Oct 2026','—','Top-up','Cash',15000)]},
+ {key:'b',title:'Spent on bookings',desc:'Deducted from the wallet',inc:1,rows:[R('08 Nov 2026','BK-1040','Booking','Wallet',-18000),R('19 Oct 2026','BK-1034','Booking','Wallet',-10000)]}]}
+];
+
+/* ---------- state + helpers ---------- */
+const S={metric:'pay',q:'',cat:'All',flagged:false,open:{},checksOpen:false,calcOpen:false};
+const $=id=>document.getElementById(id);
+const f=n=>(n<0?'−':'')+Math.abs(n).toLocaleString('en-US');
+const sum=s=>s.rows.reduce((n,r)=>n+r.amt,0);
+const derived=m=>m.secs.filter(x=>x.inc).reduce((n,x)=>n+sum(x),0);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let tt;function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(tt);tt=setTimeout(()=>t.style.display='none',2500)}
+
+function render(){
+  const m=DATA.find(x=>x.k===S.metric),der=derived(m),mis=der!==m.headline;
+  $('crumb').textContent=m.label;
+  /* tabs: each shows its figure; red dot = entries do not reconcile with the figure */
+  $('tabs').innerHTML=DATA.map(x=>`<button role="tab" class="tab ${x.k===S.metric?'on':''}" data-k="${x.k}"><b>${x.label}${derived(x)!==x.headline?'<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#dc2626;margin-left:8px" title="Does not reconcile"></i>':''}</b><span class="num">Rs. ${f(x.headline)}</span></button>`).join('');
+  const all=m.secs.flatMap(x=>x.rows),cats=['All',...new Set(all.map(r=>r.cat))],fc=all.filter(r=>r.flag).length;
+  $('cats').innerHTML=cats.map(c=>`<button class="chip ${S.cat===c?'on':''}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+  $('flagbtn').innerHTML=fc?`<button class="chip flag ${S.flagged?'on':''}" id="fl">Flagged only · ${fc}</button>`:'';
+  const filtering=!!(S.q||S.cat!=='All'||S.flagged),qq=S.q.trim().toLowerCase();
+  const secs=m.secs.map(x=>({x,rows:x.rows.filter(r=>(S.cat==='All'||r.cat===S.cat)&&(!S.flagged||r.flag)&&(!qq||(r.code+' '+r.cat+' '+r.method+' '+r.note).toLowerCase().includes(qq)))}))
+    .filter(o=>!filtering||o.rows.length);
+  /* included sections start open, context-only start closed, filters force matching sections open */
+  $('secs').innerHTML=secs.map(({x,rows})=>{const open=filtering?true:(S.open[x.key]!==undefined?S.open[x.key]:!!x.inc);
+    return `<div class="card" style="overflow:hidden"><button class="sec" data-s="${x.key}" aria-expanded="${open}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;${open?'transform:rotate(90deg)':''}"><path d="m9 6 6 6-6 6"/></svg>
+      <div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600">${x.title}</div><div style="font-size:13px;color:#64748b;margin-top:2px">${x.desc}</div></div>
+      <span class="pill ${x.inc?'ok':'mute'}">${x.inc?'Included in the total':'Shown for context only'}</span>
+      <div style="text-align:right;min-width:120px"><div class="num" style="font-size:15px;font-weight:600">Rs. ${f(sum(x))}</div><div style="font-size:12px;color:#64748b">${x.rows.length} ${x.rows.length===1?'entry':'entries'}</div></div></button>
+      ${open?`<div style="overflow-x:auto"><div style="min-width:640px"><div class="g hd"><div>Date</div><div>Booking</div><div>Category</div><div>Method</div><div style="text-align:right">Amount (LKR)</div><div></div></div>
+      ${rows.map((r,i)=>`<button class="row g" data-s="${x.key}" data-i="${x.rows.indexOf(r)}"><div>${r.d}</div><div style="font-family:ui-monospace,Menlo,monospace;font-size:13px">${r.code}</div><div>${r.cat}</div><div style="color:#475569">${r.method}</div><div class="num ${r.amt<0?'neg':''}" style="text-align:right;font-weight:600">${f(r.amt)}</div><div>${r.flag?'<span class="pill warn">Check</span>':''}</div></button>`).join('')}
+      <div class="g" style="min-height:44px;background:#f8fafc;border-top:1px solid #e2e8f0;font-weight:600"><div style="grid-column:1/5;color:#475569">${x.inc?'Section total':'Section total (not counted)'}</div><div class="num" style="text-align:right">${f(sum(x))}</div><div></div></div></div></div>`:''}</div>`}).join('')
+    ||`<div class="card" style="padding:40px;text-align:center;color:#64748b">No entries match. <button class="btn" id="clr" style="margin-left:8px">Clear filters</button></div>`;
+  /* aside: answer first */
+  const inc=m.secs.filter(x=>x.inc),incT=inc.reduce((n,x)=>n+x.rows.reduce((a,r)=>a+Math.abs(r.amt),0),0),ctxT=m.secs.filter(x=>!x.inc).reduce((n,x)=>n+x.rows.reduce((a,r)=>a+Math.abs(r.amt),0),0);
+  const failed=m.checks.filter(c=>!c[0]),passed=m.checks.filter(c=>c[0]);
+  $('aside').innerHTML=`<div class="card" style="padding:20px"><div class="lbl">${m.label}</div>
+    <div class="num" style="font-size:32px;font-weight:700;margin:4px 0 10px">Rs. ${f(m.headline)}</div>
+    <span class="pill ${mis?'bad':'ok'}">${mis?'Off by Rs. '+f(Math.abs(der-m.headline))+' from the entries':'Matches the entries below'}</span>
+    <div style="margin-top:18px;display:flex;flex-direction:column;gap:8px"><div class="lbl">How it adds up</div>
+    ${inc.map((x,i)=>{const v=sum(x);return `<div style="display:flex;justify-content:space-between;color:#334155"><span>${i?(v<0?'−':'+'):''} ${x.title}</span><span class="num ${v<0?'neg':''}">Rs. ${f(Math.abs(v))}</span></div>`}).join('')}
+    <div style="border-top:1px solid #0f172a;padding-top:8px;display:flex;justify-content:space-between;font-weight:700"><span>Total from entries</span><span class="num">Rs. ${f(der)}</span></div>
+    ${mis?`<div style="display:flex;justify-content:space-between;color:#475569"><span>Client page shows</span><span class="num">Rs. ${f(m.headline)}</span></div><div style="display:flex;justify-content:space-between;color:#b91c1c;font-weight:700"><span>Difference</span><span class="num">Rs. ${f(der-m.headline)}</span></div><button class="btn" id="showflags" style="justify-content:center;margin-top:4px">Show flagged entries</button>`:''}</div>
+    <div style="margin-top:16px"><div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:#e2e8f0"><div style="height:100%;background:#10b981;width:${Math.round(incT/(incT+ctxT||1)*100)}%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b;margin-top:6px"><span>Counted</span><span>${ctxT?'Rs. '+f(ctxT)+' shown for context':'Nothing set aside'}</span></div></div></div>
+  <div class="card" style="padding:6px">
+    ${failed.map(c=>`<div class="warn" style="border-radius:6px;padding:10px 12px;margin:6px"><b>${c[1]}</b><div style="font-size:13px;margin-top:2px">${c[2]||''}</div></div>`).join('')}
+    <button class="btn" id="tchk" style="width:100%;justify-content:space-between;border:0"><span>${passed.length} check${passed.length===1?'':'s'} passed</span><span>${S.checksOpen?'▴':'▾'}</span></button>
+    ${S.checksOpen?`<div style="padding:4px 14px 10px;display:flex;flex-direction:column;gap:6px">${passed.map(c=>`<div style="font-size:13px;color:#475569"><b style="color:#047857">✓</b> ${c[1]}</div>`).join('')}</div>`:''}
+    <button class="btn" id="tcalc" style="width:100%;justify-content:space-between;border:0"><span>How this figure is worked out</span><span>${S.calcOpen?'▴':'▾'}</span></button>
+    ${S.calcOpen?`<ul style="margin:0;padding:4px 14px 12px 32px;color:#475569;line-height:1.6">${m.rules.map(r=>`<li>${r}</li>`).join('')}</ul>`:''}</div>`;
+}
+function openRow(sk,i){const m=DATA.find(x=>x.k===S.metric),x=m.secs.find(s=>s.key===sk),r=x.rows[i];
+  $('drawer').innerHTML=`<div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:16px;font-weight:600">Entry details</div><div style="font-size:13px;color:#64748b">${x.title}</div></div><button class="btn" id="cls">Close</button></div>
+  <div style="padding:20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto"><div><div class="lbl">Amount</div><div class="num" style="font-size:26px;font-weight:700">Rs. ${f(r.amt)}</div></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div><div class="lbl">Date</div>${r.d}</div><div><div class="lbl">Time</div>${r.t}</div><div><div class="lbl">Booking</div><a href="#" style="color:#2563eb;font-weight:600;text-decoration:none">${r.code}</a></div><div><div class="lbl">Method</div>${r.method}</div><div><div class="lbl">Category</div>${r.cat}</div><div><div class="lbl">Counted</div>${x.inc?'Yes':'No'}</div></div>
+  <div><div class="lbl">Notes</div><div style="line-height:1.5;color:#334155">${esc(r.note)}</div></div>
+  ${r.flag?`<div class="warn" style="border-radius:8px;padding:12px"><b>Worth a look</b><div style="font-size:13px;margin-top:2px">${esc(r.flag)}</div></div>`:''}</div>`;
+  $('drawer').style.display='flex';$('scrim').style.display='block';$('cls').onclick=closeD}
+function closeD(){$('drawer').style.display='none';$('scrim').style.display='none'}
+$('scrim').onclick=closeD;$('refresh').onclick=()=>toast('Recalculated just now');$('export').onclick=()=>toast('Exporting as CSV');
+$('q').oninput=e=>{S.q=e.target.value;render()};
+document.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;
+  if(t.classList.contains('tab')){Object.assign(S,{metric:t.dataset.k,q:'',cat:'All',flagged:false,open:{},checksOpen:false});$('q').value='';render()}
+  else if(t.dataset.c!==undefined){S.cat=t.dataset.c;render()}
+  else if(t.id==='fl'){S.flagged=!S.flagged;render()}
+  else if(t.id==='clr'){Object.assign(S,{q:'',cat:'All',flagged:false});$('q').value='';render()}
+  else if(t.id==='showflags'){Object.assign(S,{flagged:true,q:'',cat:'All'});render()}
+  else if(t.id==='tchk'){S.checksOpen=!S.checksOpen;render()}
+  else if(t.id==='tcalc'){S.calcOpen=!S.calcOpen;render()}
+  else if(t.classList.contains('row')){openRow(t.dataset.s,+t.dataset.i)}
+  else if(t.classList.contains('sec')){const m=DATA.find(x=>x.k===S.metric),x=m.secs.find(s=>s.key===t.dataset.s);S.open[x.key]=!(S.open[x.key]!==undefined?S.open[x.key]:!!x.inc);render()}});
+render();
+</script></body></html>

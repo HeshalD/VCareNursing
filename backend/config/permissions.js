@@ -263,6 +263,9 @@ const PERMISSIONS = {
   // ── Products ──────────────────────────────────────────────────────────────
   PRODUCT_CREATE:              { label: 'Create Product',                   module: 'Products', entity: 'Product',          verb: 'Create', category: 'action' },
   PRODUCT_EDIT:                { label: 'Edit Product',                     module: 'Products', entity: 'Product',          verb: 'Edit',   category: 'action' },
+  // Permanently deleting a catalogue product that was never sold, rented or billed. SUPER_ADMIN has it by
+  // default; nobody else does unless a Super Admin grants it on the Permissions page.
+  PRODUCT_DELETE:              { label: 'Delete Product Permanently',       module: 'Products', entity: 'Product',          verb: 'Delete', category: 'action' },
   NOTIFICATION_SETTINGS_EDIT:  { label: 'Toggle SMS / WhatsApp Sending',    module: 'Notifications', entity: 'Messaging Switch', verb: 'Toggle', category: 'action' },
   DOCUMENT_REPLACE:            { label: 'Replace Official Documents',       module: 'Documents', entity: 'Document', verb: 'Replace', category: 'action' },
   WHATSAPP_REPLY:              { label: 'Reply on WhatsApp',                module: 'WhatsApp Inbox', entity: 'WhatsApp Message', verb: 'Send', category: 'action' },

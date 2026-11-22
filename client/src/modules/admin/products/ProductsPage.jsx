@@ -908,7 +908,8 @@ function StockCell({ p, us, state }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <b className="font-semibold tabular-nums text-slate-900">{p.stock_quantity ?? '—'}</b>
-      {state === 'out' && <StatusChip tone="red">Out of stock</StatusChip>}
+      {state === 'out' && Number(p.stock_quantity) < 0 && <StatusChip tone="red">Back-ordered</StatusChip>}
+      {state === 'out' && !(Number(p.stock_quantity) < 0) && <StatusChip tone="red">Out of stock</StatusChip>}
       {state === 'low' && <StatusChip tone="amber">Low</StatusChip>}
     </span>
   );
@@ -932,6 +933,8 @@ function SortHeader({ label, field, sort, dir, onSort, right }) {
 
 function CatalogTab({ createTick, onCount }) {
   const { toast, confirm } = useUi();
+  const { hasPermission: canDo } = useAdminAuth();
+  const canDeleteProduct = canDo('PRODUCT_DELETE');
   const [sp, update] = useUrlParams();
   const search = sp.get('search') || '';
   const typeParam = TYPE_PARAM[sp.get('type')] ? sp.get('type') : '';
@@ -1089,6 +1092,24 @@ function CatalogTab({ createTick, onCount }) {
       toast(undo ? `"${p.name}" restored.` : `"${p.name}" reactivated.`);
     } catch (err) {
       setActionError(err?.message || 'Failed to reactivate product');
+    }
+  };
+
+  const handleDelete = async (p) => {
+    const ok = await confirm({
+      title: `Delete "${p.name}" permanently?`,
+      body: 'This removes the product from the system for good and cannot be undone. It only works for a product that was never quoted, sold, rented or billed; otherwise deactivate it instead.',
+      confirmLabel: 'Delete permanently',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setActionError('');
+    try {
+      await apiClient.deleteProduct(p.product_id);
+      await fetchAll();
+      toast(`"${p.name}" deleted.`);
+    } catch (err) {
+      setActionError(err?.message || 'Failed to delete product');
     }
   };
 
@@ -1282,6 +1303,7 @@ function CatalogTab({ createTick, onCount }) {
                 ...(p.system_key ? [] : [p.is_available
                   ? { label: 'Deactivate', danger: true, onClick: () => handleDeactivate(p) }
                   : { label: 'Reactivate', onClick: () => reactivate(p) }]),
+                ...(!p.system_key && canDeleteProduct ? [{ label: 'Delete permanently', danger: true, onClick: () => handleDelete(p) }] : []),
               ];
               return (
                 <React.Fragment key={p.product_id}>
@@ -1936,7 +1958,7 @@ function ProductDrawer({ mode, product, categories, vendors, onClose, onSaved })
 
         {form.product_type === 'ITEM' && !isSystem && (
           <Field label="Stock quantity" htmlFor="pd-stock" className="max-w-[200px]">
-            <input id="pd-stock" type="number" min="0" value={form.stock_quantity} onChange={(e) => set({ stock_quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
+            <input id="pd-stock" type="number" value={form.stock_quantity} onChange={(e) => set({ stock_quantity: e.target.value })} onWheel={(e) => e.target.blur()} className={inputCls(false)} />
           </Field>
         )}
 
@@ -2950,7 +2972,7 @@ function NewProductQuoteDrawer({ onClose, onCreated }) {
                 </div>
 
                 {errors.lineErrs?.[idx] && !rental && <p role="alert" className="text-xs text-red-700">{errors.lineErrs[idx]}</p>}
-                {overStock && <p role="alert" className="text-xs font-semibold text-amber-700">Only {product.stock_quantity} in stock — this line asks for {it.quantity}.</p>}
+                {overStock && <p role="alert" className="text-xs font-semibold text-amber-700">Only {product.stock_quantity} in stock. You can still quote it: stock will go to {Number(product.stock_quantity) - Number(it.quantity)} once it is invoiced.</p>}
 
                 {rental && (
                   <div className="space-y-3 border-t border-blue-100 pt-3">
