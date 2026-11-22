@@ -13,6 +13,7 @@ const DeletePaymentModal = ({ receipt, onClose, onDeleted }) => {
   const [preview, setPreview] = useState(null);
   const [blocked, setBlocked] = useState('');
   const [reason, setReason] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -35,7 +36,7 @@ const DeletePaymentModal = ({ receipt, onClose, onDeleted }) => {
     setBusy(true);
     setError('');
     try {
-      const res = await apiClient.deletePaymentReceipt(receipt.receipt_id, reason.trim());
+      const res = await apiClient.deletePaymentReceipt(receipt.receipt_id, reason.trim(), password);
       onDeleted(res);
     } catch (err) {
       setError(err?.message || 'Delete failed. Nothing was changed.');
@@ -108,6 +109,18 @@ const DeletePaymentModal = ({ receipt, onClose, onDeleted }) => {
                 <p className="mt-1 text-xs text-slate-400">This cannot be undone. The reason is kept in the audit log.</p>
               </div>
 
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Your password (required)</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder="Confirm with your login password"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
+                />
+              </div>
+
               {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-red-700">{error}</p>}
             </>
           )}
@@ -120,7 +133,7 @@ const DeletePaymentModal = ({ receipt, onClose, onDeleted }) => {
           {preview && (
             <button
               onClick={confirm}
-              disabled={busy || reason.trim().length < 3}
+              disabled={busy || reason.trim().length < 3 || !password}
               className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin" />} Delete payment

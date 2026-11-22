@@ -66,6 +66,8 @@ import RecordPastRegFeeModal from './RecordPastRegFeeModal';
 import CreateQuotationDrawer from './CreateQuotationDrawer';
 import CreateProductInvoiceDrawer from './CreateProductInvoiceDrawer';
 import RecordPaymentDrawer from './RecordPaymentDrawer';
+import EditPaymentModal from '../payments/EditPaymentModal';
+import DeletePaymentModal from '../payments/DeletePaymentModal';
 import AddCareProfileDrawer from './AddCareProfileDrawer';
 import { AddRequestDrawer as AddServiceRequestDrawer } from '../service_requests/proxy_service_request';
 import ClientSwitcherSidebar from './ClientSwitcherSidebar';
@@ -1238,6 +1240,32 @@ const ClientDetailPage = () => {
     }
   };
 
+  // Super-admin edit / delete of a recorded payment: refresh everything money-related after.
+  const canEditPayments = hasPermission('RECEIPT_EDIT_PAYMENT');
+  const canDeletePayments = hasPermission('RECEIPT_DELETE_PAYMENT');
+  const [paymentEditTarget, setPaymentEditTarget] = useState(null);
+  const [paymentDeleteTarget, setPaymentDeleteTarget] = useState(null);
+  const [paymentChangeNotice, setPaymentChangeNotice] = useState(null);
+  const handlePaymentChanged = async (res) => {
+    setPaymentEditTarget(null);
+    setPaymentDeleteTarget(null);
+    setPaymentChangeNotice({
+      message: res?.message || 'Payment updated.',
+      lines: [...(res?.effects || []), ...(res?.warnings || [])],
+    });
+    try {
+      const [refreshed, txRefreshed] = await Promise.all([
+        apiClient.getAdminClientDetail(clientId),
+        apiClient.getClientTransactions(clientId),
+      ]);
+      setDetail(refreshed.data || null);
+      setClientTransactions(txRefreshed.data || []);
+    } catch {
+      // non-fatal
+    }
+    await fetchReceipts();
+  };
+
   const handlePaymentRecorded = async () => {
     setShowRecordPayment(false);
     setShowReceiptSendPopup(true);
@@ -1393,6 +1421,16 @@ const ClientDetailPage = () => {
         ) : receipts.length === 0 ? (
           <EmptyState title="No payments recorded yet" />
         ) : (
+          <>
+          {paymentChangeNotice && (
+            <div className="mb-3 flex items-start justify-between gap-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              <div className="space-y-1">
+                <p className="font-medium">{paymentChangeNotice.message}</p>
+                {paymentChangeNotice.lines.map((l, i) => <p key={i} className="text-xs text-emerald-700">{l}</p>)}
+              </div>
+              <button type="button" onClick={() => setPaymentChangeNotice(null)} className="shrink-0 text-xs underline">Dismiss</button>
+            </div>
+          )}
           <SectionList>
             {receipts.map((rcpt, index) => {
               const busy = receiptBusy === rcpt.receipt_id;
@@ -1469,12 +1507,31 @@ const ClientDetailPage = () => {
                         <MessageCircle className="h-3.5 w-3.5" />
                         {busy ? 'Sendingâ€¦' : rcpt.whatsapp_sent ? 'Resend Receipt' : 'Send Receipt'}
                       </button>
+                      {canEditPayments && !rcpt.voided_at && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentEditTarget(rcpt)}
+                          className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Edit Payment
+                        </button>
+                      )}
+                      {canDeletePayments && !rcpt.replaced_by_receipt_id && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentDeleteTarget(rcpt)}
+                          className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete Payment
+                        </button>
+                      )}
                     </div>
                   </div>
                 </ExpandableRow>
               );
             })}
           </SectionList>
+          </>
         );
 
       case 'bookings': {
@@ -4040,6 +4097,12 @@ const ClientDetailPage = () => {
       </div>
       </div>
 
+      {paymentEditTarget && (
+        <EditPaymentModal receipt={paymentEditTarget} onClose={() => setPaymentEditTarget(null)} onSaved={handlePaymentChanged} />
+      )}
+      {paymentDeleteTarget && (
+        <DeletePaymentModal receipt={paymentDeleteTarget} onClose={() => setPaymentDeleteTarget(null)} onDeleted={handlePaymentChanged} />
+      )}
       <RecordPaymentDrawer
         open={showRecordPayment}
         clientId={clientId}

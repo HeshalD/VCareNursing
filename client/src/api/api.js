@@ -2157,8 +2157,8 @@ Add the registration fee to the quotation, or settle it from the client page.`);
 
   // Super admin: permanently delete the payment behind a receipt (reverses the ledger,
   // wallet, invoices and bookings, and deletes the receipt(s)).
-  async deletePaymentReceipt(receiptId, reason) {
-    return this.request(`/payment-receipts/${receiptId}`, { method: 'DELETE', body: JSON.stringify({ reason }) });
+  async deletePaymentReceipt(receiptId, reason, password) {
+    return this.request(`/payment-receipts/${receiptId}`, { method: 'DELETE', body: JSON.stringify({ reason, password }) });
   }
 
   // ── Frontdesk cash register ────────────────────────────────────────────────────────

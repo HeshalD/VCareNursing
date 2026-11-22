@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const bcrypt = require('bcrypt');
 const { logActivity } = require('../utils/activityLogger');
 const { sendPaymentReceipt, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { generateReceiptPdf } = require('../services/receiptService');
@@ -123,7 +124,7 @@ const getClientReceipts = async (req, res) => {
             `SELECT receipt_id, receipt_code, source_type, source_id, total_amount,
                     payment_method, payment_date, reference_number, cheque_number,
                     received_from, line_items, pdf_url, whatsapp_sent, whatsapp_sent_at,
-                    send_error, created_at, voided_at, void_reason
+                    send_error, created_at, voided_at, void_reason, replaced_by_receipt_id
              FROM payment_receipts
              WHERE client_id = $1
              ORDER BY created_at DESC`,
@@ -457,6 +458,20 @@ const deleteReceiptPaymentHandler = (dryRun) => async (req, res) => {
             return res.status(400).json({ status: 'error', message: 'Invalid receipt_id format' });
         }
         const reason = String((req.body || {}).reason || '').trim();
+
+        // The real delete (not the preview) needs the caller's own login password.
+        if (!dryRun) {
+            const password = (req.body || {}).password;
+            if (!password) {
+                return res.status(400).json({ status: 'error', message: 'Your password is required to confirm this action.' });
+            }
+            const userRes = await db.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+            const hash = userRes.rows[0]?.password_hash;
+            if (!hash || !(await bcrypt.compare(String(password), hash))) {
+                return res.status(401).json({ status: 'error', message: 'Incorrect password.' });
+            }
+        }
+
         const actor = await buildActor(req);
         const out = await deleteReceiptPayment({ receipt_id, reason, actor, dryRun });
 

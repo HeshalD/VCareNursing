@@ -424,7 +424,7 @@ async function editQuotePayment(client, { receipt, changes, newTotal, actor, rea
        AND (payment_tracking_id = $2
             OR (created_at = $3::timestamptz
                 AND payment_method IS NOT DISTINCT FROM $4
-                AND reference_number IS NOT DISTINCT FROM $5
+                AND COALESCE(NULLIF(reference_number, ''), '') = COALESCE(NULLIF($5::text, ''), '')
                 AND category::text IN ('REGISTRATION_FEE', 'WALLET_TOPUP', 'BOOKING_PAYMENT', 'PRODUCT_SALE', 'RENTAL_PAYMENT')))
      FOR UPDATE`,
     [pt.client_id, pt.payment_id, pt.payment_date, pt.payment_method, pt.reference_number]
@@ -1086,7 +1086,7 @@ async function deleteQuotePayment(client, { receipt, effects, warnings }) {
          AND (payment_tracking_id = $2
               OR (created_at = $3::timestamptz
                   AND payment_method IS NOT DISTINCT FROM $4
-                  AND reference_number IS NOT DISTINCT FROM $5
+                  AND COALESCE(NULLIF(reference_number, ''), '') = COALESCE(NULLIF($5::text, ''), '')
                   AND category::text IN ('REGISTRATION_FEE', 'WALLET_TOPUP', 'BOOKING_PAYMENT', 'PRODUCT_SALE', 'RENTAL_PAYMENT')))
        FOR UPDATE`,
       [clientId, pt.payment_id, pt.payment_date, pt.payment_method, pt.reference_number]
