@@ -7,6 +7,7 @@ const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookin
 const { correctInvoiceAmount, correctSalaryAmount, getCorrectionsForBooking } = require('../services/amountCorrections');
 const { dayCorrectionJoin, dayCorrectionColumns } = require('../utils/editedAmount');
 const { logActivity } = require('../utils/activityLogger');
+const { normalizeClockTime } = require('../utils/clockTime');
 
 async function getDeciderName(userId) {
     const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -122,7 +123,9 @@ exports.getAttendanceHistory = async (req, res) => {
  * transaction client. Throws an Error with `.statusCode` set on validation
  * failure/conflict so callers can translate it to the right HTTP response.
  */
-async function applyAttendanceTime(client, { booking_id, assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id }) {
+async function applyAttendanceTime(client, { booking_id, assignment_id, service_date, in_time: rawIn, out_time: rawOut, notes, shift_slot_id, reschedule_id }) {
+    const in_time = normalizeClockTime(rawIn);
+    const out_time = normalizeClockTime(rawOut);
     if (!assignment_id || !service_date || !in_time || !out_time) {
         const err = new Error('assignment_id, service_date, in_time and out_time are required');
         err.statusCode = 400;
@@ -257,7 +260,9 @@ async function applyAttendanceTime(client, { booking_id, assignment_id, service_
  * are only computed once both sides are present. Same statusCode-throwing contract
  * as applyAttendanceTime, and the same "already decided" edit lock.
  */
-async function applyPartialAttendanceTime(client, { booking_id, assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id }) {
+async function applyPartialAttendanceTime(client, { booking_id, assignment_id, service_date, in_time: rawIn, out_time: rawOut, notes, shift_slot_id, reschedule_id }) {
+    const in_time = normalizeClockTime(rawIn);
+    const out_time = normalizeClockTime(rawOut);
     if (!assignment_id || !service_date) {
         const err = new Error('assignment_id and service_date are required');
         err.statusCode = 400;

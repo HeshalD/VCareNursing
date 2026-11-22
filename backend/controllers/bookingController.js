@@ -3,6 +3,8 @@ const bcrypt = require('bcrypt');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
+const { normalizeClockTime } = require('../utils/clockTime');
+const { buildAllocationHistory } = require('../services/staffChangeLog');
 const { bookingChargeSql } = require('../services/clientFinancials');
 const { conflictThreshold } = require('../services/staffAvailability');
 const { settleWalletForDeletedTransactions } = require('../services/walletLedger');
@@ -1583,6 +1585,8 @@ exports.getAdminBookingDetail = async (req, res) => {
             )
         ]);
 
+        const allocationHistory = await buildAllocationHistory(db, booking);
+
         const verifiedPaid = parseFloat(financialTotalsResult.total_paid || 0);
         const totalInvoiced = parseFloat(financialTotalsResult.total_invoiced || 0);
         const totalAmount = parseFloat(booking.total_amount || 0);
@@ -1713,7 +1717,8 @@ exports.getAdminBookingDetail = async (req, res) => {
                     last_invoice_at: invoiceSummaryResult.rows[0]?.last_invoice_at || null
                 },
                 payment_history: paymentHistoryResult.rows,
-                staff_assignment_history: assignmentHistoryResult.rows,
+                staff_assignment_history: allocationHistory.assignments,
+                staff_change_log: allocationHistory.change_log,
                 swap_history: swapHistoryResult.rows,
                 termination_requests: terminationHistoryResult.rows,
                 hospitalization_periods: hospitalizationHistoryResult.rows
@@ -4395,7 +4400,7 @@ exports.swapStaff = async (req, res) => {
         // The incoming staff's first logged in_time, if already known. Optional —
         // if omitted, their first day (and every day after, until logged) is just
         // an ordinary un-logged LIVE_IN day, handled by the existing attendance UI.
-        new_staff_in_time,
+        new_staff_in_time: rawNewStaffInTime,
         // Backdated swaps only: who gets paid for the days between the swap date
         // and today that the cron already settled — { old_staff_days, new_staff_days }.
         // See dailyAttendanceController.applyBackdatedSwapPay.
@@ -4404,7 +4409,7 @@ exports.swapStaff = async (req, res) => {
         // (full ISO timestamp). When given, their assignment is closed right here
         // instead of being left open for a later "Log out & close" — the swap
         // already happened, so there is no overlap still to come.
-        old_staff_out_time,
+        old_staff_out_time: rawOldStaffOutTime,
         // Optional: the outgoing staff member is going on leave rather than leaving
         // the booking for good - { start_date, end_date, out_time }. They are relieved
         // from duty on start_date (their assignment closes with out_time, immediately
@@ -4418,8 +4423,12 @@ exports.swapStaff = async (req, res) => {
         // swap (see scheduledActionsController.assignReplacement). scheduled_out_time
         // is optional — it defaults to the end of the swap date.
         no_replacement,
-        scheduled_out_time,
+        scheduled_out_time: rawScheduledOutTime,
     } = req.body;
+    // Admin-typed clock times are Asia/Colombo wall-clock; pin zone-less strings (see utils/clockTime).
+    const new_staff_in_time = normalizeClockTime(rawNewStaffInTime);
+    const old_staff_out_time = normalizeClockTime(rawOldStaffOutTime);
+    const scheduled_out_time = normalizeClockTime(rawScheduledOutTime);
 
     if (!new_staff_id && !no_replacement) {
         return res.status(400).json({ status: 'error', message: 'new_staff_id is required' });

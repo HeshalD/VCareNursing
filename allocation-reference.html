@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Allocation history — reference</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- REFERENCE ONLY: visual + behaviour spec for AllocationHistoryTab. Re-implement in React + Tailwind keeping the existing props contract.
+     BASE / EVENTS below are sample data; map them from the real `groups`, `totals`, `changeLog` props. -->
+<style>
+body{margin:0;background:#f8fafc;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;font-size:14px}
+*{box-sizing:border-box}button,input{font-family:inherit}button{cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.btn{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 12px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:13px;font-weight:600;white-space:nowrap}.btn:hover{background:#f1f5f9}
+.btn.warn{background:#fffbeb;border-color:#fcd34d;color:#b45309}.btn.danger{border-color:#fca5a5;color:#b91c1c}.btn.solid{background:#dc2626;border-color:#dc2626;color:#fff}.btn.ghost{border-color:transparent;background:transparent;color:#2563eb}.btn.ghost:hover{background:#eff6ff}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px}
+.field{height:36px;width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:0 10px;font-size:14px;background:#fff;outline:none}.field:focus{border-color:#2563eb;box-shadow:0 0 0 3px #dbeafe}
+.chip{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600}.chip.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}.chip.on.attn{background:#fffbeb;border-color:#fcd34d;color:#b45309}
+.seg{display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px}.seg button{border:0;background:none;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:600;color:#475569}.seg button.on{background:#fff;color:#1d4ed8;box-shadow:0 1px 2px rgba(15,23,42,.12)}
+.g{display:grid;grid-template-columns:minmax(210px,1.5fr) 150px minmax(170px,1fr) 130px 210px;column-gap:14px;align-items:center;padding:0 18px}
+.h{display:grid;grid-template-columns:100px 190px minmax(150px,1.2fr) minmax(150px,1.3fr) 150px 100px 64px;column-gap:14px;align-items:center;padding:0 18px}
+.hd{min-height:36px;background:#f8fafc;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.row{min-height:68px;border-bottom:1px solid #f1f5f9;background:#fff;padding:10px 18px}.row:hover{background:#f8fafc}
+.name{background:none;border:0;padding:0;text-align:left;display:flex;gap:10px;align-items:center;color:#0f172a}
+.ok{background:#ecfdf5;color:#047857}.bad{background:#fef2f2;color:#b91c1c}.warn{background:#fffbeb;color:#b45309}.mute{background:#f1f5f9;color:#475569}.info{background:#eff6ff;color:#1d4ed8}
+.pill{display:inline-flex;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.lbl{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.num{font-variant-numeric:tabular-nums}.sub{font-size:13px;color:#64748b}
+#scrim,#scrim2{position:fixed;inset:0;border:0;display:none;background:rgba(15,23,42,.35)}#scrim{z-index:40}#scrim2{z-index:60;background:rgba(15,23,42,.4)}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100%);z-index:50;background:#fff;box-shadow:-12px 0 32px rgba(15,23,42,.18);display:none;flex-direction:column;animation:sl .2s ease-out}
+#dlgwrap{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;pointer-events:none;padding:16px}
+#dlg{pointer-events:auto;width:min(440px,100%);padding:22px;box-shadow:0 20px 40px rgba(15,23,42,.25);animation:pop .16s ease-out}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:#0f172a;color:#f8fafc;border-radius:8px;padding:10px 16px;display:none}
+@keyframes sl{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}@keyframes pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+</style></head>
+<body>
+<div style="max-width:1240px;margin:0 auto;padding:20px 28px 64px;display:flex;flex-direction:column;gap:18px">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+    <div><h1 style="margin:0;font-size:22px;font-weight:600">Allocation history</h1><div class="sub" style="margin-top:2px">Booking BK-1042 · 10 Oct – 30 Nov 2026</div></div>
+    <button class="btn" id="export">Export CSV</button></div>
+  <div id="banner"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:stretch"><div id="summary" class="card" style="flex:1 1 440px;padding:18px;display:grid;grid-template-columns:repeat(2,1fr);gap:16px 24px"></div><div id="cov" class="card" style="flex:2 1 520px;padding:18px;display:flex;flex-direction:column;gap:10px"></div></div>
+  <div><div class="seg" role="tablist" id="seg"></div></div>
+  <div id="main"></div>
+</div>
+<button id="scrim" aria-label="Close details"></button><div id="drawer" role="dialog" aria-label="Assignment details"></div>
+<button id="scrim2" aria-label="Cancel"></button><div id="dlgwrap"><div id="dlg" class="card" role="dialog" aria-label="Log out and close"></div></div><div id="toast" role="status"></div>
+
+<script>
+/* ---------- SAMPLE DATA ----------
+   Row fields to derive from the real props: st (ONGOING|SCHEDULED|COMPLETED = statusKey), s/e = day index within booking (for coverage bar),
+   paid/pend/rev = pay.paid_total/pending_total/revoked_days, missOut = needsTimeAction, unset = needsPaySettlement, days = pay.days */
+const d=(date,t,h,ps,amt)=>({date,t,h,ps,amt});
+const BASE=[
+{id:'a',name:'Kamani Silva',sid:'ST-0142',role:'Nurse',c:'#2563eb',bg:'#dbeafe',st:'ONGOING',per:'12 Nov → ongoing',n:'11 service days so far',s:33,e:45,paid:45000,pend:4500,rev:0,rate:'Rs. 4,500 per day',inT:'12 Nov, 08:00',outT:'Ongoing',by:'Tharindu Admin',byOn:'11 Nov, 16:20',closed:'—',days:[d('22 Nov, Sun','08:02 – now','—','Pending','Rs. 4,500'),d('21 Nov, Sat','08:00 – 20:00','12.0h','Paid','Rs. 4,500'),d('20 Nov, Fri','08:00 – 20:00','12.0h','Paid','Rs. 4,500')]},
+{id:'b',name:'Dilani Fernando',sid:'ST-0188',role:'Caregiver',c:'#7c3aed',bg:'#ede9fe',st:'SCHEDULED',per:'From 25 Nov',n:'Starts in 3 days',s:46,e:51,paid:0,pend:0,rev:0,rate:'Rs. 4,800 per day',inT:'Not started',outT:'Ongoing',by:'Tharindu Admin',byOn:'20 Nov, 10:05',closed:'—',days:[]},
+{id:'c',name:'Ruwan Jayasuriya',sid:'ST-0099',role:'Nurse',c:'#0d9488',bg:'#ccfbf1',st:'COMPLETED',per:'01 Nov → 11 Nov',n:'11 service days',s:22,e:32,paid:45000,pend:4500,rev:0,unset:true,rate:'Rs. 4,500 per day',inT:'01 Nov, 08:00',outT:'11 Nov, 14:00',by:'Tharindu Admin',byOn:'31 Oct, 09:15',closed:'Tharindu Admin',days:[d('11 Nov, Wed','08:00 – 14:00','6.0h','Pending','Rs. 4,500'),d('10 Nov, Tue','08:00 – 20:00','12.0h','Paid','Rs. 4,500'),d('09 Nov, Mon','08:00 – 20:00','12.0h','Paid','Rs. 4,500')]},
+{id:'d',name:'Nadee Perera',sid:'ST-0121',role:'Caregiver',c:'#d97706',bg:'#fef3c7',st:'COMPLETED',per:'20 Oct → 29 Oct',n:'10 service days',s:10,e:19,paid:40500,pend:0,rev:0,missOut:true,rate:'Rs. 4,500 per day',inT:'20 Oct, 08:00',outT:'Missing',by:'Tharindu Admin',byOn:'19 Oct, 17:40',closed:'Tharindu Admin',days:[d('29 Oct, Thu','08:00 – ?','—','Paid','Rs. 4,500'),d('28 Oct, Wed','08:00 – 20:00','12.0h','Paid','Rs. 4,500'),d('27 Oct, Tue','08:00 – 20:00','12.0h','Paid','Rs. 4,500')]},
+{id:'e',name:'Sachini Weerasinghe',sid:'ST-0075',role:'Nurse',c:'#db2777',bg:'#fce7f3',st:'COMPLETED',per:'10 Oct → 19 Oct',n:'10 service days',s:0,e:9,paid:36000,pend:0,rev:1,rate:'Rs. 4,500 per day',inT:'10 Oct, 08:00',outT:'19 Oct, 20:00',by:'Tharindu Admin',byOn:'09 Oct, 12:30',closed:'Tharindu Admin',days:[d('19 Oct, Mon','08:00 – 20:00','12.0h','Paid','Rs. 4,500'),d('18 Oct, Sun','No attendance','—','Revoked','Rs. 0'),d('17 Oct, Sat','08:00 – 20:00','12.0h','Paid','Rs. 4,500')]}];
+/* change log: k = type filter key; tc/mc = chip tone; cancelled dims the row; rid links to a staff row */
+const EVENTS=[
+{date:'25 Nov',type:'Swap',tc:'mute',mode:'Scheduled',mc:'info',staff:'Kamani Silva → Dilani Fernando',reason:'Kamani on leave from 25 Nov',by:'Tharindu Admin',rec:'recorded 20 Nov',times:'— → —',note:'Not yet executed',ns:'color:#1d4ed8',rid:'b',k:'Swap'},
+{date:'12 Nov',type:'Swap',tc:'mute',mode:'Normal',mc:'mute',staff:'Ruwan Jayasuriya → Kamani Silva',reason:'Contract with Ruwan ended',by:'Tharindu Admin',rec:'recorded 11 Nov',times:'14:00 → 08:00',rid:'a',k:'Swap'},
+{date:'01 Nov',type:'Assigned',tc:'ok',mode:'Backdated',mc:'warn',staff:'Ruwan Jayasuriya',reason:'',by:'Tharindu Admin',rec:'recorded 03 Nov',times:'— → 08:00',rid:'c',k:'Assigned'},
+{date:'29 Oct',type:'Logged out',tc:'warn',mode:'Normal',mc:'mute',staff:'Nadee Perera',reason:'Left without notice',by:'Tharindu Admin',rec:'recorded 30 Oct',times:'— → —',rid:'d',k:'Logged out'},
+{date:'20 Oct',type:'Assigned',tc:'ok',mode:'Normal',mc:'mute',staff:'Nadee Perera',reason:'Replaces Sachini after rotation',by:'Tharindu Admin',rec:'recorded 19 Oct',times:'20:00 → 08:00',rid:'d',k:'Assigned'},
+{date:'18 Oct',type:'Swap',tc:'mute',mode:'Normal',mc:'mute',staff:'Sachini → Nadee',reason:'Raised in error',by:'Tharindu Admin',rec:'recorded 17 Oct',times:'— → —',note:'Cancelled',ns:'color:#b91c1c',cancelled:true,k:'Swap'},
+{date:'15 Oct',type:'Makeup',tc:'ok',mode:'Normal',mc:'mute',staff:'Sachini Weerasinghe',reason:'Covers missed day',by:'Tharindu Admin',rec:'recorded 15 Oct',times:'08:00 → 20:00',rid:'e',k:'Makeup'}];
+
+const S={view:'alloc',f:'All',q:'',pastOpen:false,logF:'All',hide:false,over:{},sel:null,confirm:null};
+const $=id=>document.getElementById(id),M=n=>'Rs. '+Math.round(n).toLocaleString('en-US'),TD=52;
+const dayD=i=>new Date(2026,9,10+i).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+let tt;const toast=m=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(tt);tt=setTimeout(()=>t.style.display='none',2600)};
+const rows=()=>BASE.map(r=>{const o=Object.assign({},r,S.over[r.id]||{});o.ini=o.name.split(' ').map(w=>w[0]).slice(0,2).join('');o.times=!!o.missOut;o.settle=!!o.unset;o.attn=o.times||o.settle;return o});
+const patch=(id,p)=>{S.over[id]=Object.assign({},S.over[id],p)};
+/* ONE primary action per row, by priority */
+function action(r,all){
+  if(r.times)return{l:'Enter times',c:'warn',f:()=>{patch(r.id,{missOut:false,outT:'29 Oct, 20:00'});toast('Out time saved for '+r.name);render()}};
+  if(r.settle)return{l:'Settle pay',c:'warn',f:()=>{patch(r.id,{unset:false,pend:0,paid:r.paid+r.pend});toast('Pay settled for '+r.name);render()}};
+  if(r.st==='ONGOING'&&all.filter(x=>x.st==='ONGOING').length>0)return{l:'Log out & close',c:'danger',f:()=>{S.confirm=r.id;S.sel=null;render()}};
+  return{l:'Edit times',c:'',f:()=>toast('Edit times dialog opens here')}}
+const STAT={ONGOING:['Active','ok'],SCHEDULED:['Scheduled','info'],COMPLETED:['Completed','mute']};
+const flags=r=>[r.times&&'Out time missing',r.settle&&'Pay not settled'].filter(Boolean).map(t=>`<span class="pill warn">${t}</span>`).join('');
+const rowHTML=(r,all)=>{const a=action(r,all),st=STAT[r.st];
+  return `<div class="g row"><button class="name" data-open="${r.id}"><span class="av" style="background:${r.bg};color:${r.c}">${r.ini}</span><span><b>${r.name}</b><span class="sub" style="display:block">${r.sid} · ${r.role}</span></span></button>
+  <div><div style="font-weight:600">${r.per}</div><div class="sub">${r.n}</div></div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px"><span class="pill ${st[1]}">${st[0]}</span>${flags(r)}</div>
+  <div style="text-align:right"><div class="num" style="font-weight:700;color:#047857">${M(r.paid)}</div>${r.pend>0?`<div class="num" style="font-size:12px;color:#b45309">${M(r.pend)} pending</div>`:''}</div>
+  <div style="display:flex;gap:6px;justify-content:flex-end"><button class="btn ${a.c}" data-act="${r.id}">${a.l}</button><button class="btn ghost" data-open="${r.id}">Details</button></div></div>`};
+
+function render(){
+  const R=rows(),A=R.filter(r=>r.attn),nT=R.filter(r=>r.times).length,nS=R.filter(r=>r.settle).length,pend=R.reduce((n,r)=>n+r.pend,0);
+  /* attention banner: only when something needs doing */
+  $('banner').innerHTML=A.length?`<div class="warn" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;border:1px solid #fde68a;border-radius:8px;padding:10px 14px"><b>${[nT&&nT+' need'+(nT>1?'':'s')+' times entered',nS&&nS+' need'+(nS>1?'':'s')+' pay settled'].filter(Boolean).join(' · ')}</b><button class="btn warn" data-attn>Show them</button></div>`:'';
+  const worked=R.filter(r=>r.st!=='SCHEDULED');
+  $('summary').innerHTML=`<div><div class="lbl">Staff paid overall</div><div class="num" style="font-size:22px;font-weight:700;color:#047857">${M(R.reduce((n,r)=>n+r.paid,0))}</div></div>
+  <div><div class="lbl">Pending pay</div><div class="num" style="font-size:22px;font-weight:700;${pend?'color:#b45309':''}">${M(pend)}</div>${pend?'<button class="btn ghost" data-attn style="height:24px;padding:0 6px;margin-left:-6px">View pending</button>':''}</div>
+  <div><div class="lbl">Days paid</div><div class="num" style="font-size:22px;font-weight:700">37</div></div><div><div class="lbl">Staff who worked it</div><div class="num" style="font-size:22px;font-weight:700">${worked.length}</div></div>`;
+  /* coverage: gap = days between one segment's end and the next start (red hatched) */
+  const segs=R.slice().sort((a,b)=>a.s-b.s),gaps=[];let reach=-1;segs.forEach(r=>{if(reach>=0&&r.s>reach+1)gaps.push([reach+1,r.s-1]);reach=Math.max(reach,r.e)});
+  const gt=gaps.map(g=>(g[1]-g[0]+1)+' uncovered day'+(g[1]>g[0]?'s':'')+' · '+dayD(g[0])+(g[1]>g[0]?'–'+dayD(g[1]):'')).join(', ');
+  $('cov').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div class="lbl">Coverage timeline</div><span class="pill ${gaps.length?'bad':'ok'}">${gaps.length?gt:'Every day covered'}</span></div>
+  <div style="position:relative;height:30px;margin-top:6px"><div style="position:absolute;inset:0;background:#f1f5f9;border-radius:6px"></div>
+  ${gaps.map(g=>`<div style="position:absolute;top:0;bottom:0;left:${g[0]/TD*100}%;width:${(g[1]-g[0]+1)/TD*100}%;background:repeating-linear-gradient(45deg,#fecaca,#fecaca 4px,#fff 4px,#fff 8px);border:1px solid #f87171;border-radius:4px"></div>`).join('')}
+  ${segs.map(r=>`<div title="${r.name}" style="position:absolute;top:0;bottom:0;border-radius:4px;border:1px solid #fff;opacity:${r.st==='SCHEDULED'?.45:1};background:${r.c};left:${r.s/TD*100}%;width:${(r.e-r.s+1)/TD*100}%"></div>`).join('')}
+  <div style="position:absolute;top:-4px;bottom:-4px;width:2px;background:#0f172a;left:${43/TD*100}%"></div></div>
+  <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b"><span>10 Oct</span><span>Today · 22 Nov</span><span>30 Nov</span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:#475569">${R.map(r=>`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:3px;background:${r.c};display:inline-block"></i>${r.name}</span>`).join('')}</div>`;
+  $('seg').innerHTML=`<button role="tab" class="${S.view==='alloc'?'on':''}" data-v="alloc">Assignments</button><button role="tab" class="${S.view==='log'?'on':''}" data-v="log">Change log · ${EVENTS.length}</button>`;
+  $('main').innerHTML=S.view==='alloc'?allocHTML(R):logHTML();
+  const q=$('q');if(q)q.oninput=e=>{S.q=e.target.value;const p=e.target.selectionStart;render();$('q').focus();$('q').setSelectionRange(p,p)};
+}
+function allocHTML(R){
+  const q=S.q.trim().toLowerCase(),match=r=>(S.f==='All'||(S.f==='Attention'?r.attn:S.f==='Ongoing'?r.st==='ONGOING':S.f==='Scheduled'?r.st==='SCHEDULED':r.st==='COMPLETED'))&&(!q||(r.name+' '+r.sid).toLowerCase().includes(q));
+  const F=R.filter(match),filtering=S.f!=='All'||!!q,Aa=F.filter(r=>r.st!=='COMPLETED'),Bb=F.filter(r=>r.st==='COMPLETED'),past=R.filter(r=>r.st==='COMPLETED').length;
+  const cnt={All:R.length,Ongoing:R.filter(r=>r.st==='ONGOING').length,Scheduled:R.filter(r=>r.st==='SCHEDULED').length,Completed:past,Attention:R.filter(r=>r.attn).length};
+  const chips=['All','Ongoing','Scheduled','Completed','Attention'].map(k=>`<button class="chip ${S.f===k?'on':''} ${k==='Attention'?'attn':''}" data-f="${k}">${k==='Attention'?'Needs attention':k} · ${cnt[k]}</button>`).join('');
+  return `<div style="display:flex;flex-direction:column;gap:14px"><div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><div style="flex:1 1 240px;max-width:320px"><input id="q" class="field" aria-label="Search staff" placeholder="Search staff name or ID…" value="${S.q}"></div>${chips}</div>
+  <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><div style="min-width:900px"><div class="g hd"><div>Staff</div><div>Period</div><div>Status</div><div style="text-align:right">Staff pay</div><div style="text-align:right">Action</div></div>
+  ${Aa.map(r=>rowHTML(r,R)).join('')}
+  ${!filtering&&past?`<button data-past aria-expanded="${S.pastOpen}" style="width:100%;display:flex;align-items:center;gap:8px;background:#f8fafc;border:0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;padding:12px 18px;font-size:13px;font-weight:700;color:#475569;text-align:left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;${S.pastOpen?'transform:rotate(90deg)':''}"><path d="m9 6 6 6-6 6"/></svg>Past assignments (${past})</button>`:''}
+  ${(filtering||S.pastOpen)?Bb.map(r=>rowHTML(r,R)).join(''):''}
+  ${!F.length?'<div style="padding:36px;text-align:center;color:#64748b">No assignments match. <button class="btn" data-clear style="margin-left:8px">Clear filters</button></div>':''}</div></div></div></div>`}
+function logHTML(){
+  const ev=EVENTS.filter(e=>(S.logF==='All'||e.k===S.logF)&&!(S.hide&&e.cancelled));
+  return `<div style="display:flex;flex-direction:column;gap:14px"><div style="display:flex;flex-wrap:wrap;gap:10px">${['All','Swap','Assigned','Logged out','Makeup'].map(k=>`<button class="chip ${S.logF===k?'on':''}" data-lf="${k}">${k}</button>`).join('')}<button class="chip ${S.hide?'on':''}" data-hide>Hide cancelled</button></div>
+  <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><div style="min-width:900px"><div class="h hd"><div>Effective</div><div>Change</div><div>Staff</div><div>Reason</div><div>Initiated by</div><div>Out → In</div><div></div></div>
+  ${ev.map(e=>`<div class="h" style="min-height:64px;padding-top:10px;padding-bottom:10px;border-bottom:1px solid #f1f5f9;color:#334155;${e.cancelled?'opacity:.6':''}"><div style="font-weight:600;color:#0f172a">${e.date}</div>
+  <div><div style="display:flex;flex-wrap:wrap;gap:6px"><span class="pill ${e.tc}">${e.type}</span><span class="pill ${e.mc}">${e.mode}</span></div>${e.note?`<div style="font-size:12px;margin-top:4px;${e.ns}">${e.note}</div>`:''}</div>
+  <div style="font-weight:600;color:#0f172a">${e.staff}</div><div style="${e.reason?'':'color:#64748b'}">${e.reason||'No reason provided'}</div><div>${e.by}<div style="font-size:12px;color:#64748b">${e.rec}</div></div><div class="num">${e.times}</div>
+  <div style="text-align:right">${e.rid?`<button class="btn ghost" style="padding:0 8px" data-view="${e.rid}">View</button>`:''}</div></div>`).join('')}
+  ${!ev.length?'<div style="padding:36px;text-align:center;color:#64748b">No staff changes match.</div>':''}</div></div></div></div>`}
+
+function drawer(){
+  const R=rows(),r=R.find(x=>x.id===S.sel);if(!r){$('drawer').style.display='none';$('scrim').style.display='none';return}
+  const a=action(r,R),st=STAT[r.st];
+  $('drawer').innerHTML=`<div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;gap:10px"><div style="display:flex;align-items:center;gap:12px"><span class="av" style="width:42px;height:42px;background:${r.bg};color:${r.c}">${r.ini}</span><div><div style="font-size:16px;font-weight:600">${r.name}</div><div class="sub">${r.sid} · ${r.role}</div></div></div><button class="btn" data-close>Close</button></div>
+  <div style="padding:20px;display:flex;flex-direction:column;gap:18px;overflow-y:auto"><div style="display:flex;flex-wrap:wrap;gap:6px"><span class="pill ${st[1]}">${st[0]}</span>${flags(r)}</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px"><div><div class="lbl">Period</div><div style="font-weight:600">${r.per}</div><div class="sub">${r.n}</div></div><div><div class="lbl">Rate</div><div style="font-weight:600">${r.rate}</div></div>
+  <div><div class="lbl">In time</div>${r.inT}</div><div><div class="lbl">Out time</div><div style="${r.times?'color:#b45309;font-weight:600':''}">${r.outT}</div></div>
+  <div><div class="lbl">Assigned by</div>${r.by}<div class="sub">${r.byOn}</div></div><div><div class="lbl">Closed by</div>${r.closed}</div></div>
+  <div class="card" style="padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;background:#f8fafc"><div><div class="lbl">Paid</div><b class="num" style="color:#047857">${M(r.paid)}</b></div><div><div class="lbl">Pending</div><b class="num" style="color:#b45309">${M(r.pend)}</b></div><div><div class="lbl">Revoked</div><b class="num" style="color:#b91c1c">${r.rev?r.rev+' day'+(r.rev>1?'s':''):'None'}</b></div></div>
+  <div><div class="lbl" style="margin-bottom:8px">Latest days</div>${r.days.length?`<div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">${r.days.map(x=>`<div style="display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 14px;border-bottom:1px solid #f1f5f9"><b>${x.date}</b><b class="num" style="text-align:right">${x.amt}</b><div class="sub">${x.t} · ${x.h}</div><div style="text-align:right"><span class="pill ${x.ps==='Paid'?'ok':x.ps==='Pending'?'warn':'bad'}">${x.ps}</span></div></div>`).join('')}</div>`:'<div class="sub">No days yet. This assignment has not started.</div>'}</div></div>
+  <div style="margin-top:auto;padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end"><button class="btn ${a.c}" data-dact>${a.l}</button></div>`;
+  $('drawer').style.display='flex';$('scrim').style.display='block'}
+function dialog(){
+  const r=rows().find(x=>x.id===S.confirm);if(!r){$('dlgwrap').style.display='none';$('scrim2').style.display='none';return}
+  $('dlg').innerHTML=`<div style="font-size:17px;font-weight:600">Log out ${r.name}?</div><p style="margin:8px 0 14px;color:#475569;line-height:1.5">Their assignment ends the day before Dilani Fernando starts on 25 Nov. Their final day will be settled for pay afterwards.</p>
+  <label for="outt" class="lbl">Out time</label><input id="outt" type="time" value="17:30" class="field" style="display:block;margin-top:6px">
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px"><button class="btn" data-no>Cancel</button><button class="btn solid" data-yes>Log out &amp; close</button></div>`;
+  $('dlgwrap').style.display='flex';$('scrim2').style.display='block'}
+
+document.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;const D=t.dataset;
+  if(t.id==='export')toast('Exporting allocation history as CSV');
+  else if(t.id==='scrim')S.sel=null;else if(t.id==='scrim2'||'no' in D)S.confirm=null;else if('close' in D)S.sel=null;
+  else if('attn' in D){S.view='alloc';S.f='Attention';S.q=''}
+  else if(D.v){S.view=D.v}else if(D.f){S.f=D.f}else if('clear' in D){S.f='All';S.q=''}else if('past' in D){S.pastOpen=!S.pastOpen}
+  else if(D.lf){S.logF=D.lf}else if('hide' in D){S.hide=!S.hide}
+  else if(D.open){S.sel=D.open}else if(D.view){S.sel=D.view;S.view='alloc'}
+  else if(D.act){const R=rows();action(R.find(x=>x.id===D.act),R).f();return}
+  else if('dact' in D){const R=rows(),r=R.find(x=>x.id===S.sel);S.sel=null;action(r,R).f();return}
+  else if('yes' in D){const r=rows().find(x=>x.id===S.confirm);patch(r.id,{st:'COMPLETED',outT:'24 Nov, 17:30',closed:'You'});S.confirm=null;S.pastOpen=true;toast(r.name+' logged out. Assignment closed.')}
+  else return;render();drawer();dialog()});
+render();
+</script></body></html>

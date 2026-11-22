@@ -20,6 +20,8 @@ import vcareLogo from '../../../assets/Logo/VCareLogo.png';
 import { isRepeatDay } from '../../../utils/repeatDays';
 import { buildServiceCalendar, computeServedDays, computeServedShifts } from './careTimelineMath';
 import { formatDMY, formatRs, formatTimeWithDayOffset, formatWeekdayDMY, localDateISO } from './dayDisplay';
+import { buildAllocationRows } from './allocationHistoryModel';
+import AllocationHistoryTab from './AllocationHistoryTab';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import TimeInput from '../../../components/common/TimeInput';
 import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
@@ -343,7 +345,7 @@ const Empty = ({ icon: Icon, text }) => (
   </div>
 );
 const Pill = ({ children, tone = 'slate' }) => {
-  const map = { slate: { bg: '#f3f4f6', col: '#374151' }, green: { bg: '#f0fdf4', col: '#166534' }, amber: { bg: '#fffbeb', col: '#92400e' }, rose: { bg: '#fef2f2', col: '#991b1b' }, violet: { bg: '#f3f4f6', col: '#374151' } };
+  const map = { slate: { bg: '#f3f4f6', col: '#374151' }, green: { bg: '#f0fdf4', col: '#166534' }, amber: { bg: '#fffbeb', col: '#92400e' }, rose: { bg: '#fef2f2', col: '#991b1b' }, violet: { bg: '#f3f4f6', col: '#374151' }, blue: { bg: '#eff6ff', col: '#1d4ed8' } };
   const c = map[tone] || map.slate;
   return <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 6, background: c.bg, color: c.col }}>{children}</span>;
 };
@@ -683,7 +685,7 @@ const BookingDetailPageV2 = () => {
   const invoiceSummary  = detail?.invoice_summary        || {};
   const paymentHistory  = Array.isArray(detail?.payment_history)         ? detail.payment_history         : [];
   const staffHistory    = Array.isArray(detail?.staff_assignment_history) ? detail.staff_assignment_history : [];
-  const swapHistory     = Array.isArray(detail?.swap_history)            ? detail.swap_history            : [];
+  const changeLogRaw    = Array.isArray(detail?.staff_change_log)        ? detail.staff_change_log        : [];
   const terminationReqs = Array.isArray(detail?.termination_requests)    ? detail.termination_requests    : [];
   const hospitalizationPeriods = Array.isArray(detail?.hospitalization_periods) ? detail.hospitalization_periods : [];
   const isShiftBased    = bookingSummary.service_model === 'SHIFT_BASED';
@@ -724,15 +726,18 @@ const BookingDetailPageV2 = () => {
     dailyRate: r.daily_rate ?? r.rate ?? 0, amountAllocated: r.amount_allocated ?? 0,
     shiftSlotId: r.shift_slot_id || null,
     assignedOn: r.assigned_on || null,
+    status: r.status || null, isMakeup: !!r.reschedule_id, endReason: r.end_reason || null,
+    assignedByName: r.assigned_by_name || null, closedByName: r.closed_by_name || null,
+    shiftNumber: r.shift_number ?? null, shiftLabel: r.shift_label || null,
+    shiftStartTime: r.shift_start_time || null, shiftDurationHours: r.shift_duration_hours ?? null,
+    pay: r.pay || { paid_total: 0, pending_total: 0, paid_days: 0, pending_days: 0, revoked_days: 0, record_count: 0, days: [] },
   }));
 
-  const normSwapHistory = swapHistory.map(s => ({
-    id: s.swap_id || s.id, oldStaffName: s.old_staff_name || s.from_staff_name || '-',
-    oldStaffId: s.old_staff_id || null,
-    newStaffName: s.new_staff_name || s.to_staff_name || '-', newStaffId: s.new_staff_id || null,
-    swappedAt: s.swapped_at || s.created_at,
-    reason: s.swap_reason || s.reason || null, billingGap: Boolean(s.billing_gap),
-    swappedByMobile: s.swapped_by_mobile || null,
+  const changeLog = changeLogRaw.map(e => ({
+    id: e.id, type: e.type, effectiveDate: e.effective_date, recordedAt: e.recorded_at,
+    fromStaff: e.from_staff, toStaff: e.to_staff, shiftLabel: e.shift_label, reason: e.reason,
+    initiatedBy: e.initiated_by, mode: e.mode, actionStatus: e.action_status || null,
+    outTime: e.out_time, inTime: e.in_time,
   }));
 
   const totalPaid     = Number(paymentSummary.total_paid    ?? 0);
@@ -1001,71 +1006,24 @@ const BookingDetailPageV2 = () => {
     return map;
   }, [staffHistory]);
 
-  const sortedAllocationHistory = useMemo(() => {
-    const sorted = [...normStaffHistory].sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
-    const bookingStart = bookingSummary.start_date ? new Date(bookingSummary.start_date) : null;
-    if (bookingStart) bookingStart.setHours(0,0,0,0);
-    return sorted.map(row => {
-      const effectiveEnd = row.endDate || null;
-      const startD = row.startDate ? new Date(row.startDate) : null; if (startD) startD.setHours(0,0,0,0);
-      const endD = effectiveEnd ? new Date(effectiveEnd) : null; if (endD) endD.setHours(0,0,0,0);
-      const dayStart = bookingStart && startD ? Math.max(1, Math.floor((startD - bookingStart) / 86400000) + 1) : null;
-      const dayEnd   = bookingStart && endD   ? Math.max(1, Math.floor((endD - bookingStart) / 86400000) + 1)   : null;
-      return { ...row, effectiveEnd, dayStart, dayEnd, dayCount: dayStart !== null && dayEnd !== null ? dayEnd - dayStart + 1 : null, isOngoing: !effectiveEnd, color: staffColorMap.get(row.colorKey) || null };
+  const [expandedAlloc, setExpandedAlloc] = useState({});
+  const allocationPausedRanges = useMemo(() => bookingPauses.map(p => {
+    const start = (p.paused_date || '').slice(0, 10);
+    const resumed = p.resumed_at ? localDateISO(new Date(p.resumed_at)) : null;
+    return { start, end: resumed ? localDateISO(new Date(new Date(resumed + 'T00:00:00').getTime() - 86400000)) : null };
+  }).filter(p => p.start), [bookingPauses]);
+  // Rows, per-shift groups and totals for the Allocation history tab (see allocationHistoryModel).
+  const allocationModel = useMemo(() => {
+    const m = buildAllocationRows(normStaffHistory, attendanceRecords, {
+      bookingStartISO: careStart ? localDateISO(careStart) : null, bookingCal, isLiveIn, isShiftBased,
     });
-  }, [normStaffHistory, bookingSummary.start_date, staffColorMap]);
-
-  // Flags each allocation row for a missing swap-boundary time. Only a row that
-  // has another row immediately before/after it in the *same shift slot's*
-  // timeline (grouping by shiftSlotId so concurrent SHIFT_BASED slots don't
-  // cross-contaminate) represents a staff transition — the very first row's
-  // in_time and the currently-ongoing last row's out_time are never "missing",
-  // they're just not applicable yet.
-  const allocationHistoryWithTimeStatus = useMemo(() => {
-    const bySlot = new Map();
-    sortedAllocationHistory.forEach(row => {
-      const key = row.shiftSlotId || '__default__';
-      if (!bySlot.has(key)) bySlot.set(key, []);
-      bySlot.get(key).push(row);
-    });
-    const flagged = [];
-    bySlot.forEach(rows => {
-      rows.forEach((row, i) => {
-        // service_start_date/service_end_date come back as raw DATE values (not cast
-        // to text server-side), so a plain UTC slice can land a day off from the real
-        // calendar date once serialized — toLocalDateStr re-derives it from local
-        // components the same way liveInBoundary does, keeping this in step with the
-        // dates Care Timeline actually writes attendance under.
-        const startISO = row.startDate ? toLocalDateStr(row.startDate) : null;
-        const endISO = row.effectiveEnd ? toLocalDateStr(row.effectiveEnd) : null;
-        const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
-        const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
-        const missingInTime = i > 0 && !inRecord?.in_time;
-        // A shift-slot reassignment hands off cleanly — the outgoing staff's shift
-        // simply doesn't run again after their last occurrence, so there's no
-        // out-time to log for it (unlike a LIVE_IN swap, where the outgoing staff
-        // is still on duty until their actual out-time is logged).
-        const missingOutTime = !row.shiftSlotId && i < rows.length - 1 && !!row.effectiveEnd && !outRecord?.out_time;
-        // An ended LIVE_IN assignment whose first or last day is still PENDING —
-        // the cron deliberately never auto-pays those, and a scheduled termination
-        // or completion runs overnight with nobody there to decide them, so they
-        // wait here until an admin settles them. Same-day assignments have one
-        // boundary, not two.
-        const boundaryRows = startISO === endISO ? [inRecord] : [inRecord, outRecord];
-        const needsPaySettlement = Boolean(
-          isLiveIn && row.effectiveEnd && !row.shiftSlotId &&
-          boundaryRows.some(r => !r || r.salary_status === 'PENDING')
-        );
-        flagged.push({
-          ...row, inRecord, outRecord, missingInTime, missingOutTime,
-          needsTimeAction: missingInTime || missingOutTime,
-          needsPaySettlement,
-        });
-      });
-    });
-    flagged.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
-    return flagged;
-  }, [sortedAllocationHistory, attendanceRecords, isLiveIn]);
+    const decorate = (r) => ({ ...r, effectiveEnd: r.endDate || null, color: staffColorMap.get(r.colorKey) || null });
+    const rows = m.rows.map(decorate);
+    const byId = new Map(rows.map(r => [r.id, r]));
+    return { ...m, rows, groups: m.groups.map(g => ({ ...g, rows: g.rows.map(r => byId.get(r.id)) })) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffHistory, attendanceRecords, careStart, bookingCal, isLiveIn, isShiftBased, staffColorMap]);
+  const allocationHistoryWithTimeStatus = allocationModel.rows;
 
   const rowsNeedingSwapTime = useMemo(
     () => allocationHistoryWithTimeStatus.filter(r => r.needsTimeAction),
@@ -2273,8 +2231,8 @@ const BookingDetailPageV2 = () => {
       setSwapModalSubmitting(true); setSwapModalError('');
       apiClient.setToken(adminToken);
       // Time-only inputs — combine with the staff start date above into a full timestamp.
-      const oldOutTime = swapModalOldOutTime ? `${swapModalStartDate}T${swapModalOldOutTime}` : null;
-      const newInTime = swapModalNewInTime ? `${swapModalStartDate}T${swapModalNewInTime}` : null;
+      const oldOutTime = swapModalOldOutTime ? new Date(`${swapModalStartDate}T${swapModalOldOutTime}`).toISOString() : null;
+      const newInTime = swapModalNewInTime ? new Date(`${swapModalStartDate}T${swapModalNewInTime}`).toISOString() : null;
       const newPayRate = swapModalNewRate !== '' && Number(swapModalNewRate) >= 0 ? Number(swapModalNewRate) : null;
       let response;
       if (swapModalSlotId) {
@@ -2342,7 +2300,7 @@ const BookingDetailPageV2 = () => {
       const res = await apiClient.assignScheduledSwapReplacement(swapModalFillAction.action_id, {
         new_staff_id: swapModalSelectedStaff.staff_profile_id,
         new_staff_daily_rate: payRate,
-        new_staff_in_time: swapModalNewInTime ? `${dateISO}T${swapModalNewInTime}` : undefined,
+        new_staff_in_time: swapModalNewInTime ? new Date(`${dateISO}T${swapModalNewInTime}`).toISOString() : undefined,
       });
       closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
       window.alert(res?.message || 'Replacement assigned.');
@@ -2361,7 +2319,7 @@ const BookingDetailPageV2 = () => {
           no_replacement: true,
           effective_date: swapModalStartDate,
           reason: swapModalReason.trim() || null,
-          old_staff_out_time: swapModalNoReplOutTime ? `${swapModalStartDate}T${swapModalNoReplOutTime}` : null,
+          old_staff_out_time: swapModalNoReplOutTime ? new Date(`${swapModalStartDate}T${swapModalNoReplOutTime}`).toISOString() : null,
         });
       } else {
         res = await apiClient.swapBookingStaff(bookingId, {
@@ -2389,8 +2347,8 @@ const BookingDetailPageV2 = () => {
     const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
     const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
     setEditTimesRow(row);
-    setEditTimesIn(inRecord?.in_time ? inRecord.in_time.slice(11, 16) : '');
-    setEditTimesOut(outRecord?.out_time ? outRecord.out_time.slice(11, 16) : '');
+    setEditTimesIn(inRecord?.in_time ? timeOfDay(inRecord.in_time) : '');
+    setEditTimesOut(outRecord?.out_time ? timeOfDay(outRecord.out_time) : '');
     setEditTimesError('');
   };
   const closeEditTimes = () => { setEditTimesRow(null); setEditTimesIn(''); setEditTimesOut(''); setEditTimesError(''); };
@@ -2402,10 +2360,10 @@ const BookingDetailPageV2 = () => {
       const startISO = editTimesRow.startDate ? toLocalDateStr(editTimesRow.startDate) : null;
       const endISO = editTimesRow.effectiveEnd ? toLocalDateStr(editTimesRow.effectiveEnd) : null;
       if (editTimesIn && startISO) {
-        await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: startISO, in_time: `${startISO}T${editTimesIn}`, shift_slot_id: editTimesRow.shiftSlotId || undefined });
+        await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: startISO, in_time: new Date(`${startISO}T${editTimesIn}`).toISOString(), shift_slot_id: editTimesRow.shiftSlotId || undefined });
       }
       if (editTimesOut && endISO) {
-        await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: endISO, out_time: `${endISO}T${editTimesOut}`, shift_slot_id: editTimesRow.shiftSlotId || undefined });
+        await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: endISO, out_time: new Date(`${endISO}T${editTimesOut}`).toISOString(), shift_slot_id: editTimesRow.shiftSlotId || undefined });
       }
       closeEditTimes();
       await fetchDailyRecords();
@@ -4447,169 +4405,24 @@ const BookingDetailPageV2 = () => {
               as tables rather than the card stacks used elsewhere on this page —
               there's enough columns of detail here that a table reads faster.
           ══════════════════════════════════════════════════════ */}
-          {activeSection === 'allocation-history' && (() => {
-            const thCls = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9ca3af' };
-            const tdCls = { padding: '10px', fontSize: 12.5, color: '#374151', verticalAlign: 'top' };
-            const ongoingCount = allocationHistoryWithTimeStatus.filter(r => r.isOngoing && !r.shiftSlotId).length;
-            // Only the outgoing side of an open swap can be logged out: an ongoing row
-            // whose replacement (another ongoing row) started after it. Returns that
-            // replacement's start date — the likeliest day they left, so the close
-            // modal opens on it instead of today. A replacement that starts the same
-            // day counts too when it was assigned after this row (e.g. a bulk-entered
-            // booking swapped on its first day).
-            const replacementStartFor = (row) => {
-              const start = toLocalDateStr(row.startDate);
-              const assignedAfter = (r) => r.assignedOn && row.assignedOn && new Date(r.assignedOn) > new Date(row.assignedOn);
-              const later = allocationHistoryWithTimeStatus
-                .filter(r => r.id !== row.id && r.isOngoing && !r.shiftSlotId && (toLocalDateStr(r.startDate) > start || (toLocalDateStr(r.startDate) === start && assignedAfter(r))))
-                .map(r => toLocalDateStr(r.startDate)).sort();
-              return later[0] || null;
-            };
-            return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <Card>
-                  <CardTitle>Allocation history</CardTitle>
-                  {allocationHistoryWithTimeStatus.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            <th style={thCls}>Staff</th>
-                            <th style={thCls}>Period</th>
-                            <th style={thCls}>In time</th>
-                            <th style={thCls}>Out time</th>
-                            <th style={thCls}>Duration</th>
-                            <th style={thCls}>Amount</th>
-                            <th style={thCls}>Status</th>
-                            <th style={thCls}>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {allocationHistoryWithTimeStatus.map((row, i) => (
-                            <tr key={row.id || i} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none', background: row.needsTimeAction ? '#FFFBEB' : undefined }}>
-                              <td style={tdCls}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: row.color ? row.color.solid : '#D5CFC4' }} />
-                                  <div>
-                                    <div style={{ fontWeight: 700, color: '#111827' }}><StaffLink id={row.profileId}>{row.name}</StaffLink></div>
-                                    {row.designation !== '-' && <div style={{ fontSize: 11, color: '#9ca3af' }}>{row.designation}</div>}
-                                  </div>
-                                </div>
-                              </td>
-                              <td style={tdCls}>
-                                <div style={{ fontWeight: 600, color: '#111827' }}>Day {row.dayStart ?? '?'} {row.isOngoing ? '→ ongoing' : `→ Day ${row.dayEnd ?? '?'}`}</div>
-                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                                  {formatDate(row.startDate)} → {row.effectiveEnd ? formatDate(row.effectiveEnd) : 'Ongoing'}
-                                </div>
-                              </td>
-                              <td style={tdCls}>
-                                {row.inRecord?.in_time
-                                  ? formatDT(row.inRecord.in_time)
-                                  : row.missingInTime
-                                    ? <span style={{ color: '#B45309', fontWeight: 600 }}>Missing</span>
-                                    : <span style={{ color: '#9ca3af' }}>—</span>}
-                              </td>
-                              <td style={tdCls}>
-                                {row.outRecord?.out_time
-                                  ? formatDT(row.outRecord.out_time)
-                                  : row.missingOutTime
-                                    ? <span style={{ color: '#B45309', fontWeight: 600 }}>Missing</span>
-                                    : <span style={{ color: '#9ca3af' }}>{row.isOngoing ? 'Ongoing' : '—'}</span>}
-                              </td>
-                              <td style={tdCls}>
-                                {row.dayCount !== null
-                                  ? `${row.dayCount} day${row.dayCount !== 1 ? 's' : ''}`
-                                  : row.isOngoing && row.dayStart && plannedDays
-                                    ? `${plannedDays - row.dayStart + 1} planned`
-                                    : '—'}
-                              </td>
-                              <td style={tdCls}>{row.amountAllocated > 0 ? formatMoney(row.amountAllocated) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                              <td style={tdCls}>
-                                {row.isOngoing && (
-                                  <span style={{ display: 'inline-block', fontSize: 10, fontWeight: 700, background: '#E3F1E8', color: '#2F7A53', border: '1px solid #DCEEDD', borderRadius: 999, padding: '2px 7px', marginBottom: row.needsTimeAction ? 4 : 0 }}>Active</span>
-                                )}
-                                {row.needsTimeAction && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#9A6A12' }}>
-                                    <AlertTriangle style={{ width: 10, height: 10, flexShrink: 0 }} />
-                                    {[row.missingInTime && 'in', row.missingOutTime && 'out'].filter(Boolean).join(' & ')} time missing
-                                  </div>
-                                )}
-                                {row.needsPaySettlement && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#B45309', marginTop: 4 }}>
-                                    <AlertTriangle style={{ width: 10, height: 10, flexShrink: 0 }} />
-                                    First/last day pay not settled
-                                  </div>
-                                )}
-                                {!row.isOngoing && !row.needsTimeAction && !row.needsPaySettlement && <span style={{ color: '#9ca3af' }}>—</span>}
-                              </td>
-                              <td style={tdCls}>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-                                  <button onClick={() => openEditTimes(row)} style={{ fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}>
-                                    {row.needsTimeAction ? 'Enter times' : 'Edit times'}
-                                  </button>
-                                  {row.isOngoing && !row.shiftSlotId && (ongoingCount > 1 ? replacementStartFor(row) : canLogOutLastStaff) && toLocalDateStr(row.startDate) <= todayISO() && (
-                                    <button
-                                      onClick={() => openCloseAssignment(row, replacementStartFor(row))}
-                                      title={ongoingCount > 1 ? "They've actually left — log their out-time and end this assignment" : 'Log their out-time on any day — with nobody left on the booking, it is paused from that day'}
-                                      style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}
-                                    >
-                                      Log out &amp; close
-                                    </button>
-                                  )}
-                                  {row.needsPaySettlement && (
-                                    <button
-                                      onClick={() => openCloseAssignment(row, null, 'settle')}
-                                      title="Decide what they're owed for their first and last day"
-                                      style={{ fontSize: 11, fontWeight: 600, color: '#B45309', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}
-                                    >
-                                      Settle pay
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </Card>
-
-                <Card>
-                  <CardTitle>Swap history</CardTitle>
-                  <p style={{ fontSize: 11.5, color: '#A39D91', marginTop: -8, marginBottom: 12 }}>Out/in times for a swap live on its two rows in Allocation history above — use "Edit times" there to add or correct them.</p>
-                  {normSwapHistory.length === 0 ? <Empty icon={Repeat2} text="No swap history for this booking." /> : (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            <th style={thCls}>Date</th>
-                            <th style={thCls}>Outgoing</th>
-                            <th style={thCls}>Incoming</th>
-                            <th style={thCls}>Reason</th>
-                            <th style={thCls}>Swapped by</th>
-                            <th style={thCls}>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {normSwapHistory.map((swap, i) => (
-                            <tr key={swap.id || i} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
-                              <td style={{ ...tdCls, whiteSpace: 'nowrap', color: '#6b7280' }}>{formatDT(swap.swappedAt)}</td>
-                              <td style={tdCls}><StaffLink id={swap.oldStaffId}><span style={{ fontWeight: 600, color: '#111827' }}>{swap.oldStaffName}</span></StaffLink></td>
-                              <td style={tdCls}><StaffLink id={swap.newStaffId}><span style={{ fontWeight: 600, color: '#111827' }}>{swap.newStaffName}</span></StaffLink></td>
-                              <td style={tdCls}>{swap.reason || <span style={{ color: '#9ca3af' }}>No reason provided</span>}</td>
-                              <td style={tdCls}>{swap.swappedByMobile ? formatMobileNumber(swap.swappedByMobile) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                              <td style={tdCls}><Pill tone={swap.billingGap ? 'amber' : 'violet'}>{swap.billingGap ? 'Billing gap' : 'Recorded'}</Pill></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </Card>
-              </div>
-            );
-          })()}
+          {activeSection === 'allocation-history' && (
+            <AllocationHistoryTab
+              groups={allocationModel.groups}
+              totals={allocationModel.totals}
+              changeLog={changeLog}
+              expanded={expandedAlloc}
+              onToggleExpand={(id) => setExpandedAlloc(m => ({ ...m, [id]: !m[id] }))}
+              onEditTimes={openEditTimes}
+              onCloseAssignment={openCloseAssignment}
+              canLogOutLastStaff={canLogOutLastStaff}
+              StaffLink={StaffLink}
+              loading={loading}
+              bookingCode={bookingSummary.booking_code || null}
+              bookingStart={bookingSummary.start_date ? localDateISO(new Date(bookingSummary.start_date)) : null}
+              bookingEnd={(bookingSummary.actual_end_time || bookingSummary.scheduled_end_time) ? localDateISO(new Date(bookingSummary.actual_end_time || bookingSummary.scheduled_end_time)) : null}
+              pausedRanges={allocationPausedRanges}
+            />
+          )}
 
           {/* ══════════════════════════════════════════════════════
               TAB: RATES — client billing rate(s) vs staff pay rate(s), set at
