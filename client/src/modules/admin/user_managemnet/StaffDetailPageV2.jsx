@@ -2059,6 +2059,11 @@ const StaffDetailPageV2 = () => {
     );
   };
 
+  const handleSaveAdvanceThreshold = async (amount) => {
+    await runAdminRequest(() => apiClient.updateAdvanceThreshold(staffProfileId, { advance_threshold_amount: amount }));
+    setDetail(d => (d ? { ...d, profile: { ...d.profile, advance_threshold_amount: amount } } : d));
+  };
+
   const renderPayouts = () => (
     <StaffPayoutsTab
       payoutsSummary={payoutsSummary}
@@ -2079,6 +2084,8 @@ const StaffDetailPageV2 = () => {
       staffName={profile.full_name || ''}
       staffCode={profile.staff_code || ''}
       onAddBankAccount={() => setActiveSection('bank-accounts')}
+      advanceThreshold={Number(profile.advance_threshold_amount ?? 15000)}
+      onSaveAdvanceThreshold={hasPermission('ADVANCE_UPDATE_THRESHOLD') ? handleSaveAdvanceThreshold : null}
     />
   );
 

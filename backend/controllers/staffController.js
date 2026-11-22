@@ -1041,10 +1041,13 @@ exports.getPayouts = async (req, res) => {
         const dataQuery = `
             SELECT spt.staff_payment_id, spt.transaction_id, spt.amount_paid, spt.payment_method, spt.reference_number, spt.notes,
                          spt.paid_by, u.email as paid_by_email, u.mobile_number as paid_by_mobile,
+                         COALESCE(ist.full_name, psp.full_name) as paid_by_name,
                          spt.company_bank_account_id, ba.account_nickname as company_account_name,
                          spt.staff_bank_account_id, spt.paid_at, spt.status, spt.created_at
             FROM staff_payments_tracking spt
             LEFT JOIN users u ON spt.paid_by = u.user_id
+            LEFT JOIN internal_staff ist ON ist.user_id = spt.paid_by
+            LEFT JOIN staff_profiles psp ON psp.user_id = spt.paid_by
             LEFT JOIN bank_accounts ba ON spt.company_bank_account_id = ba.account_id
             WHERE spt.staff_profile_id = $1
             ${status ? 'AND spt.status = $2' : ''}

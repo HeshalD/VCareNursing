@@ -3,7 +3,7 @@
 // Presentational — all data, form state and handlers come from props, so it can be restyled or
 // previewed on its own.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, Download, Landmark, Loader2, Plus, Search, X } from 'lucide-react';
+import { AlertTriangle, Check, Download, Landmark, Loader2, Pencil, Plus, Search, X } from 'lucide-react';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -111,7 +111,9 @@ const AccountCards = ({ items, selected, onSelect, idKey, labelFn }) => (
  * @param onSubmit              (event) => void
  * @param onReset               () => void
  * @param submitting, submitError, submitSuccess
- * Optional extras: loading, staffName, staffCode, onAddBankAccount (() => void)
+ * Optional extras: loading, staffName, staffCode, onAddBankAccount (() => void),
+ * advanceThreshold (number) and onSaveAdvanceThreshold (amount) => Promise — the minimum accrued
+ * balance before this staff member may request an advance; editable only when the handler is given.
  */
 export default function StaffPayoutsTab({
   payoutsSummary = null, overviewPayoutSummary = {}, currentEarnings = 0,
@@ -119,6 +121,7 @@ export default function StaffPayoutsTab({
   onFieldChange = () => () => {}, onSubmit = (e) => e?.preventDefault?.(), onReset = () => {},
   submitting = false, submitError = '', submitSuccess = '',
   loading = false, staffName = '', staffCode = '', onAddBankAccount = null,
+  advanceThreshold = null, onSaveAdvanceThreshold = null,
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
@@ -131,6 +134,10 @@ export default function StaffPayoutsTab({
   const [needPrefill, setNeedPrefill] = useState(false);
   const [highlightId, setHighlightId] = useState(null);
   const [toast, setToast] = useState('');
+  const [thrEditing, setThrEditing] = useState(false);
+  const [thrValue, setThrValue] = useState('');
+  const [thrSaving, setThrSaving] = useState(false);
+  const [thrError, setThrError] = useState('');
   const timers = useRef([]);
   const topIdAtSubmit = useRef(undefined);
   const prevSuccess = useRef(submitSuccess);
@@ -145,6 +152,18 @@ export default function StaffPayoutsTab({
   const thisMonth = payoutsSummary?.paid_this_month ?? 0;
   const lastPayout = paidRows[0];
 
+  const startThrEdit = () => { setThrValue(String(num(advanceThreshold))); setThrError(''); setThrEditing(true); };
+  const saveThr = async () => {
+    const v = parseFloat(thrValue);
+    if (!(v >= 0)) { setThrError('Enter an amount of zero or more.'); return; }
+    try {
+      setThrSaving(true); setThrError('');
+      await onSaveAdvanceThreshold(v);
+      setThrEditing(false); flash('Advance threshold updated');
+    } catch (e) { setThrError(e?.message || 'Failed to update the threshold.'); }
+    finally { setThrSaving(false); }
+  };
+
   // ── list ──
   const q = query.trim().toLowerCase();
   const counts = { All: sorted.length, Paid: 0, Pending: 0, Failed: 0 };
@@ -157,8 +176,8 @@ export default function StaffPayoutsTab({
 
   const exportCsv = () => {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['Payout ID', 'Date', 'Reference', 'Notes', 'Method', 'Status', 'Amount (LKR)'];
-    const lines = list.map(p => [p.staff_payment_id, isoDay(p.paid_at), p.reference_number, p.notes, humanize(p.payment_method), statusKey(p.status), num(p.amount_paid)].map(esc).join(','));
+    const head = ['Payout ID', 'Date', 'Reference', 'Notes', 'Method', 'Status', 'Amount (LKR)', 'Recorded by'];
+    const lines = list.map(p => [p.staff_payment_id, isoDay(p.paid_at), p.reference_number, p.notes, humanize(p.payment_method), statusKey(p.status), num(p.amount_paid), p.paid_by_name || p.paid_by_email].map(esc).join(','));
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = `payouts${staffCode ? `-${staffCode}` : ''}.csv`; a.click(); URL.revokeObjectURL(url);
     flash(`Exported ${list.length} payout${list.length !== 1 ? 's' : ''} to CSV`);
@@ -252,6 +271,31 @@ export default function StaffPayoutsTab({
             </div>
           </div>
         </div>
+        {advanceThreshold != null && (
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-4">
+            <div className="min-w-0">
+              <Cap>Advance threshold</Cap>
+              <div className="text-[13px] text-slate-500">Minimum accrued balance before {staffName || 'this staff member'} can request an advance.</div>
+            </div>
+            {thrEditing ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="advance-threshold" className="sr-only">Advance threshold (LKR)</label>
+                <input id="advance-threshold" type="number" min="0" step="100" value={thrValue} autoFocus onWheel={(e) => e.target.blur()}
+                  onChange={(e) => { setThrValue(e.target.value); setThrError(''); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveThr(); if (e.key === 'Escape') setThrEditing(false); }}
+                  aria-invalid={!!thrError} className={`${FIELD} w-40 font-semibold ${thrError ? 'border-red-600' : ''}`} />
+                <Btn tone="primary" onClick={saveThr} disabled={thrSaving}>{thrSaving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}Save</Btn>
+                <Btn onClick={() => setThrEditing(false)} disabled={thrSaving}>Cancel</Btn>
+                {thrError && <span role="alert" className="w-full text-[13px] text-red-700">{thrError}</span>}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <span className="text-lg font-bold tabular-nums">{rs(advanceThreshold)}</span>
+                {onSaveAdvanceThreshold && <Btn tone="ghost" className="h-7 px-2" onClick={startThrEdit}><Pencil className="mr-1 h-3.5 w-3.5" aria-hidden="true" />Edit</Btn>}
+              </div>
+            )}
+          </div>
+        )}
         <div className="mt-3 text-[13px] text-slate-500">{lastPayout ? `Last payout: ${fmtShort(lastPayout.paid_at)} · ${rs(lastPayout.amount_paid)}` : 'No payouts yet'}</div>
       </div>
 
@@ -326,7 +370,8 @@ export default function StaffPayoutsTab({
               <div className="grid grid-cols-2 gap-4">
                 <div><Cap>Paid on</Cap>{fmtDate(detail.paid_at)}{fmtTime(detail.paid_at) ? `, ${fmtTime(detail.paid_at)}` : ''}</div>
                 <div><Cap>Method</Cap>{humanize(detail.payment_method)}</div>
-                <div className="col-span-2"><Cap>Reference</Cap>{detail.reference_number || '—'}</div>
+                <div><Cap>Recorded by</Cap>{detail.paid_by_name || detail.paid_by_email || '—'}</div>
+                <div><Cap>Reference</Cap>{detail.reference_number || '—'}</div>
               </div>
               <div className="overflow-hidden rounded-lg border border-slate-200">
                 <div className="border-b border-slate-100 px-3.5 py-3"><Cap>From (company)</Cap><b className="text-slate-900">{cLabel || '—'}</b></div>
