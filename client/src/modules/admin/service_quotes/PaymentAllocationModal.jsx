@@ -139,6 +139,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [creatingAllInvoices, setCreatingAllInvoices] = useState(false);
   const [generatingCombinedInvoice, setGeneratingCombinedInvoice] = useState(false);
   const [combinedInvoiceResult, setCombinedInvoiceResult] = useState(null);
+  const [confirmCombinedOpen, setConfirmCombinedOpen] = useState(false);
 
   // Fetches the SERVICE quote's own line items (already present on `quote`
   // from getQuoteWithLineItems) plus the linked PRODUCT quote's items, then
@@ -555,11 +556,33 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
     if (err) { setError(err); return; }
     setError('');
 
+    // Nudge staff to create the combined invoice before finishing the allocation.
+    if (!combinedInvoiceResult) {
+      setConfirmCombinedOpen(true);
+      return;
+    }
+    await continueSubmit();
+  };
+
+  const continueSubmit = async () => {
     if (removedItemIds.length > 0) {
       setConfirmRemovalOpen(true);
       return;
     }
     await submitPayment();
+  };
+
+  // "Skip for now" — carry on recording the payment without a combined invoice.
+  const handleSkipCombined = async () => {
+    setConfirmCombinedOpen(false);
+    await continueSubmit();
+  };
+
+  // "Create combined invoice" — generate it, then drop back to the form so the
+  // new invoice number is visible before the payment is submitted.
+  const handleCreateCombinedFromWarning = async () => {
+    setConfirmCombinedOpen(false);
+    await handleGenerateCombinedInvoice();
   };
 
   const submitPayment = async () => {
@@ -1135,6 +1158,16 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
           </form>
         )}
       </div>
+
+      <Popup
+        isOpen={confirmCombinedOpen}
+        onClose={() => setConfirmCombinedOpen(false)}
+        variant="warning"
+        title="Combined invoice not generated"
+        message="The combined invoice has not been generated for this quote yet. Are you sure you want to continue?"
+        primaryAction={{ label: 'Create combined invoice', onClick: handleCreateCombinedFromWarning }}
+        secondaryAction={{ label: 'Skip for now', onClick: handleSkipCombined }}
+      />
 
       <Popup
         isOpen={confirmRemovalOpen}

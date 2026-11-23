@@ -795,7 +795,9 @@ const BookingDetailPageV2 = () => {
   // to Super Admins, gated by re-entering their password (see CareTimeline's revoke
   // confirmation modal and dailyAttendanceController.revokeDays on the backend).
   const isSuperAdmin = isSuperAdminToken(adminToken);
-  const revokeEnabled = (isLiveIn || isShiftBased) && isSuperAdmin;
+  // Gated by the ATTENDANCE_REVOKE permission (Super Admins always pass hasPermission),
+  // matching the backend route's requirePermission('ATTENDANCE_REVOKE').
+  const revokeEnabled = (isLiveIn || isShiftBased) && (isSuperAdmin || hasPermission('ATTENDANCE_REVOKE'));
 
   // LIVE_IN staff are auto-paid daily, so absence is the exception the admin records:
   // marks the on-duty staff member absent for the chosen days and reverses their pay.
