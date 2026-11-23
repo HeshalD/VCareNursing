@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, Loader2, Printer, Send } from 'lucide-react';
+import { Download, Loader2, Maximize2, Printer, Send, X } from 'lucide-react';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -69,14 +69,65 @@ const PRINT_CSS = `
   #client-statement-print { position: absolute; left: 0; top: 0; width: 100%; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #client-statement-print [class*="max-h-"] { max-height: none !important; overflow: visible !important; }
   #client-statement-print thead { position: static !important; }
+  #client-statement-print [data-scaled-outer] { height: auto !important; overflow: visible !important; }
+  #client-statement-print [data-scaled-inner] { transform: none !important; width: 100% !important; }
 }`;
+
+// The statement is laid out at a fixed "paper" width and then scaled down to whatever room the page
+// has (the section sits two sidebars deep, so the room beside the controls is small). StatementPreview
+// itself is not touched: it renders at its natural size inside the scaled box.
+const PAPER_WIDTH = 860;
+const ScaledBox = ({ children, onOpen, openLabel = 'View full size' }) => {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [height, setHeight] = useState(null);
+
+  useEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner || typeof ResizeObserver === 'undefined') return undefined;
+    const measure = () => {
+      setScale(Math.min(1, outer.clientWidth / PAPER_WIDTH) || 1);
+      setHeight(inner.offsetHeight);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(outer);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, []);
+
+  const thumbnail = scale < 0.85 && onOpen;
+  return (
+    <div
+      ref={outerRef}
+      data-scaled-outer
+      className="relative w-full overflow-hidden"
+      style={height != null ? { height: height * scale } : undefined}
+    >
+      <div ref={innerRef} data-scaled-inner style={{ width: PAPER_WIDTH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        {children}
+      </div>
+      {thumbnail && (
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={openLabel}
+          title={openLabel}
+          className="absolute inset-0 cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+        />
+      )}
+    </div>
+  );
+};
 
 const btnBase = 'inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 const btnPrimary = `${btnBase} border-blue-600 bg-blue-600 text-white hover:bg-blue-700`;
 const btnOutline = `${btnBase} border-slate-300 bg-white text-slate-700 hover:bg-slate-100`;
 
 const OverviewRow = ({ label, value, tone = 'text-slate-900', to }) => (
-  <div className="flex items-center justify-between gap-2.5 border-b border-slate-100 py-2.5 text-sm text-slate-700 last:border-b-0">
+  <div className="flex flex-wrap items-center justify-between gap-x-2.5 gap-y-0.5 border-b border-slate-100 py-2.5 text-[13px] text-slate-700 last:border-b-0 @2xl:text-sm">
     <span>{label}</span>
     <span className="flex items-center gap-2">
       <b className={`font-semibold tabular-nums ${tone}`}>{value}</b>
@@ -113,6 +164,10 @@ const ClientStatementSection = ({
   const [previewError, setPreviewError] = useState('');
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [fullOpen, setFullOpen] = useState(false);
+  const fullBtnRef = useRef(null);
+  const fullCloseRef = useRef(null);
+  const fullWasOpen = useRef(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
   const waButtonRef = useRef(null);
@@ -227,6 +282,18 @@ const ClientStatementSection = ({
   };
   const confirmSend = () => { closeDialog(); sendStatementToWhatsApp(); };
 
+  // full-size preview dialog (same focus handling: in on open, back to the trigger on close, Esc closes)
+  useEffect(() => {
+    if (fullOpen) {
+      fullWasOpen.current = true;
+      fullCloseRef.current?.focus();
+    } else if (fullWasOpen.current) {
+      fullWasOpen.current = false;
+      fullBtnRef.current?.focus();
+    }
+  }, [fullOpen]);
+  const onFullKeyDown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setFullOpen(false); } };
+
   // ── overview (all-time figures from the parent) ──
   const net = parseAmount(stats.netBalance);
   const netTone = net == null || net === 0 ? 'text-slate-900' : net < 0 ? 'text-rose-700' : 'text-emerald-700';
@@ -237,7 +304,7 @@ const ClientStatementSection = ({
   const endId = `${titleId}-end`;
 
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       <style>{PRINT_CSS}</style>
 
       <div>
@@ -248,10 +315,10 @@ const ClientStatementSection = ({
         </p>
       </div>
 
-      <div className="flex flex-wrap items-start gap-5">
-        {/* ── left panel ── */}
-        <div className="flex w-[330px] max-w-full flex-none flex-col gap-4 @5xl:sticky @5xl:top-4">
-          <div className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-[18px]">
+      <div className="flex flex-col items-stretch gap-3 @sm:flex-row @sm:items-start @2xl:gap-5">
+        {/* ── left panel: narrow, the preview takes the rest ── */}
+        <div className="flex w-full flex-none flex-col gap-3 @sm:w-[190px] @2xl:sticky @2xl:top-4 @2xl:w-[260px] @2xl:gap-4 @4xl:w-[330px]">
+          <div className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-3 @2xl:p-[18px]">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Billed to</div>
               <div className="mt-0.5 text-[15px] font-semibold text-slate-900">{billedToName || '—'}</div>
@@ -359,7 +426,7 @@ const ClientStatementSection = ({
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white px-[18px] pb-2.5 pt-3">
+          <div className="rounded-lg border border-slate-200 bg-white px-3 pb-2.5 pt-3 @2xl:px-[18px]">
             <div className="flex items-baseline justify-between">
               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Client overview</div>
               <span className="text-[13px] text-slate-500">All time</span>
@@ -374,33 +441,94 @@ const ClientStatementSection = ({
           </div>
         </div>
 
-        {/* ── preview ── */}
-        <div className="min-w-0 flex-1 basis-[560px]">
-          <div className="mb-2.5 flex items-center justify-between gap-3">
-            <div>
+        {/* ── preview: the real StatementPreview, scaled to fit ── */}
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-2.5">
               <b className="text-[15px] text-slate-900">Preview</b>
-              <span className="ml-2.5 text-[13px] text-slate-500">Matches the PDF and the WhatsApp message</span>
+              <span className="text-[13px] text-slate-500">Matches the PDF and the WhatsApp message</span>
             </div>
-            {previewLoading && preview && (
-              <span role="status" className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-                <Loader2 className="h-3 w-3 animate-spin" /> Updating…
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {previewLoading && preview && (
+                <span role="status" className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Updating…
+                </span>
+              )}
+              <button
+                ref={fullBtnRef}
+                type="button"
+                onClick={() => setFullOpen(true)}
+                disabled={!preview}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[13px] font-semibold text-blue-600 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Maximize2 className="h-3.5 w-3.5" /> Full size
+              </button>
+            </div>
           </div>
-          <div className="overflow-x-auto rounded-lg bg-slate-200 p-3 @xl:p-5">
+          <div className="rounded-lg bg-slate-200 p-2 @2xl:p-4">
             <div id="client-statement-print" className={`transition-opacity duration-200 ${previewLoading && preview ? 'opacity-50' : ''}`}>
-              <StatementPreview
-                data={preview}
-                loading={previewLoading}
-                error={previewError}
-                clientName={billedToName}
-                start={shown?.start || startDate}
-                end={shown?.end || endDate}
-              />
+              <ScaledBox onOpen={preview ? () => setFullOpen(true) : undefined}>
+                <StatementPreview
+                  data={preview}
+                  loading={previewLoading}
+                  error={previewError}
+                  clientName={billedToName}
+                  start={shown?.start || startDate}
+                  end={shown?.end || endDate}
+                />
+              </ScaledBox>
             </div>
           </div>
         </div>
       </div>
+
+      {/* ── full-size preview dialog ── */}
+      {fullOpen && preview && (
+        <>
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Close"
+            onClick={() => setFullOpen(false)}
+            className="fixed inset-0 z-[60] cursor-default border-0 bg-slate-900/50"
+          />
+          <div className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center p-3 @sm:p-6">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Statement preview, full size"
+              onKeyDown={onFullKeyDown}
+              className="pointer-events-auto flex max-h-full w-full max-w-[940px] flex-col rounded-lg border border-slate-200 bg-white shadow-2xl"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5">
+                <div className="text-[15px] font-semibold text-slate-900">
+                  Statement · {rangeText(shown?.start || startDate, shown?.end || endDate)}
+                </div>
+                <button
+                  ref={fullCloseRef}
+                  type="button"
+                  onClick={() => setFullOpen(false)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <X className="h-4 w-4" /> Close
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto bg-slate-200 p-3 @sm:p-4">
+                <ScaledBox>
+                  <StatementPreview
+                    data={preview}
+                    loading={false}
+                    error=""
+                    clientName={billedToName}
+                    start={shown?.start || startDate}
+                    end={shown?.end || endDate}
+                  />
+                </ScaledBox>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── WhatsApp confirm dialog ── */}
       {dialogOpen && (
