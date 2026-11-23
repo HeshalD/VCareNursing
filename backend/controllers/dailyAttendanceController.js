@@ -1204,10 +1204,10 @@ exports.confirmSalary = async (req, res) => {
  *          1 day per revoked date, LIVE_IN only (SHIFT_BASED has no such column — its
  *          calendar "planned days" already stretches automatically from the
  *          WALLET_REFUND-category credit, since it's computed live as total_paid ÷
- *          rate). SUPER_ADMIN only, gated by re-entering their own login password as
- *          an extra confirmation step since this moves money on both sides of a
- *          booking.
- * @access  Private (SUPER_ADMIN only)
+ *          rate). Gated by ATTENDANCE_REVOKE, plus the acting user re-entering their
+ *          OWN login password as an extra confirmation step since this moves money
+ *          on both sides of a booking.
+ * @access  Private (ATTENDANCE_REVOKE)
  * @body    targets ({ service_date, shift_slot_id }[] — shift_slot_id null for LIVE_IN),
  *          reason (string), password (string), settlement_action (optional, WALLET_REFUND default)
  */
@@ -1217,7 +1217,8 @@ exports.revokeDays = async (req, res) => {
     const { booking_id } = req.params;
     const { targets, reason, password, settlement_action } = req.body;
 
-    // Role is already gated to SUPER_ADMIN at the route level (restrictTo).
+    // Permission is already gated at the route level (requirePermission('ATTENDANCE_REVOKE')).
+    // The password below is verified against the logged-in user (req.user), not a Super Admin.
 
     if (!Array.isArray(targets) || targets.length === 0 || targets.some(t => !t || !t.service_date)) {
         return res.status(400).json({ status: 'error', message: 'targets (non-empty array of { service_date, shift_slot_id }) is required' });

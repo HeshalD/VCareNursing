@@ -58,13 +58,16 @@ exports.generateStatementPDF = async (data) => {
 
         // 7. Generate PDF buffer with optimized settings
         console.log("📦 Generating PDF...");
+        // Page size and margins come from the template's @page rule. The footer is just the thin
+        // grey rule Zoho draws at the bottom of every page.
         const pdfBuffer = await page.pdf({
             format: 'A4',
             printBackground: true,
-            margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
             preferCSSPageSize: true,
-            timeout: 20000,  // 20 second timeout for PDF generation
-            scale: 0.8  // Slightly smaller to reduce rendering time
+            displayHeaderFooter: true,
+            headerTemplate: '<div></div>',
+            footerTemplate: '<div style="width:100%; padding:0 14mm; font-size:1px;"><div style="border-top:1px solid #b5b5b5; width:100%;"></div></div>',
+            timeout: 20000
         });
 
         console.log("🔒 Closing browser...");

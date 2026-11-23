@@ -2445,6 +2445,19 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     }
   }
 
+  // A saved statement as a PDF, rebuilt from the live ledger (read-only: no new history record).
+  async downloadSavedStatement(statementId) {
+    const response = await fetch(`${this.baseURL}/statement/saved/${statementId}/pdf`, {
+      headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+    });
+    if (!response.ok) {
+      let message = 'PDF download failed';
+      try { message = (await response.json()).message || message; } catch { /* not JSON */ }
+      throw new Error(message);
+    }
+    return await response.blob();
+  }
+
   async sendClientStatementToWhatsApp(clientId, dateRange) {
     return this.request(`/statement/whatsapp/${clientId}`, {
       method: 'POST',

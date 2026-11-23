@@ -7,29 +7,33 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');
 
+        /* Page margins come from here (utils/statement.js uses preferCSSPageSize). The bottom margin
+           leaves room for the thin rule that the PDF footer draws on every page. */
+        @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
             font-family: 'Open Sans', Arial, sans-serif;
-            font-size: 11px;
+            font-size: 10.5px;
             color: #333;
             background: #fff;
-            padding: 30px 36px;
+            line-height: 1.45;
         }
 
-        /* ── HEADER ── */
+        /* ── HEADER: logo left, company details right ── */
         .header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 28px;
+            margin-bottom: 22px;
         }
 
-        /* The hosted logo canvas is mostly transparent: crop to the visible mark and scale it up
-           (same numbers as templates/logoBlock.js). */
+        /* The hosted logo canvas is mostly transparent: crop to the visible mark and scale it
+           (same method as templates/logoBlock.js, mark 190px wide). */
         .logo-block {
-            width: 180px;
-            height: 88px;
+            width: 190px;
+            height: 93px;
             overflow: hidden;
             position: relative;
             flex-shrink: 0;
@@ -37,166 +41,134 @@
 
         .logo-block img {
             position: absolute;
-            width: 300px;
+            width: 316.7px;
             height: auto;
-            left: -59.4px;
-            top: -106.2px;
+            left: -62.7px;
+            top: -112.1px;
         }
-
-        /* SVG heart-logo placeholder – replace with <img> if you have the real logo */
 
         .company-details {
             text-align: right;
             font-size: 10.5px;
             color: #444;
-            line-height: 1.7;
-        }
-
-        .company-details strong {
-            font-size: 11.5px;
-            font-weight: 700;
-            color: #222;
-        }
-
-        /* ── TO BLOCK ── */
-        .to-block {
-            margin-bottom: 20px;
-            font-size: 10.5px;
             line-height: 1.6;
         }
 
-        .to-block p { margin: 0; }
-
-        /* ── STATEMENT TITLE ── */
-        .statement-title-bar {
-            border-bottom: 2px solid #2f6f8f;
-            margin-bottom: 2px;
-        }
-
-        .statement-title-bar h2 {
-            font-size: 22px;
+        .company-details strong {
             font-weight: 700;
-            color: #2f6f8f;
-            text-align: center;
-            padding-bottom: 4px;
-        }
-
-        .period-bar {
-            background: #2f6f8f;
-            color: #fff;
-            text-align: center;
-            font-size: 10px;
-            padding: 3px 0;
-            margin-bottom: 18px;
-        }
-
-        /* ── ACCOUNT SUMMARY ── */
-        .summary-box {
-            border: 1px solid #ccc;
-            width: 340px;
-            margin-bottom: 28px;
-        }
-
-        .summary-box .summary-heading {
-            background: #f0f0f0;
-            font-weight: 700;
-            font-size: 11px;
-            padding: 7px 12px;
-            border-bottom: 1px solid #ccc;
             color: #222;
         }
 
-        .summary-box table {
-            width: 100%;
-            border-collapse: collapse;
+        /* ── MIDDLE: "To" on the left, title / period / summary on the right ── */
+        .middle {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 26px;
         }
 
+        .to-block {
+            width: 48%;
+            font-size: 10.5px;
+            font-weight: 700;
+            color: #222;
+            line-height: 1.6;
+            padding-top: 4px;
+        }
+
+        .right-col { width: 44%; }
+
+        .statement-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #2f80b9;
+            text-align: right;
+            padding-bottom: 4px;
+            border-bottom: 2px solid #222;
+            line-height: 1.2;
+        }
+
+        .period {
+            text-align: right;
+            font-size: 10px;
+            color: #333;
+            padding: 4px 0 4px;
+            border-bottom: 2px solid #222;
+            margin-bottom: 20px;
+        }
+
+        .summary-box { width: 100%; }
+
+        .summary-box .summary-heading {
+            background: #e8e8e8;
+            font-weight: 700;
+            font-size: 11px;
+            padding: 8px 8px;
+            color: #222;
+        }
+
+        .summary-box table { width: 100%; border-collapse: collapse; }
+
         .summary-box table tr td {
-            padding: 6px 12px;
+            padding: 6px 8px;
             font-size: 10.5px;
             color: #333;
         }
 
-        .summary-box table tr td:last-child {
-            text-align: right;
-            font-weight: 600;
-        }
+        .summary-box table tr td:last-child { text-align: right; }
 
-        .summary-box table tr:nth-child(even) td {
-            background: #fafafa;
+        .summary-box table tr.balance-row td {
+            border-top: 1.5px solid #222;
+            padding-top: 8px;
         }
 
         /* ── LEDGER TABLE ── */
         .ledger-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 30px;
+            margin-bottom: 26px;
+            table-layout: fixed;
         }
 
-        .ledger-table thead tr {
-            background: #2f6f8f;
-            color: #fff;
-        }
+        .ledger-table thead { display: table-header-group; }
+
+        .ledger-table thead tr { background: #2f80b9; color: #fff; }
 
         .ledger-table thead th {
-            padding: 8px 10px;
-            font-weight: 600;
+            padding: 8px 8px;
+            font-weight: 700;
             font-size: 10.5px;
             text-align: left;
         }
 
         .ledger-table thead th.right { text-align: right; }
 
-        .ledger-table tbody tr {
-            border-bottom: 1px solid #e8e8e8;
-        }
+        .ledger-table tbody tr { break-inside: avoid; }
 
-        .ledger-table tbody tr:nth-child(even) {
-            background: #f9f9f9;
-        }
+        .ledger-table tbody tr:nth-child(even) { background: #f4f4f4; }
 
         .ledger-table tbody td {
-            padding: 7px 10px;
+            padding: 12px 8px;
             font-size: 10.5px;
-            vertical-align: top;
-            color: #333;
-        }
-
-        .ledger-table tbody td.right {
-            text-align: right;
-            font-family: 'Courier New', monospace;
-            white-space: nowrap;
-        }
-
-        /* Payment received row – slightly different background */
-        .ledger-table tbody tr.payment-row td {
-            background: #f0f7fb;
-        }
-
-        /* Balance Due row at bottom */
-        .ledger-table tfoot tr td {
-            padding: 8px 10px;
-            font-weight: 700;
-            font-size: 11px;
-            border-top: 2px solid #2f6f8f;
-            color: #2f6f8f;
-        }
-
-        .ledger-table tfoot tr td.right {
-            text-align: right;
-        }
-
-        /* ── FOOTER / BANK DETAILS ── */
-        .footer-note {
-            border-top: 2px solid #2f6f8f;
-            padding-top: 14px;
-            font-size: 10.5px;
-            line-height: 1.8;
+            vertical-align: middle;
             color: #444;
+            word-wrap: break-word;
         }
 
-        .footer-note strong {
-            color: #222;
+        .ledger-table tbody td.right { text-align: right; white-space: nowrap; }
+
+        .ledger-table tbody td.details { white-space: pre-line; }
+
+        /* Balance Due closes the table. A body row (not a footer) so it prints once, not on every page. */
+        .ledger-table tbody tr.total-row { background: #fff; border-top: 1px solid #cfcfcf; }
+        .ledger-table tbody tr.total-row td { font-weight: 700; color: #222; padding-top: 10px; }
+
+        /* ── NOTE / BANK DETAILS ── */
+        .footer-note {
+            font-size: 10.5px;
+            line-height: 1.7;
+            color: #444;
+            break-inside: avoid;
         }
     </style>
 </head>
@@ -204,12 +176,10 @@
 
     <!-- ══ HEADER ══ -->
     <div class="header">
-        <!-- Logo (SVG approximation of the VCare heart icon + text) -->
         <div class="logo-block">
             <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" alt="VCare Nursing" />
         </div>
 
-        <!-- Company address -->
         <div class="company-details">
             <strong>Vcare Nursing</strong><br>
             No: 293/17B<br>
@@ -219,107 +189,82 @@
         </div>
     </div>
 
-    <!-- ══ TO BLOCK ══ -->
-    <div class="to-block">
-        <p><strong>To</strong></p>
-        <p>{{clientName}}</p>
-    </div>
+    <!-- ══ TO + TITLE / PERIOD / SUMMARY ══ -->
+    <div class="middle">
+        <div class="to-block">
+            To<br>
+            {{clientName}}
+        </div>
 
-    <!-- ══ STATEMENT TITLE + PERIOD ══ -->
-    <div class="statement-title-bar">
-        <h2>Statement of Accounts</h2>
-    </div>
-    <div class="period-bar">{{periodStart}} To {{periodEnd}}</div>
+        <div class="right-col">
+            <div class="statement-title">Statement of Accounts</div>
+            <div class="period">{{periodStart}} To {{periodEnd}}</div>
 
-    <!-- ══ ACCOUNT SUMMARY ══ -->
-    <div class="summary-box">
-        <div class="summary-heading">Account Summary</div>
-        <table>
-            <tr>
-                <td>Opening Balance</td>
-                <td>LKR {{summary.openingBalance}}</td>
-            </tr>
-            <tr>
-                <td>Invoiced Amount</td>
-                <td>LKR {{summary.invoicedAmount}}</td>
-            </tr>
-            <tr>
-                <td>Amount Paid</td>
-                <td>LKR {{summary.amountPaid}}</td>
-            </tr>
-            <tr>
-                <td><strong>Balance Due</strong></td>
-                <td><strong>LKR {{summary.balanceDue}}</strong></td>
-            </tr>
-        </table>
+            <div class="summary-box">
+                <div class="summary-heading">Account Summary</div>
+                <table>
+                    <tr>
+                        <td>Opening Balance</td>
+                        <td>LKR {{summary.openingBalance}}</td>
+                    </tr>
+                    <tr>
+                        <td>Invoiced Amount</td>
+                        <td>LKR {{summary.invoicedAmount}}</td>
+                    </tr>
+                    <tr>
+                        <td>Amount Paid</td>
+                        <td>LKR {{summary.amountPaid}}</td>
+                    </tr>
+                    <tr class="balance-row">
+                        <td>Balance Due</td>
+                        <td>LKR {{summary.balanceDue}}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
     </div>
 
     <!-- ══ LEDGER TABLE ══ -->
     <table class="ledger-table">
         <thead>
             <tr>
-                <th style="width:90px;">Date</th>
-                <th style="width:110px;">Transactions</th>
-                <th>Details</th>
-                <th class="right" style="width:90px;">Amount</th>
-                <th class="right" style="width:90px;">Payments</th>
-                <th class="right" style="width:90px;">Balance</th>
+                <th style="width:14%;">Date</th>
+                <th style="width:15%;">Transactions</th>
+                <th style="width:31%;">Details</th>
+                <th class="right" style="width:14%;">Amount</th>
+                <th class="right" style="width:13%;">Payments</th>
+                <th class="right" style="width:13%;">Balance</th>
             </tr>
         </thead>
         <tbody>
             {{#each ledger}}
-            <tr class="{{#if this.isPayment}}payment-row{{/if}}">
+            <tr>
                 <td>{{this.date}}</td>
                 <td>{{this.transactions}}</td>
-                <td style="white-space: pre-line;">{{this.details}}</td>
+                <td class="details">{{this.details}}</td>
                 <td class="right">{{this.amount}}</td>
                 <td class="right">{{this.payments}}</td>
                 <td class="right">{{this.balance}}</td>
             </tr>
             {{/each}}
-        </tbody>
-        <tfoot>
-            <tr>
-                <td colspan="5">Balance Due</td>
+            <tr class="total-row">
+                <td colspan="4"></td>
+                <td class="right">Balance Due</td>
                 <td class="right">LKR {{summary.balanceDue}}</td>
             </tr>
-        </tfoot>
-    </table>
-
-    <!-- ══ REGISTRATION FEE (separate account, not part of the balance above) ══ -->
-    {{#if registrationFee.length}}
-    <table class="ledger-table" style="margin-top:24px;">
-        <thead>
-            <tr>
-                <th style="width:90px;">Date</th>
-                <th>Registration Fee (separate from the service balance)</th>
-                <th class="right" style="width:110px;">Invoiced</th>
-                <th class="right" style="width:110px;">Paid</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{#each registrationFee}}
-            <tr>
-                <td>{{this.date}}</td>
-                <td style="white-space: pre-line;">{{this.details}}</td>
-                <td class="right">{{this.invoiced}}</td>
-                <td class="right">{{this.paid}}</td>
-            </tr>
-            {{/each}}
         </tbody>
     </table>
-    {{/if}}
 
-    <!-- ══ FOOTER / BANK DETAILS ══ -->
+    <!-- ══ NOTE / BANK DETAILS ══ -->
     <div class="footer-note">
-        <strong>Note:</strong><br>
-        Please use the below bank account details for the payments,
+        Note:<br>
+        Please use the below bank account details for the payments,<br>
         And you will receive a payment receipt after you done the payment.<br><br>
-        <strong>Account Number</strong> - 100654589154<br>
-        <strong>Account Name</strong> - VCare<br>
-        <strong>Bank</strong> - Sampath Bank<br>
-        <strong>Branch</strong> - Maharagama<br>
-        <strong>Description</strong> - Vcare Home Nursing
+        Account Number - 100654589154<br>
+        Account Name - VCare<br>
+        Bank - Sampath Bank<br>
+        Branch - Maharagama<br>
+        Description - Vcare Home Nursing
     </div>
 
 </body>

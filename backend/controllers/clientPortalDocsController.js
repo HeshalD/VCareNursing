@@ -271,8 +271,8 @@ exports.downloadStatement = async (req, res) => {
             );
             if (!s.rows.length) return res.status(404).json({ message: 'Statement not found.' });
             start = s.rows[0].period_start;
-            // include the whole final day
-            end = `${s.rows[0].period_end}T23:59:59.999Z`;
+            // plain calendar days: the statement includes the whole final day (Sri Lanka time)
+            end = s.rows[0].period_end;
         }
 
         if (isNaN(new Date(start)) || isNaN(new Date(end))) return res.status(400).json({ message: 'Invalid date range.' });

@@ -66,6 +66,22 @@ const getServiceIcon = (serviceType) => {
 // Icon-only row action — minimal equivalent of a bordered "Download" button.
 const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
+// Details cell of a statement ledger row: the invoice / payment number and booking code, with the
+// payment-allocation lines ("LKR3,800.00 for payment of INV-…") summarised — the PDF shows them in full.
+const StatementDetails = ({ tx }) => {
+  const lines = String(tx.details || '').split('\n').filter(Boolean);
+  const extra = Array.isArray(tx.annotations) ? tx.annotations.length : 0;
+  const head = extra ? lines.slice(0, Math.max(lines.length - extra, 0)) : lines;
+  return (
+    <td className="px-5 py-2 text-slate-500 max-w-[280px]" title={tx.details}>
+      {head.length ? head.map((l, i) => <div key={i} className="truncate">{l}</div>) : '—'}
+      {extra > 0 && (
+        <div className="text-[10px] text-slate-400">{extra} allocation line{extra > 1 ? 's' : ''} — see the PDF</div>
+      )}
+    </td>
+  );
+};
+
 // ─── Shared zip helper ───────────────────────────────────────────────────────
 
 const triggerZip = async (files, zipName) => {
@@ -297,21 +313,11 @@ const BulkHistoryModal = ({ statements, adminToken, mode, onClose, onSuccess }) 
           await apiClient.resendStatementWhatsApp(s.statement_id);
           apiClient.setToken(orig);
         } else {
-          let blob;
-          if (s.pdf_url) {
-            const res = await fetch(s.pdf_url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            blob = await res.blob();
-          } else {
-            // Download-only statements have no stored PDF — regenerate on the fly
-            const orig = apiClient.token;
-            apiClient.setToken(adminToken);
-            blob = await apiClient.downloadClientStatement(s.client_id, {
-              start_date: s.period_start,
-              end_date: s.period_end,
-            });
-            apiClient.setToken(orig);
-          }
+          // Always regenerated from the live ledger, so the file is in the current statement format.
+          const orig = apiClient.token;
+          apiClient.setToken(adminToken);
+          const blob = await apiClient.downloadSavedStatement(s.statement_id);
+          apiClient.setToken(orig);
           const safe = (s.client_name || 'Client').replace(/[^a-zA-Z0-9_-]/g, '_');
           blobsRef.current.push({ blob, filename: `${s.statement_code || 'Statement'}_${safe}.pdf` });
         }
@@ -851,10 +857,7 @@ const Statements = () => {
     try {
       const orig = apiClient.token;
       apiClient.setToken(adminToken);
-      const response = await apiClient.downloadClientStatement(s.client_id, {
-        start_date: s.period_start,
-        end_date: s.period_end,
-      });
+      const response = await apiClient.downloadSavedStatement(s.statement_id);
       apiClient.setToken(orig);
       const blob = new Blob([response], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
@@ -1307,7 +1310,7 @@ const Statements = () => {
                           <p className="text-xs text-slate-400 mt-1">
                             {ledger.length} txn
                             {txData.summary.balance_due != null && (
-                              <> · Bal: <span className={Number(txData.summary.balance_due) < 0 ? 'text-rose-500' : 'text-emerald-600'}>
+                              <> · Bal: <span className={Number(txData.summary.balance_due) > 0 ? 'text-rose-500' : 'text-emerald-600'}>
                                 LKR {fmt(txData.summary.balance_due)}
                               </span></>
                             )}
@@ -1357,7 +1360,7 @@ const Statements = () => {
                             <span className="text-emerald-600 font-medium">
                               Paid: LKR {fmt(txData.summary.amount_paid)}
                             </span>
-                            <span className={`font-bold ${Number(txData.summary.balance_due) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                            <span className={`font-bold ${Number(txData.summary.balance_due) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                               Balance: LKR {fmt(txData.summary.balance_due)}
                             </span>
                           </div>
@@ -1411,10 +1414,8 @@ const Statements = () => {
                                     }
                                   >
                                     <td className="px-5 py-2 text-slate-600 whitespace-nowrap">{fmtDate(tx.date)}</td>
-                                    <td className="px-5 py-2 text-slate-600">{tx.transactions || '—'}</td>
-                                    <td className="px-5 py-2 text-slate-500 max-w-[180px] truncate" title={tx.details}>
-                                      {tx.details || '—'}
-                                    </td>
+                                    <td className="px-5 py-2 text-slate-600">{tx.label || tx.transactions || '—'}</td>
+                                    <StatementDetails tx={tx} />
                                     <td className="px-5 py-2 text-right font-medium text-rose-600">
                                       {tx.amount_invoiced ? fmt(tx.amount_invoiced) : '—'}
                                       {tx.amount_invoiced ? <EditedAmountBadge record={tx} className="ml-1.5" /> : null}
@@ -1649,7 +1650,7 @@ const Statements = () => {
                             <p className="text-xs text-slate-400 mt-1">
                               {ledger.length} txn
                               {txData.summary.balance_due != null && (
-                                <> · Bal: <span className={Number(txData.summary.balance_due) < 0 ? 'text-rose-500' : 'text-emerald-600'}>
+                                <> · Bal: <span className={Number(txData.summary.balance_due) > 0 ? 'text-rose-500' : 'text-emerald-600'}>
                                   LKR {fmt(txData.summary.balance_due)}
                                 </span></>
                               )}
@@ -1698,7 +1699,7 @@ const Statements = () => {
                               <span className="text-emerald-600 font-medium">
                                 Paid: LKR {fmt(txData.summary.amount_paid)}
                               </span>
-                              <span className={`font-bold ${Number(txData.summary.balance_due) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                              <span className={`font-bold ${Number(txData.summary.balance_due) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                                 Balance: LKR {fmt(txData.summary.balance_due)}
                               </span>
                             </div>
@@ -1747,10 +1748,8 @@ const Statements = () => {
                                       className={tx.row_type === 'INVOICE' ? 'hover:bg-rose-50/60' : 'hover:bg-emerald-50/60'}
                                     >
                                       <td className="px-5 py-2 text-slate-600 whitespace-nowrap">{fmtDate(tx.date)}</td>
-                                      <td className="px-5 py-2 text-slate-600">{tx.transactions || '—'}</td>
-                                      <td className="px-5 py-2 text-slate-500 max-w-[180px] truncate" title={tx.details}>
-                                        {tx.details || '—'}
-                                      </td>
+                                      <td className="px-5 py-2 text-slate-600">{tx.label || tx.transactions || '—'}</td>
+                                      <StatementDetails tx={tx} />
                                       <td className="px-5 py-2 text-right font-medium text-rose-600">
                                         {tx.amount_invoiced ? fmt(tx.amount_invoiced) : '—'}
                                         {tx.amount_invoiced ? <EditedAmountBadge record={tx} className="ml-1.5" /> : null}
@@ -1931,7 +1930,7 @@ const Statements = () => {
                     <td className="px-5 py-3 text-xs whitespace-nowrap">
                       <span className="text-emerald-600">Paid: LKR {Number(s.total_paid).toLocaleString()}</span>
                       <span className="mx-1 text-slate-300">·</span>
-                      <span className={Number(s.balance_due) < 0 ? 'text-rose-600 font-medium' : 'text-slate-500'}>
+                      <span className={Number(s.balance_due) > 0 ? 'text-rose-600 font-medium' : 'text-slate-500'}>
                         Bal: LKR {Number(s.balance_due).toLocaleString()}
                       </span>
                     </td>

@@ -4109,6 +4109,41 @@ async function runMigration() {
     );
   `);
 
+  // One-time: the Statement of Accounts moved to the Zoho Books convention (owing = positive, wallet
+  // draws no longer counted as payments; see services/statementLedger.js). Re-state the totals kept
+  // on every saved statement with the new rules, and drop stored PDF links (they are the old format
+  // and old figures; opening a statement always regenerates it now).
+  try {
+    const done = await db.query(`SELECT 1 FROM system_settings WHERE setting_key = 'statement_zoho_format_v1'`);
+    if (!done.rows.length) {
+      const { getClientStatementData } = require('./services/statementLedger');
+      const saved = await db.query(
+        `SELECT statement_id, client_id, period_start::text AS ps, period_end::text AS pe FROM saved_statements`
+      );
+      let restated = 0;
+      for (const row of saved.rows) {
+        try {
+          const st = await getClientStatementData(row.client_id, row.ps, row.pe);
+          await db.query(
+            `UPDATE saved_statements SET opening_balance = $2, total_invoiced = $3, total_paid = $4, balance_due = $5, pdf_url = NULL
+             WHERE statement_id = $1`,
+            [row.statement_id, st.opening, st.invoiced, st.paid, st.balance]
+          );
+          restated++;
+        } catch (err) {
+          console.error(`Statement restate skipped for ${row.statement_id}:`, err.message);
+        }
+      }
+      await db.query(
+        `INSERT INTO system_settings (setting_key, setting_value) VALUES ('statement_zoho_format_v1', 'true'::jsonb)
+         ON CONFLICT (setting_key) DO NOTHING`
+      );
+      console.log(`Restated ${restated}/${saved.rows.length} saved statements to the new format`);
+    }
+  } catch (err) {
+    console.error('Saved-statement restate failed (non-fatal):', err.message);
+  }
+
   // WhatsApp inbox: one conversation per phone number, plus every message in or out.
   // contact_type/contact_id link a number back to a client / staff / applicant when one matches.
   // last_inbound_at drives Meta's 24-hour window for free-form replies.

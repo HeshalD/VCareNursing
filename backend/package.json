@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "test": "node --test tests/walletPayments.test.js",
+    "test": "node --test tests/walletPayments.test.js tests/statementLedger.test.js",
     "start": "node server.js",
     "dev": "nodemon server.js",
     "deploy": "node server.js",

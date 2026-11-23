@@ -4889,7 +4889,7 @@ const BookingDetailPageV2 = () => {
                             return (
                               <div key={label}>
                                 <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: '#9ca3af', marginBottom: 2 }}>{label}</div>
-                                <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "'JetBrains Mono',monospace" }}>Rs.{Math.abs(n).toLocaleString()}</div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "'JetBrains Mono',monospace" }}>Rs.{Math.abs(n).toLocaleString()}{isBalance && n < 0 ? ' Cr' : ''}</div>
                               </div>
                             );
                           })}
@@ -4908,7 +4908,8 @@ const BookingDetailPageV2 = () => {
                             </thead>
                             <tbody>
                               {statementPreview.ledger.map((row, i) => {
-                                const isInvoice = row.row_type === 'INVOICE';
+                                // Debit side = invoices, refunds, forfeits; credit side = payments, credit notes.
+                                const isInvoice = parseFloat(row.amount_invoiced || 0) > 0;
                                 return (
                                   <tr key={row.transaction_id} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
                                     <td style={{ padding: '5px 8px', color: '#6b7280', whiteSpace: 'nowrap', fontSize: 11 }}>
@@ -4917,7 +4918,7 @@ const BookingDetailPageV2 = () => {
                                     <td style={{ padding: '5px 8px', color: '#374151', maxWidth: 130 }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                         <span style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, background: isInvoice ? '#f59e0b' : '#22c55e' }} />
-                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>{row.details || row.transactions || '—'}</span>
+                                        <span title={row.details || ''} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>{[row.label, String(row.details || '').split('\n')[0]].filter(Boolean).join(' · ') || row.transactions || '—'}</span>
                                       </div>
                                     </td>
                                     <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, color: isInvoice ? '#b45309' : '#9ca3af' }}>
@@ -4929,7 +4930,7 @@ const BookingDetailPageV2 = () => {
                                       {!isInvoice && <EditedAmountBadge record={row} className="ml-1" />}
                                     </td>
                                     <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, fontWeight: 600, color: parseFloat(row.balance) > 0 ? '#dc2626' : '#16a34a' }}>
-                                      Rs.{Math.abs(parseFloat(row.balance)).toLocaleString()}
+                                      Rs.{Math.abs(parseFloat(row.balance)).toLocaleString()}{parseFloat(row.balance) < 0 ? ' Cr' : ''}
                                     </td>
                                   </tr>
                                 );

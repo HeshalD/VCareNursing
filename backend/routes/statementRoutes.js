@@ -4,6 +4,7 @@ const statementController = require('../controllers/statementController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 router.get('/saved', protect, requirePermission('VIEW_STATEMENTS'), statementController.getSavedStatements);
+router.get('/saved/:statement_id/pdf', protect, requirePermission('VIEW_STATEMENTS'), statementController.downloadSavedStatement);
 router.get('/transactions/:client_id', protect, requirePermission('VIEW_STATEMENTS'), statementController.getClientTransactions);
 router.get('/:client_id', protect, requirePermission('VIEW_STATEMENTS'), statementController.getClientStatement);
 

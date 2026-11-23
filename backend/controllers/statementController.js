@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const { transactionEditColumns } = require('../utils/editedAmount');
+const { getClientStatementData, toPdfData, toColomboDay } = require('../services/statementLedger');
 const { generateStatementPDF } = require('../utils/statement');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { sendClientBookingStatement } = require('../utils/metaWhatsapp');
@@ -17,7 +17,7 @@ async function saveStatementRecord({ client_id, period_start, period_end, openin
             `INSERT INTO saved_statements
                (client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by, statement_source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url || null, delivery_method, generated_by || null, statement_source || 'BOOKING']
+            [client_id, toColomboDay(period_start), toColomboDay(period_end), opening_balance, total_invoiced, total_paid, balance_due, pdf_url || null, delivery_method, generated_by || null, statement_source || 'BOOKING']
         );
     } catch (err) {
         console.error('saveStatementRecord failed (non-fatal):', err.message);
@@ -34,111 +34,14 @@ const normalizeDateRange = (req) => {
     };
 };
 
-// The business runs on Sri Lanka time (UTC+5:30) but the server is UTC. Nightly
-// invoices are stamped 23:59 UTC (= 05:29 next day in Sri Lanka), so dates must
-// be bucketed and displayed in Asia/Colombo or each invoice lands on the wrong day.
-const STATEMENT_TZ = 'Asia/Colombo';
-const fmtStatementDate = (d) => new Date(d).toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric', timeZone: STATEMENT_TZ
-});
-// Date-only values (YYYY-MM-DD) are treated as Sri Lanka calendar days.
-const toColomboBound = (value, isEnd) => {
-    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        return isEnd ? `${value}T23:59:59.999+05:30` : `${value}T00:00:00+05:30`;
-    }
-    return value;
-};
-
+// The business runs on Sri Lanka time (UTC+5:30) but the server is UTC. The statement works in
+// whole Sri Lanka calendar days (see services/statementLedger.js).
+// The statement itself (what is on it, how the balance is built, the payment allocation lines)
+// lives in services/statementLedger.js. This turns that into the payload the PDF template, the
+// admin previews, the client portal and WhatsApp all use.
+//
+// Balance convention (same as Zoho Books): what the client OWES is positive; credit is negative.
 const buildStatementPayload = async (client_id, start_date, end_date) => {
-    start_date = toColomboBound(start_date, false);
-    end_date = toColomboBound(end_date, true);
-    // Compute opening sums separately so balance = payments - invoices
-    const openingSumsRes = await db.query(`
-        SELECT
-            COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) AS opening_payments,
-            COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS opening_invoices
-        FROM transactions
-        WHERE client_id = $1 AND created_at < $2
-          AND category::text <> 'REGISTRATION_FEE'
-    `, [client_id, start_date]);
-
-    const openingPayments = parseFloat(openingSumsRes.rows[0].opening_payments || 0);
-    const openingInvoices = parseFloat(openingSumsRes.rows[0].opening_invoices || 0);
-    // Opening balance defined as payments - invoices
-    const openingBalance = openingPayments - openingInvoices;
-    let runningBalance = openingBalance;
-
-    const periodTransRes = await db.query(`
-        SELECT
-            transaction_id,
-            created_at as date,
-            category,
-            notes,
-            transaction_type,
-            amount,
-            booking_id,
-            ${transactionEditColumns('')}
-        FROM transactions
-        WHERE client_id = $1 AND created_at >= $2 AND created_at <= $3
-        ORDER BY created_at ASC
-    `, [client_id, start_date, end_date]);
-
-    // The registration fee is a one-off membership charge, its own account — it must not
-    // sit in the service running balance (a fee payment would otherwise show up as
-    // prepaid credit that service invoices silently eat into). It is listed separately.
-    const allRows = periodTransRes.rows || [];
-    const transactions = allRows.filter((t) => t.category !== 'REGISTRATION_FEE');
-    const registrationRows = allRows.filter((t) => t.category === 'REGISTRATION_FEE');
-    let totalInvoiced = 0;
-    let totalPaid = 0;
-
-    const statementLines = transactions.map((t) => {
-        const amt = parseFloat(t.amount || 0);
-        let invoiceAmount = 0;
-        let paymentAmount = 0;
-        let rowType = 'UNKNOWN';
-
-        if (t.category === 'SERVICE_INVOICE' || t.transaction_type === 'DEBIT') {
-            invoiceAmount = amt;
-            totalInvoiced += invoiceAmount;
-            runningBalance -= invoiceAmount; // payments - invoices
-            rowType = 'INVOICE';
-        } else if (t.category === 'BOOKING_PAYMENT' || t.transaction_type === 'CREDIT') {
-            paymentAmount = amt;
-            totalPaid += paymentAmount;
-            runningBalance += paymentAmount;
-            rowType = 'PAYMENT';
-        }
-
-        return {
-            transaction_id: t.transaction_id,
-            date: t.date,
-            row_type: rowType,
-            transactions: t.category,
-            details: t.notes,
-            booking_id: t.booking_id || null,
-            amount_invoiced: invoiceAmount || 0,
-            amount_paid: paymentAmount || 0,
-            balance: runningBalance,
-            original_amount: t.original_amount,
-            edited_at: t.edited_at,
-            edited_by_name: t.edited_by_name,
-            edit_reason: t.edit_reason,
-            edit_count: t.edit_count
-        };
-    });
-
-    const registrationFeeLines = registrationRows.map((t) => {
-        const amt = parseFloat(t.amount || 0);
-        const isDebit = t.transaction_type === 'DEBIT';
-        return {
-            date: t.date,
-            details: [t.notes, 'Valid for 1 year from date of commencement'].filter(Boolean).join('\n'),
-            invoiced: isDebit ? amt : 0,
-            paid: isDebit ? 0 : amt
-        };
-    });
-
     const clientRes = await db.query(
         `SELECT cp.honorific, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number
          FROM client_profiles cp
@@ -146,56 +49,24 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
          WHERE cp.client_profile_id = $1`,
         [client_id]
     );
-
     if (!clientRes.rows.length) {
         throw new Error('Client not found.');
     }
-
     const clientRow = clientRes.rows[0];
     const billingName = billingNameOf(clientRow) || clientRow.full_name;
-    const currentBalance = runningBalance;
 
-    const pdfData = {
-        clientName: billingName,
-        periodStart: fmtStatementDate(start_date),
-        periodEnd: fmtStatementDate(end_date),
-        summary: {
-            openingBalance: parseFloat(openingBalance || 0).toFixed(2),
-            invoicedAmount: parseFloat(totalInvoiced || 0).toFixed(2),
-            amountPaid: parseFloat(totalPaid || 0).toFixed(2),
-            balanceDue: parseFloat(currentBalance || 0).toFixed(2)
-        },
-        ledger: statementLines.map((line) => ({
-            date: fmtStatementDate(line.date),
-            transactions: line.transactions,
-            details: line.transactions === 'REGISTRATION_FEE'
-                ? [line.details, 'Valid for 1 year from date of commencement'].filter(Boolean).join('\n')
-                : (line.details || ''),
-            // Invoices are charges owed, so they print negative (matching the balance).
-            amount: line.amount_invoiced ? `-${parseFloat(line.amount_invoiced).toFixed(2)}` : '',
-            payments: line.amount_paid ? parseFloat(line.amount_paid).toFixed(2) : '',
-            balance: parseFloat(line.balance).toFixed(2),
-            booking_id: line.booking_id,
-            transaction_id: line.transaction_id,
-            row_type: line.row_type
-        })),
-        registrationFee: registrationFeeLines.map((r) => ({
-            date: fmtStatementDate(r.date),
-            details: r.details,
-            invoiced: r.invoiced ? `-${r.invoiced.toFixed(2)}` : '',
-            paid: r.paid ? r.paid.toFixed(2) : ''
-        }))
-    };
+    const st = await getClientStatementData(client_id, start_date, end_date);
+
+    const pdfData = toPdfData(billingName, st);
 
     return {
         clientName: billingName,
         clientMobile: clientRow.mobile_number,
-        openingBalance,
-        totalInvoiced,
-        totalPaid,
-        currentBalance,
-        statementLines,
-        registrationFeeLines,
+        openingBalance: st.opening,
+        totalInvoiced: st.invoiced,
+        totalPaid: st.paid,
+        currentBalance: st.balance,
+        statementLines: st.ledger,
         pdfData
     };
 };
@@ -359,7 +230,7 @@ exports.getClientStatement = async (req, res) => {
     const { start_date, end_date } = normalizeDateRange(req);
 
     try {
-        const { openingBalance, totalInvoiced, totalPaid, currentBalance, statementLines, registrationFeeLines } = await buildStatementPayload(client_id, start_date, end_date);
+        const { openingBalance, totalInvoiced, totalPaid, currentBalance, statementLines } = await buildStatementPayload(client_id, start_date, end_date);
 
         // 4. Send formatted data to frontend or PDF generator
         res.status(200).json({
@@ -369,8 +240,7 @@ exports.getClientStatement = async (req, res) => {
                 amount_paid: totalPaid,
                 balance_due: currentBalance
             },
-            ledger: statementLines,
-            registration_fee: registrationFeeLines
+            ledger: statementLines
         });
 
     } catch (error) {
@@ -461,24 +331,55 @@ exports.downloadClientStatement = async (req, res) => {
     }
 };
 
+// Rebuilds a saved statement's PDF from the live ledger for its saved period. Statements are
+// always regenerated (never served from an old stored file) so every copy a client receives is in
+// the current format with current figures.
+const rebuildSavedStatement = async (stmt) => {
+    const payload = await buildStatementPayload(stmt.client_id, stmt.period_start_text, stmt.period_end_text);
+    const pdfBuffer = await generateStatementPDF(payload.pdfData);
+    return { payload, pdfBuffer };
+};
+
+const loadSavedStatement = async (statement_id) => {
+    const stmtRes = await db.query(
+        `SELECT ss.*, ss.period_start::text AS period_start_text, ss.period_end::text AS period_end_text,
+                NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number AS client_mobile
+         FROM saved_statements ss
+         JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
+         JOIN users u ON u.user_id = cp.user_id
+         WHERE ss.statement_id = $1`,
+        [statement_id]
+    );
+    return stmtRes.rows[0] || null;
+};
+
+// GET /statement/saved/:statement_id/pdf — the saved statement as a PDF, for download / ZIP.
+// Read-only: does not create another history record.
+exports.downloadSavedStatement = async (req, res) => {
+    try {
+        const stmt = await loadSavedStatement(req.params.statement_id);
+        if (!stmt) return res.status(404).json({ message: 'Statement record not found.' });
+        const { payload, pdfBuffer } = await rebuildSavedStatement(stmt);
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="${stmt.statement_code || 'Statement'}_${String(payload.clientName).replace(/\s+/g, '_')}.pdf"`,
+            'Content-Length': pdfBuffer.length
+        });
+        return res.status(200).send(pdfBuffer);
+    } catch (error) {
+        console.error('downloadSavedStatement error:', error);
+        return res.status(500).json({ message: 'Failed to generate statement PDF.' });
+    }
+};
+
 exports.resendStatementFromHistory = async (req, res) => {
     const { statement_id } = req.params;
 
     try {
-        const stmtRes = await db.query(
-            `SELECT ss.*, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number AS client_mobile
-             FROM saved_statements ss
-             JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
-             JOIN users u ON u.user_id = cp.user_id
-             WHERE ss.statement_id = $1`,
-            [statement_id]
-        );
-
-        if (!stmtRes.rows.length) {
+        const stmt = await loadSavedStatement(statement_id);
+        if (!stmt) {
             return res.status(404).json({ message: 'Statement record not found.' });
         }
-
-        const stmt = stmtRes.rows[0];
 
         // Best-effort: find most recent booking for this client to get context for the template
         const bookingRes = await db.query(
@@ -493,32 +394,29 @@ exports.resendStatementFromHistory = async (req, res) => {
         const bookingCode = bookingRes.rows[0]?.booking_code || 'N/A';
         const patientName = bookingRes.rows[0]?.patient_name || 'N/A';
 
-        let pdfUrl = stmt.pdf_url;
-
-        // If this was a download-only record (no stored PDF), generate and upload now
-        if (!pdfUrl) {
-            const payload = await buildStatementPayload(stmt.client_id, stmt.period_start, stmt.period_end);
-            const pdfBuffer = await generateStatementPDF(payload.pdfData);
-            const pdfKey = `statements/Statement_${stmt.client_id}_${Date.now()}.pdf`;
-            pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
-            await db.query('UPDATE saved_statements SET pdf_url = $1 WHERE statement_id = $2', [pdfUrl, statement_id]);
-        }
+        // Always rebuilt: the figures in the message must match the PDF it carries.
+        const { payload, pdfBuffer } = await rebuildSavedStatement(stmt);
+        const pdfKey = `statements/Statement_${stmt.client_id}_${Date.now()}.pdf`;
+        const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
+        await db.query(
+            `UPDATE saved_statements SET pdf_url = $1, opening_balance = $3, total_invoiced = $4, total_paid = $5, balance_due = $6
+             WHERE statement_id = $2`,
+            [pdfUrl, statement_id, payload.openingBalance, payload.totalInvoiced, payload.totalPaid, payload.currentBalance]
+        );
 
         const fmtAmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const periodStart = fmtStatementDate(stmt.period_start);
-        const periodEnd = fmtStatementDate(stmt.period_end);
         const filename = `Statement_${bookingCode}_${stmt.client_name.replace(/\s+/g, '_')}.pdf`;
 
         await sendClientBookingStatement(
             stmt.client_mobile,
             stmt.client_name,
-            periodStart,
-            periodEnd,
+            payload.pdfData.periodStart,
+            payload.pdfData.periodEnd,
             bookingCode,
             patientName,
-            fmtAmt(stmt.total_invoiced),
-            fmtAmt(stmt.total_paid),
-            fmtAmt(stmt.balance_due),
+            fmtAmt(payload.totalInvoiced),
+            fmtAmt(payload.totalPaid),
+            fmtAmt(payload.currentBalance),
             pdfUrl,
             filename
         );
@@ -530,7 +428,7 @@ exports.resendStatementFromHistory = async (req, res) => {
             actionType: 'STATEMENT_SENT_WHATSAPP',
             entityType: 'CLIENT',
             entityId: String(stmt.client_id),
-            details: { period_start: stmt.period_start, period_end: stmt.period_end, client_name: stmt.client_name, statement_id, booking_code: bookingCode },
+            details: { period_start: stmt.period_start_text, period_end: stmt.period_end_text, client_name: stmt.client_name, statement_id, booking_code: bookingCode },
         })).catch(err => console.error('Activity log failed (resendStatementFromHistory):', err.message));
 
         return res.status(200).json({ status: 'success', message: 'Statement sent via WhatsApp', data: { pdf_link: pdfUrl } });

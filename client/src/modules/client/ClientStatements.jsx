@@ -8,7 +8,7 @@ const ClientStatements = () => {
 
   const query = new URLSearchParams();
   if (range.start) query.set('start_date', range.start);
-  if (range.end) query.set('end_date', `${range.end}T23:59:59.999Z`);
+  if (range.end) query.set('end_date', range.end); // plain day: the server includes all of it (Sri Lanka time)
   const customPath = `/statements/download${query.toString() ? `?${query}` : ''}`;
 
   const dateInput = { border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px', fontSize: 12, fontFamily: "'DM Sans', sans-serif", display: 'block', marginTop: 4 };

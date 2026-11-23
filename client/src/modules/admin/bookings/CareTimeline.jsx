@@ -125,7 +125,7 @@ const CareTimeline = ({
   manualSalaryDay = false,
   manualInvoiceDay = false,
   pauses = [],           // [{ paused_date, resume_date, resumed_date }] — booking_pauses rows, any order
-  revokeEnabled = false, // true only for LIVE_IN/SHIFT_BASED + the viewer is a Super Admin
+  revokeEnabled = false, // true only for LIVE_IN/SHIFT_BASED + the viewer has ATTENDANCE_REVOKE (or is Super Admin)
   onRevokeDays,          // async (targets: { service_date: string, shift_slot_id: string|null }[], reason: string, password: string, settlementAction: string) => void
   // Correcting the AMOUNT on already-settled days — a different act from revoking
   // them (the days stay paid/invoiced; only the difference moves). Permission-gated
@@ -1940,7 +1940,7 @@ const CareTimeline = ({
               ))}
             </div>
 
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-3 mb-1">Confirm your Super Admin password</label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-3 mb-1">Confirm your password</label>
             <input
               type="password"
               value={revokePassword}
