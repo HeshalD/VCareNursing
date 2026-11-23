@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Client statement — reference</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- REFERENCE ONLY: visual + behaviour spec for ClientStatementSection (the wrapper). StatementPreview is NOT to be changed:
+     the paper block below is a stand-in so the layout can be judged. Re-implement in React + Tailwind keeping the props contract. -->
+<style>
+body{margin:0;background:#f8fafc;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;font-size:14px}
+*{box-sizing:border-box}button,input{font-family:inherit}button{cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 14px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:14px;font-weight:600;white-space:nowrap}.btn:hover{background:#f1f5f9}
+.btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}.btn.pri:hover{background:#1d4ed8}.btn.ghost{border-color:transparent;background:transparent;color:#2563eb}.btn.ghost:hover{background:#eff6ff}.btn.dis{opacity:.5;cursor:not-allowed}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px}
+.field{height:40px;width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:0 12px;font-size:14px;background:#fff;outline:none}.field:focus{border-color:#2563eb;box-shadow:0 0 0 3px #dbeafe}.field.err{border-color:#dc2626}
+.chip{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600}.chip:hover{background:#f1f5f9}.chip.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.lbl{font-size:13px;font-weight:600;color:#475569}.cap{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}.sub{font-size:13px;color:#64748b}.num{font-variant-numeric:tabular-nums}
+.kv{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;color:#334155}.kv:last-child{border-bottom:0}
+.pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#f1f5f9;color:#475569}
+.paper{max-width:900px;margin:0 auto;background:#fff;padding:28px 32px;font-size:12px;color:#334155;box-shadow:0 1px 3px rgba(15,23,42,.1);outline:1px solid #e2e8f0;transition:opacity .2s}
+.lt{display:grid;grid-template-columns:14% 15% 31% 14% 13% 13%;padding:8px;align-items:center}
+.sp{animation:sp .8s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}@keyframes pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+#dlgwrap{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;pointer-events:none;padding:16px}
+#dlg{pointer-events:auto;width:min(440px,100%);padding:22px;box-shadow:0 20px 40px rgba(15,23,42,.25);animation:pop .16s ease-out}
+#scrim{position:fixed;inset:0;z-index:60;background:rgba(15,23,42,.4);border:0;display:none}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:#0f172a;color:#f8fafc;border-radius:8px;padding:10px 16px;display:none}
+</style></head>
+<body>
+<div style="max-width:1320px;margin:0 auto;padding:20px 28px 64px;display:flex;flex-direction:column;gap:18px">
+  <div><h1 style="margin:0;font-size:22px;font-weight:600">Statement</h1><div class="sub" style="margin-top:2px">Nimali Perera · CL-0231 · send or download a statement of accounts</div></div>
+  <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+    <!-- left panel: sticky on wide screens, stacks above the preview on narrow ones -->
+    <div style="flex:0 0 330px;max-width:100%;position:sticky;top:16px;display:flex;flex-direction:column;gap:16px"><div id="panel" class="card" style="padding:18px;display:flex;flex-direction:column;gap:16px"></div><div id="ov" class="card" style="padding:6px 18px 10px"></div></div>
+    <div style="flex:1 1 560px;min-width:0"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><b style="font-size:15px">Preview</b><span class="sub" style="margin-left:10px">Matches the PDF and the WhatsApp message</span></div><span id="busy"></span></div>
+      <div style="background:#e2e8f0;border-radius:8px;padding:20px 16px;overflow-x:auto"><div id="paper" class="paper"></div></div></div>
+  </div></div>
+<button id="scrim" aria-label="Cancel"></button><div id="dlgwrap"><div id="dlg" class="card" role="dialog" aria-label="Send statement"></div></div><div id="toast" role="status"></div>
+
+<script>
+/* ---------- SAMPLE DATA: replace with the real API (apiClient.getClientStatement) ----------
+   Real preview already gets {account_summary, ledger}; this ledger only exists so the filters visibly change the paper. */
+const TODAY='2026-11-23'; /* use new Date() in the real component */
+const L=(date,label,details,inv,paid)=>({date,label,details,inv,paid});
+const LEDGER=[L('2025-03-10','Invoice','INV-1001 · Home nursing, 5 days',60000,0),L('2025-03-18','Payment','Bank transfer · TRF-70221',0,60000),L('2025-07-04','Invoice','INV-1044 · Home nursing, 7 days',85000,0),L('2025-07-15','Payment','Bank transfer · TRF-71830',0,50000),L('2025-11-12','Invoice','INV-1102 · Night shift, 4 days',40000,0),L('2025-12-02','Payment','Cash · Receipt 0211',0,40000),L('2026-02-14','Invoice','INV-1180 · Home nursing, 9 days',90000,0),L('2026-02-25','Payment','Bank transfer · TRF-80412',0,90000),L('2026-05-06','Invoice','INV-1246 · Home nursing, 11 days',110000,0),L('2026-05-20','Payment','Cheque · 004118',0,60000),L('2026-08-03','Invoice','INV-1311 · Home nursing, 7 days',75000,0),L('2026-09-10','Payment','Bank transfer · TRF-85002',0,50000),L('2026-10-05','Invoice','INV-1360 · Home nursing, 12 days',120000,0),L('2026-10-12','Payment','Bank transfer · TRF-86990',0,45000),L('2026-10-22','Invoice','INV-1381 · Home nursing, 8 days',85000,0),L('2026-10-28','Payment','Bank transfer · TRF-87102',0,40500),L('2026-11-03','Invoice','INV-1402 · Home nursing, 14 days',135000,0),L('2026-11-12','Payment','Bank transfer · TRF-88213',0,45000),L('2026-11-14','Invoice','INV-1417 · Night shift, 4 days',60000,0),L('2026-11-19','Payment','Bank transfer · TRF-88650',0,70000)];
+const PHONE='+94 77 123 4567'; /* clientProfile.mobile_number; empty → show "No phone number on file" and disable WhatsApp */
+const OV={due:96000}; /* stats prop: transactions, paymentsMade, invoiced, overdue, netBalance (already formatted in the real component) */
+
+/* ---------- period presets: key → [start, end] ---------- */
+const RANGES={month:['2026-11-01','2026-11-23'],prev:['2026-10-01','2026-10-31'],year:['2026-01-01','2026-11-23'],pyear:['2025-01-01','2025-12-31'],d30:['2026-10-24','2026-11-23']};
+const LABELS=[['month','This month'],['prev','Previous month'],['year','This year'],['pyear','Previous year'],['d30','Last 30 days'],['custom','Custom']];
+const S={key:'month',cs:'2026-11-01',ce:'2026-11-23',shown:['2026-11-01','2026-11-23'],busy:false,act:''};
+const $=id=>document.getElementById(id),f2=n=>Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),rs=n=>'Rs. '+Math.round(n).toLocaleString('en-US');
+const day=iso=>new Date(iso+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+let tt,pt;const toast=m=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(tt);tt=setTimeout(()=>t.style.display='none',2600)};
+
+/* changing the period keeps the old preview visible (dimmed) while the new one loads — no spinner swap */
+function pick(key,cs,ce){const r=key==='custom'?[cs,ce]:RANGES[key];S.key=key;S.cs=r[0];S.ce=r[1];const ok=r[0]&&r[1]&&r[0]<=r[1];S.busy=ok;render();
+  if(ok){clearTimeout(pt);pt=setTimeout(()=>{S.shown=r;S.busy=false;render()},650)}}
+
+function render(){
+  const bad=!S.cs||!S.ce||S.cs>S.ce,days=Math.round((new Date(S.ce)-new Date(S.cs))/864e5)+1,blocked=bad||S.busy;
+  const [ps,pe]=S.shown,opening=LEDGER.filter(e=>e.date<ps).reduce((n,e)=>n+e.inv-e.paid,0),inR=LEDGER.filter(e=>e.date>=ps&&e.date<=pe);
+  const empty=!bad&&!S.busy&&inR.length===0,sameYear=S.cs.slice(0,4)===S.ce.slice(0,4);
+  /* PANEL */
+  $('panel').innerHTML=`<div><div class="cap">Billed to</div><div style="font-weight:600;font-size:15px;margin-top:2px">Nimali Perera</div><div class="sub">${PHONE||'No phone number on file'}</div></div>
+  <div><div class="lbl" style="margin-bottom:8px">Period</div><div style="display:flex;flex-wrap:wrap;gap:8px">${LABELS.map(l=>`<button class="chip ${S.key===l[0]?'on':''}" data-k="${l[0]}" aria-pressed="${S.key===l[0]}">${l[1]}</button>`).join('')}</div>
+  ${S.key==='custom'?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px"><div><label for="sd" class="lbl">Start</label><input id="sd" type="date" class="field ${bad?'err':''}" style="margin-top:4px" value="${S.cs}"></div><div><label for="ed" class="lbl">End</label><input id="ed" type="date" class="field ${bad?'err':''}" style="margin-top:4px" value="${S.ce}"></div></div>`:''}
+  ${bad?'<div style="color:#b91c1c;font-size:13px;margin-top:8px">The start date is after the end date.</div>':`<div style="margin-top:12px"><div style="font-weight:600">${day(S.cs).slice(0,sameYear?6:11)} – ${day(S.ce)}</div><div class="sub">${days} ${days===1?'day':'days'}</div></div>`}</div>
+  ${empty?'<div style="border-radius:6px;padding:10px 12px;font-size:13px;background:#fffbeb;color:#b45309"><b>No transactions in this period.</b><div style="margin-top:6px"><button class="btn" data-k="year" style="height:32px;font-size:13px">Use this year</button></div></div>':''}
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <button class="btn pri ${blocked?'dis':''}" data-dl>${S.act==='dl'?'<svg class="sp" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg>':''}Download PDF</button>
+    <button class="btn ${blocked||!PHONE?'dis':''}" data-wa>Send via WhatsApp</button><div class="sub" style="margin-top:-4px">${PHONE?'Sends to '+PHONE:'No phone number on file'}</div>
+    <button class="btn ghost ${blocked?'dis':''}" data-print style="justify-content:flex-start;padding:0 4px;height:32px">Print</button></div>`;
+  const ci=$('sd');if(ci){$('sd').onchange=e=>pick('custom',e.target.value,S.ce);$('ed').onchange=e=>pick('custom',S.cs,e.target.value)}
+  /* OVERVIEW: labelled "All time" (stats props are not period-scoped); colour only where it means something */
+  const allI=LEDGER.reduce((n,e)=>n+e.inv,0),allP=LEDGER.reduce((n,e)=>n+e.paid,0),row=(a,b,c,v)=>`<div class="kv"><span>${a}</span><span style="display:flex;gap:8px;align-items:center"><b class="num" style="${c||''}">${b}</b>${v?'<button class="btn ghost" data-view style="height:24px;padding:0 6px;font-size:13px">View</button>':''}</span></div>`;
+  $('ov').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:12px"><div class="cap">Client overview</div><span class="sub">All time</span></div>${row('Transactions',LEDGER.length)}${row('Payments made',rs(allP),'',1)}${row('Invoiced',rs(allI),'',1)}${row('Overdue',rs(OV.due),'color:#b45309',1)}${row('Net balance',rs(allI-allP),allI-allP>0?'color:#b91c1c':'color:#047857')}`;
+  $('busy').innerHTML=S.busy?'<span class="pill"><svg class="sp" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="margin-right:6px"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg>Updating…</span>':'';
+  /* PREVIEW STAND-IN (the real StatementPreview replaces this whole block) */
+  let bal=opening;const inv=inR.reduce((n,e)=>n+e.inv,0),paid=inR.reduce((n,e)=>n+e.paid,0);
+  $('paper').style.opacity=S.busy?.5:1;
+  $('paper').innerHTML=`<div style="display:flex;justify-content:space-between;gap:16px"><div style="font-size:22px;font-weight:800;color:#2f80b9">VCare Nursing</div><div style="text-align:right;line-height:1.6"><b style="color:#0f172a">Vcare Nursing</b><br>No: 293/17B<br>Hospital Rd</div></div>
+  <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;margin-top:20px"><div style="font-weight:700;color:#0f172a;line-height:1.6">To<br>Nimali Perera</div><div style="width:100%;max-width:330px"><div style="text-align:right;font-size:22px;font-weight:700;color:#2f80b9;border-bottom:2px solid #0f172a;padding-bottom:4px">Statement of Accounts</div><div style="text-align:right;font-size:11px;border-bottom:2px solid #0f172a;padding:4px 0;margin-bottom:18px">${day(ps)} To ${day(pe)}</div>
+  <div style="background:#e5e7eb;padding:8px;font-weight:700;color:#0f172a">Account Summary</div>${[['Opening Balance',opening],['Invoiced Amount',inv],['Amount Paid',paid]].map(x=>`<div style="display:flex;justify-content:space-between;padding:6px 8px"><span>${x[0]}</span><span class="num">LKR ${f2(x[1])}</span></div>`).join('')}<div style="display:flex;justify-content:space-between;padding:8px 8px 6px;border-top:1.5px solid #0f172a"><span>Balance Due</span><span class="num">LKR ${f2(opening+inv-paid)}</span></div></div></div>
+  <div style="margin-top:26px;overflow-x:auto"><div style="min-width:620px"><div class="lt" style="background:#2f80b9;color:#fff;font-weight:700"><div>Date</div><div>Transactions</div><div>Details</div><div style="text-align:right">Amount</div><div style="text-align:right">Payments</div><div style="text-align:right">Balance</div></div>
+  <div class="lt"><div>${day(ps)}</div><div>***Opening Balance***</div><div></div><div class="num" style="text-align:right">${f2(opening)}</div><div></div><div class="num" style="text-align:right">${f2(opening)}</div></div>
+  ${inR.map((e,i)=>{bal+=e.inv-e.paid;return `<div class="lt" style="${i%2?'background:#f3f4f6':''}"><div>${day(e.date)}</div><div>${e.label}</div><div>${e.details}</div><div class="num" style="text-align:right">${e.inv?f2(e.inv):''}</div><div class="num" style="text-align:right">${e.paid?f2(e.paid):''}</div><div class="num" style="text-align:right">${f2(bal)}</div></div>`}).join('')}
+  ${empty?'<div style="padding:16px;text-align:center;color:#64748b">No transactions in this period.</div>':''}
+  <div class="lt" style="border-top:1px solid #cbd5e1;font-weight:700;color:#0f172a;margin-top:6px"><div style="grid-column:1/5"></div><div style="text-align:right">Balance Due</div><div class="num" style="text-align:right">LKR ${f2(opening+inv-paid)}</div></div></div></div>`}
+
+function dialog(open){$('dlgwrap').style.display=$('scrim').style.display=open?(open==='x'?'none':'flex'):'none';$('scrim').style.display=open?'block':'none';
+  if(open)$('dlg').innerHTML=`<div style="font-size:17px;font-weight:600">Send statement on WhatsApp?</div><p style="margin:8px 0 18px;color:#475569;line-height:1.5">The statement for <b>${day(S.cs).slice(0,S.cs.slice(0,4)===S.ce.slice(0,4)?6:11)} – ${day(S.ce)}</b> will be sent to Nimali Perera at <b>${PHONE}</b>.</p><div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn" data-no>Cancel</button><button class="btn pri" data-send>Send</button></div>`}
+document.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;const D=t.dataset;
+  if(D.k){pick(D.k,S.cs,S.ce)}
+  else if('dl' in D){if(S.busy||S.cs>S.ce)return;S.act='dl';render();setTimeout(()=>{S.act='';render();toast('Statement downloaded')},1000)}   /* real: apiClient.downloadClientStatement */
+  else if('wa' in D){if(S.busy||S.cs>S.ce||!PHONE)return;dialog(1)}
+  else if('send' in D){dialog(0);toast('Statement sent to WhatsApp')}                                                               /* real: apiClient.sendClientStatementToWhatsApp, then toast; onError on failure */
+  else if('no' in D||t.id==='scrim'){dialog(0)}
+  else if('print' in D){if(S.busy||S.cs>S.ce)return;toast('Opening the print dialog')}
+  else if('view' in D){toast('Opens the matching page')}});
+render();
+</script></body></html>
