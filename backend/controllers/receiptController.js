@@ -86,10 +86,14 @@ const getAllReceipts = async (req, res) => {
                     u.mobile_number, r.source_type, r.source_id, r.total_amount, r.payment_method,
                     r.payment_date, r.reference_number, r.cheque_number, r.bank_account_id, r.line_items, r.pdf_url,
                     r.whatsapp_sent, r.whatsapp_sent_at, r.send_error, r.created_at,
-                    r.voided_at, r.void_reason, rep.receipt_code AS replaced_by_code, prev.receipt_code AS replaces_code
+                    r.voided_at, r.void_reason, rep.receipt_code AS replaced_by_code, prev.receipt_code AS replaces_code,
+                    COALESCE(rsp.full_name, rist.full_name, CASE WHEN 'SUPER_ADMIN' = ANY(ru.role::text[]) THEN 'Super Admin' END) AS recorded_by_name
              FROM payment_receipts r
              JOIN client_profiles cp ON cp.client_profile_id = r.client_id
              LEFT JOIN users u ON u.user_id = cp.user_id
+             LEFT JOIN users ru ON ru.user_id = r.generated_by
+             LEFT JOIN staff_profiles rsp ON rsp.user_id = ru.user_id
+             LEFT JOIN internal_staff rist ON rist.user_id = ru.user_id
              LEFT JOIN payment_receipts rep ON rep.receipt_id = r.replaced_by_receipt_id
              LEFT JOIN payment_receipts prev ON prev.receipt_id = r.replaces_receipt_id
              ${where}
@@ -121,13 +125,17 @@ const getClientReceipts = async (req, res) => {
         }
 
         const result = await db.query(
-            `SELECT receipt_id, receipt_code, source_type, source_id, total_amount,
-                    payment_method, payment_date, reference_number, cheque_number,
-                    received_from, line_items, pdf_url, whatsapp_sent, whatsapp_sent_at,
-                    send_error, created_at, voided_at, void_reason, replaced_by_receipt_id
-             FROM payment_receipts
-             WHERE client_id = $1
-             ORDER BY created_at DESC`,
+            `SELECT r.receipt_id, r.receipt_code, r.source_type, r.source_id, r.total_amount,
+                    r.payment_method, r.payment_date, r.reference_number, r.cheque_number,
+                    r.received_from, r.line_items, r.pdf_url, r.whatsapp_sent, r.whatsapp_sent_at,
+                    r.send_error, r.created_at, r.voided_at, r.void_reason, r.replaced_by_receipt_id,
+                    COALESCE(rsp.full_name, rist.full_name, CASE WHEN 'SUPER_ADMIN' = ANY(ru.role::text[]) THEN 'Super Admin' END) AS recorded_by_name
+             FROM payment_receipts r
+             LEFT JOIN users ru ON ru.user_id = r.generated_by
+             LEFT JOIN staff_profiles rsp ON rsp.user_id = ru.user_id
+             LEFT JOIN internal_staff rist ON rist.user_id = ru.user_id
+             WHERE r.client_id = $1
+             ORDER BY r.created_at DESC`,
             [client_id]
         );
 

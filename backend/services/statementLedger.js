@@ -125,6 +125,9 @@ function classifyRow(r) {
     transaction_ids: [r.transaction_id],
     date: r.eff_date,
     ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+    // Exact (microsecond) creation instant: entries made by one action share it. A backdated payment is
+    // stamped at exactly midnight, which is only a DATE (unrelated payments share it), so it is not used.
+    created_key: r.created_key && !/ 00:00:00\.000000$/.test(r.created_key) ? r.created_key : null,
     amount,
     booking_code: r.booking_code || null,
     receipt_code: r.receipt_code || null,
@@ -198,7 +201,7 @@ function classifyRow(r) {
     // Everything else is money in — unless it is a wallet draw, which only moves money already counted.
     if (method === 'WALLET' || /^Auto-applied from client wallet/i.test(notes)) return hidden;
     const number = r.receipt_code || r.transaction_code || null;
-    return one({ kind: KIND.PAYMENT, doc_number: number, details: null, payment_method: r.payment_method || null });
+    return one({ kind: KIND.PAYMENT, doc_number: number, details: null, payment_method: (r.payment_method || '').toUpperCase() });
   }
 
   return { rows: [], unclassified: `${cat}/${type}` };
@@ -211,30 +214,35 @@ const signedEffect = (row) => {
   return SIGN[row.kind] * row.amount;
 };
 
-// Payments that share a receipt (a quotation payment that covered the registration fee and the
-// service charges) are one payment to the client — show them as one row, as Zoho would.
+// One payment from the client is one row on the statement, however the system booked it.
+// A single transfer is often stored as several ledger entries (service charges credited to the wallet,
+// a product invoice, the registration fee). Entries belong together when
+//   * they share a receipt, or
+//   * they were created by the same action (identical creation instant, to the microsecond), by the
+//     same client, with the same payment method — and do not carry two DIFFERENT receipts.
 function mergeSharedReceipts(rows) {
   const out = [];
-  const byReceipt = new Map();
+  const payments = [];
   for (const row of rows) {
-    if (row.kind === KIND.PAYMENT && row.receipt_code) {
-      const seen = byReceipt.get(row.receipt_code);
-      if (seen) {
-        seen.amount += row.amount;
-        seen.transaction_ids.push(...row.transaction_ids);
-        if (row.date < seen.date) seen.date = row.date;
-        if (row.ts < seen.ts) seen.ts = row.ts;
-        if (!seen.booking_code && row.booking_code) seen.booking_code = row.booking_code;
-        else if (row.booking_code && seen.booking_code !== row.booking_code) seen.extra_bookings = [...(seen.extra_bookings || []), row.booking_code];
-        if (seen.original_amount == null && row.original_amount != null) {
-          seen.original_amount = row.original_amount; seen.edited_at = row.edited_at;
-          seen.edited_by_name = row.edited_by_name; seen.edit_reason = row.edit_reason; seen.edit_count = row.edit_count;
-        }
-        continue;
-      }
-      byReceipt.set(row.receipt_code, row);
+    if (row.kind !== KIND.PAYMENT) { out.push(row); continue; }
+    const home = payments.find((p) => {
+      if (row.receipt_code && p.receipt_code) return row.receipt_code === p.receipt_code;
+      return row.created_key && p.created_key === row.created_key && (row.payment_method || '') === (p.payment_method || '');
+    });
+    if (!home) { payments.push(row); out.push(row); continue; }
+
+    home.amount += row.amount;
+    home.transaction_ids.push(...row.transaction_ids);
+    if (row.date < home.date) home.date = row.date;
+    if (row.ts < home.ts) home.ts = row.ts;
+    // The number shown is the receipt when any part of the payment has one.
+    if (!home.receipt_code && row.receipt_code) { home.receipt_code = row.receipt_code; home.doc_number = row.doc_number; }
+    if (!home.booking_code && row.booking_code) home.booking_code = row.booking_code;
+    else if (row.booking_code && home.booking_code !== row.booking_code) home.extra_bookings = [...(home.extra_bookings || []), row.booking_code];
+    if (home.original_amount == null && row.original_amount != null) {
+      home.original_amount = row.original_amount; home.edited_at = row.edited_at;
+      home.edited_by_name = row.edited_by_name; home.edit_reason = row.edit_reason; home.edit_count = row.edit_count;
     }
-    out.push(row);
   }
   return out;
 }
@@ -422,6 +430,7 @@ async function loadLedgerRows(clientId, endDay) {
     `SELECT
         t.transaction_id, t.transaction_code, t.category::text AS category, t.transaction_type::text AS transaction_type,
         t.amount, t.payment_method, t.notes, t.created_at, t.status, t.staff_profile_id,
+        to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') AS created_key,
         COALESCE(b.booking_code, eb.booking_code) AS booking_code,
         CASE WHEN t.category::text = 'SERVICE_INVOICE' AND d.service_date IS NOT NULL
              THEN to_char(d.service_date, 'YYYY-MM-DD')

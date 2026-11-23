@@ -203,6 +203,7 @@ const ClientPaymentsLedgerPage = () => {
                   <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Method</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Reference</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Recorded by</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Delivery</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                 </tr>
@@ -218,7 +219,7 @@ const ClientPaymentsLedgerPage = () => {
                     <React.Fragment key={r.receipt_id}>
                       {showClientHeader && (
                         <tr className="bg-slate-50/70">
-                          <td colSpan={7} className="px-4 py-2.5">
+                          <td colSpan={8} className="px-4 py-2.5">
                             <div className="flex items-center gap-2 text-slate-700">
                               <User className="w-4 h-4 text-slate-400" />
                               <Link target="_blank" rel="noopener noreferrer" to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
@@ -257,6 +258,9 @@ const ClientPaymentsLedgerPage = () => {
                         <td className="px-4 py-3 text-slate-600 text-xs">{METHOD_LABELS[r.payment_method] || r.payment_method || '—'}</td>
                         <td className="px-4 py-3 text-slate-500 text-xs font-mono">
                           {r.reference_number || <span className="italic text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
+                          {r.recorded_by_name || <span className="italic text-slate-300">—</span>}
                         </td>
                         <td className="px-4 py-3">
                           {r.whatsapp_sent ? (
@@ -328,7 +332,7 @@ const ClientPaymentsLedgerPage = () => {
                       </tr>
                       {isExpanded && (
                         <tr className="bg-slate-50/40">
-                          <td colSpan={7} className="px-4 py-3">
+                          <td colSpan={8} className="px-4 py-3">
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
                               Payment for · {SOURCE_LABELS[r.source_type] || r.source_type || 'Payment'}
                             </p>

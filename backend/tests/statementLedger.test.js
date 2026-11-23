@@ -145,6 +145,45 @@ test('payments sharing one receipt are shown as one payment', () => {
   assert.equal(s.ledger[0].transaction_ids.length, 2);
 });
 
+test('one transfer booked as several ledger entries is ONE payment row (Esther Abraham, 04 Nov)', () => {
+  const stamp = '2026-11-04 18:09:11.781245';
+  const rows = classify([
+    raw({ eff_date: '2026-11-04', category: 'PRODUCT_SALE', transaction_type: 'CREDIT', amount: 1000, payment_method: 'BANK_TRANSFER', created_key: stamp, transaction_code: 'TR-0024261', notes: 'INV-000014 — Product invoice payment' }),
+    raw({ eff_date: '2026-11-04', category: 'WALLET_TOPUP', transaction_type: 'CREDIT', amount: 28800, payment_method: 'BANK_TRANSFER', created_key: stamp, receipt_code: 'RCP-0000024', transaction_code: 'TR-0024260' }),
+    invoice('2026-11-05', 1000, 'INV-000014'),
+    invoice('2026-11-05', 4800, 'INV-20261123-0004'),
+  ]);
+  const s = buildStatement(rows, { start: '2026-11-01', end: '2026-11-30' });
+  const pays = s.ledger.filter((r) => r.row_type === 'PAYMENT');
+  assert.equal(pays.length, 1);
+  assert.equal(pays[0].amount_paid, 29800);
+  assert.equal(pays[0].doc_number, 'RCP-0000024'); // the receipt wins over the TR code
+  assert.equal(pays[0].transaction_ids.length, 2);
+  assert.deepEqual(pays[0].annotations, ['LKR29,800.00 in excess payments']);
+  assert.deepEqual(s.ledger[1].annotations, ['LKR1,000.00 from payment RCP-0000024']);
+  assert.equal(s.paid, 29800);
+});
+
+test('entries are NOT merged when receipts conflict, methods differ or the instants differ', () => {
+  const stamp = '2026-11-04 18:09:11.781245';
+  const mk = (o) => raw({ eff_date: '2026-11-04', category: 'WALLET_TOPUP', transaction_type: 'CREDIT', amount: 100, payment_method: 'BANK_TRANSFER', created_key: stamp, ...o });
+  const count = (list) => buildStatement(classify(list), { start: '2026-11-01', end: '2026-11-30' }).ledger.length;
+  assert.equal(count([mk({ receipt_code: 'RCP-1' }), mk({ receipt_code: 'RCP-2' })]), 2); // two receipts = two payments
+  assert.equal(count([mk({}), mk({ payment_method: 'CASH' })]), 2);
+  assert.equal(count([mk({}), mk({ created_key: '2026-11-04 18:09:11.781999' })]), 2);
+  assert.equal(count([mk({}), mk({})]), 1); // same action, no receipts: one payment
+});
+
+test('backdated payments stamped at midnight are not grouped by instant (that is only a date)', () => {
+  const midnight = '2026-11-05 00:00:00.000000';
+  const mk = (o) => raw({ eff_date: '2026-11-05', category: 'WALLET_TOPUP', transaction_type: 'CREDIT', amount: 51000, payment_method: 'BANK_TRANSFER', created_key: midnight, ...o });
+  const s = buildStatement(classify([mk({}), mk({ category: 'REGISTRATION_FEE', amount: 10000 })]), { start: '2026-11-01', end: '2026-11-30' });
+  assert.equal(s.ledger.length, 2);
+  // ...but a shared receipt still joins them
+  const s2 = buildStatement(classify([mk({ receipt_code: 'RCP-171' }), mk({ category: 'REGISTRATION_FEE', amount: 10000, receipt_code: 'RCP-171' })]), { start: '2026-11-01', end: '2026-11-30' });
+  assert.equal(s2.ledger.length, 1);
+});
+
 test('booking codes: always on the row, and on allocation lines only for multi-booking clients', () => {
   const one = buildStatement(classify([
     invoice('2026-11-01', 100, 'INV-1', { booking_code: 'BK-00001' }),

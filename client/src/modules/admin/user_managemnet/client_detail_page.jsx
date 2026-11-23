@@ -77,6 +77,7 @@ import EditedAmountBadge from '../components/EditedAmountBadge';
 import { PreviewButton } from '../invoices/InvoicePreviewModal';
 import { invoicePreview } from '../invoices/invoicePreviewSources';
 import ClientInvoicesPanel from './ClientInvoicesPanel';
+import StatementPreview from './StatementPreview';
 import WalletPayModal from './WalletPayModal';
 import RegistrationAuditPanel from './RegistrationAuditPanel';
 import useInvoiceAmountEditor from './useInvoiceAmountEditor';
@@ -120,7 +121,6 @@ const expandProductLineItems = (items) => {
   return out;
 };
 
-const TX_PAGE_SIZE = 10;
 
 
 const formatDate = (value) => {
@@ -219,8 +219,10 @@ const ClientDetailPage = () => {
   const [statementEndDate, setStatementEndDate] = useState(toDateInputValue(new Date()));
   const [statementActionLoading, setStatementActionLoading] = useState('');
   const [clientTransactions, setClientTransactions] = useState([]);
-  const [transactionsLoading, setTransactionsLoading] = useState(false);
-  const [txPage, setTxPage] = useState(1);
+  // The statement preview (same data the PDF is built from).
+  const [statementPreview, setStatementPreview] = useState(null);
+  const [statementPreviewLoading, setStatementPreviewLoading] = useState(false);
+  const [statementPreviewError, setStatementPreviewError] = useState('');
 
   const [activityLogs, setActivityLogs] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -423,14 +425,11 @@ const ClientDetailPage = () => {
 
     const loadTransactions = async () => {
       try {
-        setTransactionsLoading(true);
         const response = await apiClient.getClientTransactions(clientId);
         setClientTransactions(response.data || []);
       } catch (err) {
         console.error('Error loading client transactions:', err);
         setClientTransactions([]);
-      } finally {
-        setTransactionsLoading(false);
       }
     };
 
@@ -483,7 +482,6 @@ const ClientDetailPage = () => {
     }
   }, [clientId]);
 
-  useEffect(() => { setTxPage(1); }, [clientTransactions]);
 
   // All of the client's daily care invoices — filtering/grouping happens in ClientInvoicesPanel.
   const fetchClientInvoices = async () => {
@@ -1183,6 +1181,28 @@ const ClientDetailPage = () => {
     end_date: statementEndDate,
   }), [statementStartDate, statementEndDate]);
 
+  // Statement preview: refetched whenever the Statement tab is open and the period changes.
+  useEffect(() => {
+    if (activeSection !== 'statement' || !clientId) return undefined;
+    if (!statementStartDate || !statementEndDate || statementStartDate > statementEndDate) {
+      setStatementPreview(null);
+      setStatementPreviewError(statementStartDate > statementEndDate ? 'The start date is after the end date.' : '');
+      return undefined;
+    }
+    let cancelled = false;
+    setStatementPreviewLoading(true);
+    setStatementPreviewError('');
+    apiClient.getClientStatement(clientId, { start_date: statementStartDate, end_date: statementEndDate })
+      .then((res) => { if (!cancelled) setStatementPreview(res); })
+      .catch((err) => {
+        if (cancelled) return;
+        setStatementPreview(null);
+        setStatementPreviewError(err.message || 'Failed to load the statement preview');
+      })
+      .finally(() => { if (!cancelled) setStatementPreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeSection, clientId, statementStartDate, statementEndDate, clientTransactions]);
+
   const downloadStatement = async () => {
     try {
       setStatementActionLoading('download');
@@ -1451,6 +1471,7 @@ const ClientDetailPage = () => {
                       )}
                       {rcpt.payment_method && <span className="text-sm text-gray-500">{rcpt.payment_method.replace(/_/g, ' ')}</span>}
                       <span className="text-xs text-gray-400">{formatDateTime(rcpt.payment_date || rcpt.created_at)}</span>
+                      {rcpt.recorded_by_name && <span className="text-xs text-gray-500">by {rcpt.recorded_by_name}</span>}
                     </div>
                   }
                 >
@@ -1462,6 +1483,7 @@ const ClientDetailPage = () => {
                       <InfoRow label="Amount" value={formatMoney(rcpt.total_amount)} />
                       <InfoRow label="Method" value={(rcpt.payment_method || '-').replace(/_/g, ' ')} />
                       <InfoRow label="Reference" value={rcpt.reference_number || '-'} />
+                      <InfoRow label="Recorded by" value={rcpt.recorded_by_name || '-'} />
                       <InfoRow label="Delivery" value={rcpt.whatsapp_sent ? `Sent ${formatDateTime(rcpt.whatsapp_sent_at)}` : 'Not sent'} />
                     </div>
 
@@ -2722,97 +2744,14 @@ const ClientDetailPage = () => {
               <StatCard icon={Activity}        label="Net Transaction Balance"         value={formatMoney(transactionSummary.net_balance)}         tone="violet" />
             </div>
 
-            <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
-              <div className="border-b border-gray-100 px-4 py-3.5 bg-gray-50 @xl:px-5">
-                <h3 className="text-[13px] font-semibold text-gray-800">All Client Transactions</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Fetched from the statement transaction endpoint for this client</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-100 text-sm">
-                  <thead className="bg-gray-50">
-                    <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <th className="px-5 py-3">Date</th>
-                      <th className="px-5 py-3">Category</th>
-                      <th className="px-5 py-3 text-right">Debit</th>
-                      <th className="px-5 py-3 text-right">Credit</th>
-                      <th className="px-5 py-3 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {transactionsLoading ? (
-                      <tr>
-                        <td colSpan="5" className="px-5 py-10 text-center text-gray-400 text-sm">
-                          Loading transactions...
-                        </td>
-                      </tr>
-                    ) : clientTransactions.length === 0 ? (
-                      <tr>
-                        <td colSpan="5" className="px-5 py-10 text-center text-gray-400 text-sm">
-                          No transaction rows available yet
-                        </td>
-                      </tr>
-                    ) : (
-                      (() => {
-                        const txTotalPages = Math.max(1, Math.ceil(clientTransactions.length / TX_PAGE_SIZE));
-                        const safePage = Math.min(txPage, txTotalPages);
-                        const txStart = (safePage - 1) * TX_PAGE_SIZE;
-                        const pagedTransactions = clientTransactions.slice(txStart, txStart + TX_PAGE_SIZE);
-                        return pagedTransactions.map((transaction, index) => {
-                          const isDebit  = transaction.transaction_type === 'DEBIT';
-                          const isCredit = transaction.transaction_type === 'CREDIT';
-                          return (
-                            <tr key={transaction.transaction_id || index} className="align-top hover:bg-gray-50/70">
-                              <td className="px-5 py-3.5 text-gray-600 text-[13px]">{formatDateTime(transaction.created_at)}</td>
-                              <td className="px-5 py-3.5">
-                                <span className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${isDebit ? 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100' : 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-100'}`}>
-                                  {transaction.category || transaction.transaction_type || 'Transaction'}
-                                </span>
-                              </td>
-                              <td className="px-5 py-3.5 text-right font-semibold text-gray-900 text-[13px]">{formatMoney(isDebit ? transaction.amount : 0)}{isDebit && <EditedAmountBadge record={transaction} className="ml-1.5" />}</td>
-                              <td className="px-5 py-3.5 text-right font-semibold text-emerald-700 text-[13px]">{formatMoney(isCredit ? transaction.amount : 0)}{isCredit && <EditedAmountBadge record={transaction} className="ml-1.5" />}</td>
-                              <td className="px-5 py-3.5 text-right font-semibold text-rose-700 text-[13px]">{formatMoney(transaction.amount)}</td>
-                            </tr>
-                          );
-                        });
-                      })()
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              {!transactionsLoading && clientTransactions.length > TX_PAGE_SIZE && (() => {
-                const txTotalPages = Math.ceil(clientTransactions.length / TX_PAGE_SIZE);
-                const safePage = Math.min(txPage, txTotalPages);
-                const txStart = (safePage - 1) * TX_PAGE_SIZE;
-                return (
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-4 py-3 @xl:px-5">
-                    <p className="text-xs text-gray-400">
-                      Showing {txStart + 1}â€“{Math.min(txStart + TX_PAGE_SIZE, clientTransactions.length)} of {clientTransactions.length}
-                    </p>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setTxPage((p) => Math.max(1, p - 1))}
-                        disabled={safePage === 1}
-                        className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <ArrowLeft className="h-3.5 w-3.5" /> Prev
-                      </button>
-                      <span className="text-center text-xs text-gray-400">
-                        Page {safePage} of {txTotalPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setTxPage((p) => Math.min(txTotalPages, p + 1))}
-                        disabled={safePage === txTotalPages}
-                        className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Next <ArrowRight className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
+            <StatementPreview
+              data={statementPreview}
+              loading={statementPreviewLoading}
+              error={statementPreviewError}
+              clientName={billedToName}
+              start={statementStartDate}
+              end={statementEndDate}
+            />
           </div>
         );
 
