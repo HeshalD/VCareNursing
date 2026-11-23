@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import { Link } from 'react-router-dom';
 import { Download, Loader2, Maximize2, Printer, Send, X } from 'lucide-react';
 import apiClient from '../../../api/api';
-import DateInput from '../../../components/common/DateInput';
+import DateRangePicker from '../../../components/common/DateRangePicker';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import StatementPreview from './StatementPreview';
 
@@ -195,12 +195,14 @@ const ClientStatementSection = ({
   // screen (dimmed) while the next one loads.
   useEffect(() => {
     if (!clientId) return undefined;
-    if (!startDate || !endDate || startDate > endDate) {
+    if (startDate && endDate && startDate > endDate) {
       setPreview(null);
       setShown(null);
-      setPreviewError(startDate > endDate ? 'The start date is after the end date.' : '');
+      setPreviewError('The start date is after the end date.');
       return undefined;
     }
+    // A custom range is picked in two clicks: until both ends are chosen, keep what is on screen.
+    if (!startDate || !endDate) return undefined;
     let cancelled = false;
     setPreviewLoading(true);
     setPreviewError('');
@@ -299,9 +301,6 @@ const ClientStatementSection = ({
   const netTone = net == null || net === 0 ? 'text-slate-900' : net < 0 ? 'text-rose-700' : 'text-emerald-700';
   const overdueText = ['emerald', 'slate'].includes(overdueTone) ? 'text-slate-900' : 'text-amber-700';
 
-  const inputCls = (bad) => `h-10 w-full rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 ${bad ? 'border-red-500 focus:border-red-500 focus:ring-red-100' : 'border-slate-300 focus:border-blue-500 focus:ring-blue-100'}`;
-  const startId = `${titleId}-start`;
-  const endId = `${titleId}-end`;
 
   return (
     <div className="@container space-y-4">
@@ -315,9 +314,9 @@ const ClientStatementSection = ({
         </p>
       </div>
 
-      <div className="flex flex-col items-stretch gap-3 @sm:flex-row @sm:items-start @2xl:gap-5">
-        {/* ── left panel: narrow, the preview takes the rest ── */}
-        <div className="flex w-full flex-none flex-col gap-3 @sm:w-[190px] @2xl:sticky @2xl:top-4 @2xl:w-[260px] @2xl:gap-4 @4xl:w-[330px]">
+      <div className="flex flex-col gap-4">
+        {/* ── top row: billed to / period / actions on the left, client overview on the right ── */}
+        <div className="grid items-start gap-3 @sm:grid-cols-2 @2xl:gap-5">
           <div className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-3 @2xl:p-[18px]">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Billed to</div>
@@ -345,27 +344,17 @@ const ClientStatementSection = ({
               </div>
 
               {preset === 'custom' && (
-                <div className="mt-3 grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label htmlFor={startId} className="text-[13px] font-semibold text-slate-600">Start</label>
-                    <DateInput
-                      id={startId}
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      aria-invalid={rangeReversed}
-                      className={`mt-1 ${inputCls(rangeReversed)}`}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor={endId} className="text-[13px] font-semibold text-slate-600">End</label>
-                    <DateInput
-                      id={endId}
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      aria-invalid={rangeReversed}
-                      className={`mt-1 ${inputCls(rangeReversed)}`}
-                    />
-                  </div>
+                <div className="mt-3">
+                  <DateRangePicker
+                    startDate={startDate}
+                    endDate={endDate}
+                    onChange={({ startDate: s, endDate: e }) => { setStartDate(s); setEndDate(e); }}
+                    theme="blue"
+                    allowPast
+                    endRequired
+                    quickEnds={false}
+                    compact
+                  />
                 </div>
               )}
 
@@ -441,8 +430,8 @@ const ClientStatementSection = ({
           </div>
         </div>
 
-        {/* ── preview: the real StatementPreview, scaled to fit ── */}
-        <div className="min-w-0 flex-1">
+        {/* ── preview: the real StatementPreview, scaled to fit the full width ── */}
+        <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div className="flex flex-wrap items-baseline gap-x-2.5">
               <b className="text-[15px] text-slate-900">Preview</b>

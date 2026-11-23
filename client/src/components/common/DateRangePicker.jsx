@@ -28,6 +28,11 @@ const fmt = (iso) => {
 
 // Full class strings so Tailwind can see them; one set per booking-page accent
 const THEMES = {
+  blue: {
+    soft: 'bg-blue-50', stripR: 'to-blue-50', solid: 'bg-blue-600 hover:bg-blue-700', hoverDay: 'hover:bg-blue-100',
+    ring: 'ring-blue-400', focus: 'focus:ring-blue-500', icon: 'text-blue-600', label: 'text-blue-700',
+    navHover: 'hover:bg-blue-50', chip: 'hover:bg-blue-100 hover:text-blue-800',
+  },
   amber: {
     soft: 'bg-amber-50', stripR: 'to-amber-50', solid: 'bg-amber-600 hover:bg-amber-700', hoverDay: 'hover:bg-amber-100',
     ring: 'ring-amber-400', focus: 'focus:ring-amber-500', icon: 'text-amber-600', label: 'text-amber-700',
@@ -73,7 +78,7 @@ const SURFACES = {
   },
 };
 
-const MonthGrid = ({ year, month, today, start, end, hover, onPick, onHover, t }) => {
+const MonthGrid = ({ year, month, today, start, end, hover, onPick, onHover, t, allowPast }) => {
   const first = new Date(year, month, 1);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const cells = [];
@@ -95,7 +100,7 @@ const MonthGrid = ({ year, month, today, start, end, hover, onPick, onHover, t }
       <div className="grid grid-cols-7">
         {cells.map((d, i) => {
           if (!d) return <span key={`e${i}`} />;
-          const disabled = d < today;
+          const disabled = !allowPast && d < today;
           const isStart = start && d.getTime() === start.getTime();
           const isEnd = end && d.getTime() === end.getTime();
           const inRange = start && rangeEnd && d > start && d < rangeEnd;
@@ -137,8 +142,19 @@ const MonthGrid = ({ year, month, today, start, end, hover, onPick, onHover, t }
  * any day after the start. Values are ISO (YYYY-MM-DD) strings.
  *
  * Props: startDate, endDate, onChange({ startDate, endDate }), label?, error?
+ *
+ * Defaults are for booking pages (future dates, optional end). Admin pages that pick a period in the
+ * past (statements, reports) switch these on; every one defaults to the original behaviour:
+ *   allowPast    past days can be picked and the calendar can page back before this month
+ *   endRequired  the end date is mandatory (the dialog cannot be closed with Done until it is set) and
+ *                a range can be a single day (click the start day again)
+ *   quickEnds    show the "1 week / 2 weeks / 1 month / 3 months" quick end dates (default true)
+ *   compact      one month instead of two and a smaller trigger, for narrow columns
  */
-export default function DateRangePicker({ startDate, endDate, onChange, disabled = false, theme = 'amber', dark = false }) {
+export default function DateRangePicker({
+  startDate, endDate, onChange, disabled = false, theme = 'amber', dark = false,
+  allowPast = false, endRequired = false, quickEnds = true, compact = false,
+}) {
   const surface = dark ? SURFACES.dark : SURFACES.light;
   const accent = THEMES[theme] || THEMES.amber;
   const t = { ...accent };
@@ -177,17 +193,20 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
       setHover(null);
       return;
     }
-    if (d.getTime() === start.getTime()) return;
+    if (d.getTime() === start.getTime()) {
+      if (endRequired) { emit(start, d); setOpen(false); }
+      return;
+    }
     if (d < start) { emit(d, null); return; }
     emit(start, d);
     setOpen(false);
   };
 
   const shiftView = (n) => setView(v => new Date(v.getFullYear(), v.getMonth() + n, 1));
-  const canGoBack = view > new Date(today.getFullYear(), today.getMonth(), 1);
+  const canGoBack = allowPast || view > new Date(today.getFullYear(), today.getMonth(), 1);
   const second = new Date(view.getFullYear(), view.getMonth() + 1, 1);
 
-  const presets = start ? [
+  const presets = start && quickEnds ? [
     { label: '1 week', date: addDays(start, 7) },
     { label: '2 weeks', date: addDays(start, 14) },
     { label: '1 month', date: addMonths(start, 1) },
@@ -195,8 +214,8 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
   ] : [];
 
   const summary = start
-    ? `${fmt(startDate)}  →  ${end ? fmt(endDate) : 'No end date'}`
-    : 'Select start date (and end date, optional)';
+    ? `${fmt(startDate)}  →  ${end ? fmt(endDate) : (endRequired ? 'Pick an end date' : 'No end date')}`
+    : endRequired ? 'Select start and end dates' : 'Select start date (and end date, optional)';
 
   return (
     <div ref={wrapRef} className="relative">
@@ -204,19 +223,19 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
         type="button"
         disabled={disabled}
         onClick={() => setOpen(o => !o)}
-        className={`w-full px-4 py-3 border rounded-xl ${t.trigger} focus:ring-2 ${t.focus} outline-none text-left flex items-center justify-between gap-3 disabled:opacity-60`}
+        className={`w-full border ${compact ? 'min-h-[40px] rounded-md px-3 py-2 text-[13px]' : 'rounded-xl px-4 py-3'} ${t.trigger} focus:ring-2 ${t.focus} outline-none text-left flex items-center justify-between gap-3 disabled:opacity-60`}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <span className={start ? t.filled : t.empty}>{summary}</span>
-        <CalendarIcon className={`w-5 h-5 ${t.icon} flex-shrink-0`} />
+        <span className={`min-w-0 ${start ? t.filled : t.empty}`}>{summary}</span>
+        <CalendarIcon className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} ${t.icon} flex-shrink-0`} />
       </button>
 
       {open && (
         <div
           role="dialog"
           aria-label="Choose start and end dates"
-          className={`absolute z-40 mt-2 left-0 border rounded-3xl shadow-2xl p-4 sm:p-6 max-w-[calc(100vw-2rem)] ${t.panel}`}
+          className={`absolute z-40 mt-2 left-0 border shadow-2xl max-w-[calc(100vw-2rem)] ${compact ? 'rounded-2xl p-4' : 'rounded-3xl p-4 sm:p-6'} ${t.panel}`}
           onMouseLeave={() => setHover(null)}
         >
           <div className="flex items-center justify-between mb-4 gap-4">
@@ -230,7 +249,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
               <ChevronLeft className="w-5 h-5" />
             </button>
             <p className={`text-xs font-semibold uppercase tracking-wider ${t.label}`}>
-              {!start ? 'Pick a start date' : end ? 'Range selected' : 'Pick an end date (optional)'}
+              {!start ? 'Pick a start date' : end ? 'Range selected' : (endRequired ? 'Pick an end date' : 'Pick an end date (optional)')}
             </p>
             <button
               type="button"
@@ -243,9 +262,9 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
           </div>
 
           <div className="flex gap-8">
-            <MonthGrid year={view.getFullYear()} month={view.getMonth()} today={today} start={start} end={end} hover={hover} onPick={pick} onHover={setHover} t={t} />
-            <div className="hidden sm:block">
-              <MonthGrid year={second.getFullYear()} month={second.getMonth()} today={today} start={start} end={end} hover={hover} onPick={pick} onHover={setHover} t={t} />
+            <MonthGrid year={view.getFullYear()} month={view.getMonth()} today={today} start={start} end={end} hover={hover} onPick={pick} onHover={setHover} t={t} allowPast={allowPast} />
+            <div className={compact ? 'hidden' : 'hidden sm:block'}>
+              <MonthGrid year={second.getFullYear()} month={second.getMonth()} today={today} start={start} end={end} hover={hover} onPick={pick} onHover={setHover} t={t} allowPast={allowPast} />
             </div>
           </div>
 
@@ -267,7 +286,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
             </div>
           )}
 
-          <div className="mt-4 flex items-center justify-between gap-3">
+          <div className={`mt-4 flex items-center justify-between gap-3 ${compact ? 'flex-wrap' : ''}`}>
             <div className={`text-sm ${t.summary}`}>
               {start ? <><span className={`font-semibold ${t.strong}`}>{fmt(startDate)}</span>{end ? <> to <span className={`font-semibold ${t.strong}`}>{fmt(endDate)}</span></> : ' · no end date'}</> : 'No dates selected'}
             </div>
@@ -281,7 +300,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
                   Clear dates
                 </button>
               )}
-              {end && (
+              {end && !endRequired && (
                 <button
                   type="button"
                   onClick={() => emit(start, null)}
@@ -293,7 +312,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, disabled
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                disabled={!start}
+                disabled={!start || (endRequired && !end)}
                 className={`px-5 py-2 rounded-xl text-sm font-bold ${t.solid} text-white disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 Done
