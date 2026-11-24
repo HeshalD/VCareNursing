@@ -1055,14 +1055,15 @@ const convertToBookingInternal = async (req, res) => {
             // Prefer the emergency contact(s) captured on the request itself;
             // fall back to the payer's own name/number when none were given.
             const newPatient = await client.query(
-                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, is_registration_fee_paid, special_remarks, residential_address, emergency_contact_name, emergency_contact_number)
-                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $11, $7, $8, $9, $10) RETURNING patient_id`,
+                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, is_registration_fee_paid, special_remarks, residential_address, emergency_contact_name, emergency_contact_number, honorific)
+                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $11, $7, $8, $9, $10, $12) RETURNING patient_id`,
                 [
                     clientProfileId, reqData.patient_name, reqData.patient_age, reqData.gender || null,
                     reqData.relationship_to_client, reqData.patient_condition, reqData.remarks, reqData.location_address,
                     reqData.emergency_contact_name || reqData.payer_name,
                     reqData.emergency_contact_number || reqData.payer_mobile,
                     registrationFeeAmount <= 0, // with a fee, flipped to TRUE once it is actually settled
+                    reqData.patient_honorific || null,
                 ]
             );
             patientId = newPatient.rows[0].patient_id;
@@ -1488,10 +1489,16 @@ exports.getAdminBookingDetail = async (req, res) => {
 
         const [paymentHistoryResult, financialTotalsResult, assignmentHistoryResult, swapHistoryResult, terminationHistoryResult, invoiceSummaryResult, hospitalizationHistoryResult] = await Promise.all([
             db.query(
-                `SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
-                 FROM booking_payment_tracking
-                 WHERE booking_id = $1
-                 ORDER BY payment_date DESC`,
+                `SELECT bpt.booking_payment_id as payment_id, 'BOOKING'::text as source_type, bpt.amount_received, bpt.payment_method, bpt.bank_account_id,
+                        ba.account_nickname AS bank_account_name, ba.bank_name AS bank_account_bank,
+                        bpt.cheque_number, bpt.cheque_date, bpt.reference_number, bpt.slip_url, bpt.status, bpt.payment_date, bpt.verified_at, bpt.verified_by, bpt.notes,
+                        EXISTS (SELECT 1 FROM payment_receipts r
+                                 WHERE r.source_type = 'BOOKING_PAYMENT' AND r.source_id = bpt.booking_payment_id
+                                   AND r.voided_at IS NOT NULL) AS was_edited
+                 FROM booking_payment_tracking bpt
+                 LEFT JOIN bank_accounts ba ON ba.account_id = bpt.bank_account_id
+                 WHERE bpt.booking_id = $1
+                 ORDER BY bpt.payment_date DESC`,
                 [booking_id]
             ),
                         getBookingFinancialTotals(db, booking_id),
@@ -1689,6 +1696,17 @@ exports.getAdminBookingDetail = async (req, res) => {
                 } : null,
                 payment_summary: {
                     payment_count: paymentHistoryResult.rows.length,
+                    // Money actually received from the client (bank/cash/cheque) vs wallet
+                    // balance auto-applied to invoices. The history table lists these apart.
+                    last_payment_at: paymentHistoryResult.rows
+                        .filter(r => r.status === 'VERIFIED' && r.payment_method !== 'WALLET')
+                        .map(r => r.payment_date).sort((x, y) => new Date(y) - new Date(x))[0] || null,
+                    payments_received_total: paymentHistoryResult.rows
+                        .filter(r => r.status === 'VERIFIED' && r.payment_method !== 'WALLET')
+                        .reduce((t, r) => t + parseFloat(r.amount_received || 0), 0),
+                    wallet_applied_total: paymentHistoryResult.rows
+                        .filter(r => r.status === 'VERIFIED' && r.payment_method === 'WALLET')
+                        .reduce((t, r) => t + parseFloat(r.amount_received || 0), 0),
                     total_paid: walletAvailable,
                     // What the booking's own ledger has settled (same rule/source as
                     // invoice_summary.total_invoiced). total_paid above is wallet money
@@ -5904,7 +5922,8 @@ exports.adminDirectBooking = async (req, res) => {
                 coordinatorStaffId = callerStaffId;
             } else if (existingCoordinatorId === callerStaffId) {
                 coordinatorStaffId = callerStaffId;
-            } else if (coordinator_action === 'KEEP') {
+            } else if (coordinator_action !== 'REASSIGN' || !(await userHasPermission(req.user, 'SERVICE_REQUEST_REASSIGN_SALESPERSON'))) {
+                // The client's salesperson stays; taking over needs the reassign permission.
                 coordinatorStaffId = existingCoordinatorId;
             } else {
                 await dbClient.query(`UPDATE client_profiles SET coordinator_staff_id = $1 WHERE client_profile_id = $2`, [callerStaffId, client_profile_id]);

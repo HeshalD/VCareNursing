@@ -162,7 +162,7 @@ const getBookingReceipts = async (req, res) => {
         const result = await db.query(
             `SELECT r.receipt_id, r.receipt_code, r.total_amount, r.payment_method,
                     r.payment_date, r.pdf_url, r.whatsapp_sent, r.whatsapp_sent_at,
-                    r.send_error, r.created_at, bpt.booking_payment_id
+                    r.send_error, r.created_at, bpt.booking_payment_id, NULL::numeric AS allocated_amount
              FROM payment_receipts r
              JOIN booking_payment_tracking bpt
                ON (r.source_type = 'BOOKING_PAYMENT' AND bpt.booking_payment_id = r.source_id)
@@ -171,7 +171,7 @@ const getBookingReceipts = async (req, res) => {
              UNION
              SELECT r.receipt_id, r.receipt_code, r.total_amount, r.payment_method,
                     r.payment_date, r.pdf_url, r.whatsapp_sent, r.whatsapp_sent_at,
-                    r.send_error, r.created_at, cpa.booking_payment_id
+                    r.send_error, r.created_at, cpa.booking_payment_id, cpa.amount AS allocated_amount
              FROM payment_receipts r
              JOIN client_payment_allocations cpa
                ON r.source_type = 'CLIENT_PAYMENT' AND cpa.record_id = r.source_id
@@ -531,7 +531,86 @@ const deleteReceiptPaymentHandler = (dryRun) => async (req, res) => {
     }
 };
 
+// =========================================================
+// POST /api/payment-receipts/:receipt_id/regenerate
+// Re-renders the PDF of a receipt whose first attempt failed (stuck "Generating…").
+// =========================================================
+const regenerateReceiptPdf = async (req, res) => {
+    try {
+        const { receipt_id } = req.params;
+        if (!uuidRegex.test(receipt_id)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid receipt_id format' });
+        }
+        const found = await db.query('SELECT * FROM payment_receipts WHERE receipt_id = $1', [receipt_id]);
+        if (found.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Receipt not found' });
+        if (found.rows[0].voided_at) {
+            return res.status(409).json({ status: 'error', message: 'This receipt was voided and replaced.' });
+        }
+        const pdfUrl = await generateReceiptPdf(found.rows[0]);
+        return res.status(200).json({ status: 'success', pdf_url: pdfUrl });
+    } catch (err) {
+        console.error('regenerateReceiptPdf error:', err);
+        return res.status(502).json({ status: 'error', message: 'Failed to generate receipt PDF' });
+    }
+};
+
+// =========================================================
+// POST /api/payment-receipts/booking-payment/:booking_payment_id/generate
+// Creates the receipt for a booking payment that never got one (e.g. product-invoice
+// payments posted onto a booking). Idempotent: returns the existing receipt if there is one.
+// =========================================================
+const generateForBookingPayment = async (req, res) => {
+    try {
+        const { booking_payment_id } = req.params;
+        if (!uuidRegex.test(booking_payment_id)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid booking_payment_id format' });
+        }
+        const existing = await db.query(
+            `SELECT * FROM payment_receipts WHERE source_type = 'BOOKING_PAYMENT' AND source_id = $1 AND voided_at IS NULL LIMIT 1`,
+            [booking_payment_id]
+        );
+        if (existing.rows.length > 0) {
+            return res.status(200).json({ status: 'success', receipt: existing.rows[0], created: false });
+        }
+        const pay = await db.query(
+            `SELECT bpt.*, b.booking_code, b.service_type
+             FROM booking_payment_tracking bpt JOIN bookings b ON b.booking_id = bpt.booking_id
+             WHERE bpt.booking_payment_id = $1`,
+            [booking_payment_id]
+        );
+        if (pay.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Payment not found' });
+        const p = pay.rows[0];
+        if (p.payment_method === 'WALLET') {
+            return res.status(400).json({ status: 'error', message: 'Wallet applications do not get a receipt.' });
+        }
+        const { createPaymentReceipt } = require('../services/receiptService');
+        const receipt = await createPaymentReceipt({
+            client_id: p.client_id,
+            source_type: 'BOOKING_PAYMENT',
+            source_id: p.booking_payment_id,
+            total_amount: parseFloat(p.amount_received),
+            payment_method: p.payment_method,
+            reference_number: p.reference_number || null,
+            cheque_number: p.cheque_number || null,
+            bank_account_id: p.bank_account_id || null,
+            payment_date: p.payment_date || null,
+            line_items: [{
+                label: `Booking ${p.booking_code || ''}`.trim(),
+                description: p.notes || String(p.service_type || '').replace(/_/g, ' '),
+                amount: parseFloat(p.amount_received),
+            }],
+            generated_by: req.user?.user_id || null,
+        });
+        if (!receipt) return res.status(500).json({ status: 'error', message: 'Failed to create receipt' });
+        return res.status(201).json({ status: 'success', receipt, created: true });
+    } catch (err) {
+        console.error('generateForBookingPayment error:', err);
+        return res.status(500).json({ status: 'error', message: err.message || 'Server error' });
+    }
+};
+
 module.exports = {
+    regenerateReceiptPdf, generateForBookingPayment,
     getAllReceipts, getClientReceipts, getBookingReceipts, getReceipt, sendReceiptWhatsApp,
     deleteReceiptPayment: deleteReceiptPaymentHandler(false),
     previewDeleteReceiptPayment: deleteReceiptPaymentHandler(true),

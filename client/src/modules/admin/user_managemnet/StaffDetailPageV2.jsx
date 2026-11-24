@@ -10,6 +10,7 @@ import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
   BadgeDollarSign,
@@ -62,6 +63,7 @@ import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../act
 import BankSelect from '../../../components/common/BankSelect';
 import CitySelect from '../../../components/common/CitySelect';
 import EditedAmountBadge from '../components/EditedAmountBadge';
+import Popup from '../../../components/common/Popup';
 import { ClientLink, PatientLink } from '../components/EntityLinks';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -650,6 +652,13 @@ const StaffDetailPageV2 = () => {
   const [deductions, setDeductions] = useState([]);
   const [deductionForm, setDeductionForm] = useState({ amount: '', reason: '' });
   const [deductionSubmitting, setDeductionSubmitting] = useState(false);
+  const [overAdvances, setOverAdvances] = useState([]);
+  const [overAdvanceForm, setOverAdvanceForm] = useState({ amount: '', reason: '' });
+  const [overAdvanceConfirmOpen, setOverAdvanceConfirmOpen] = useState(false);
+  const [overAdvancePassword, setOverAdvancePassword] = useState('');
+  const [overAdvanceSubmitting, setOverAdvanceSubmitting] = useState(false);
+  const [overAdvanceError, setOverAdvanceError] = useState('');
+  const [overAdvanceSuccess, setOverAdvanceSuccess] = useState('');
   const [deductionError, setDeductionError] = useState('');
   const [deductionSuccess, setDeductionSuccess] = useState('');
   const [bonuses, setBonuses] = useState([]);
@@ -820,6 +829,13 @@ const StaffDetailPageV2 = () => {
 
     if (bonusesRes.status === 'fulfilled') setBonuses(safeArray(bonusesRes.value?.data));
     else nextErrors.bonuses = bonusesRes.reason?.message;
+
+    try {
+      const overRes = await runAdminRequest(() => apiClient.getStaffOverAdvances(staffProfileId));
+      setOverAdvances(safeArray(overRes?.data));
+    } catch {
+      setOverAdvances([]);
+    }
 
     if (attendanceCalendarRes.status === 'fulfilled') {
       const cal = attendanceCalendarRes.value?.data || {};
@@ -1108,6 +1124,46 @@ const StaffDetailPageV2 = () => {
       setDeductionError(err?.message || 'Failed to apply deduction');
     } finally {
       setDeductionSubmitting(false);
+    }
+  };
+
+  const startOverAdvance = (e) => {
+    e.preventDefault();
+    setOverAdvanceError('');
+    setOverAdvanceSuccess('');
+    const amt = Number(overAdvanceForm.amount);
+    if (!Number.isFinite(amt) || amt <= 0) { setOverAdvanceError('Enter a valid amount.'); return; }
+    if (!overAdvanceForm.reason.trim()) { setOverAdvanceError('Enter a reason.'); return; }
+    setOverAdvancePassword('');
+    setOverAdvanceConfirmOpen(true);
+  };
+
+  const closeOverAdvanceConfirm = () => {
+    if (overAdvanceSubmitting) return;
+    setOverAdvanceConfirmOpen(false);
+    setOverAdvancePassword('');
+  };
+
+  const confirmOverAdvance = async () => {
+    if (overAdvanceSubmitting) return;
+    if (!overAdvancePassword) { setOverAdvanceError('Enter your password to confirm.'); return; }
+    setOverAdvanceError('');
+    try {
+      setOverAdvanceSubmitting(true);
+      await runAdminRequest(() => apiClient.giveOverAdvance(staffProfileId, {
+        amount: Number(overAdvanceForm.amount),
+        reason: overAdvanceForm.reason.trim(),
+        password: overAdvancePassword,
+      }));
+      setOverAdvanceConfirmOpen(false);
+      setOverAdvancePassword('');
+      setOverAdvanceForm({ amount: '', reason: '' });
+      setOverAdvanceSuccess('Over advance recorded. No message was sent to the staff member.');
+      await loadPage();
+    } catch (err) {
+      setOverAdvanceError(err?.message || 'Failed to record over advance');
+    } finally {
+      setOverAdvanceSubmitting(false);
     }
   };
 
@@ -2134,6 +2190,104 @@ const StaffDetailPageV2 = () => {
             </form>
           </CardBody>
         </Card>
+
+        {hasPermission('ADVANCE_OVER_GIVE') && (
+          <Card>
+            <CardHead title="Give over advance" sub="Advance beyond what this staff member has earned. Ignores the advance threshold and earnings limit; the balance goes negative and is recovered from future earnings. No message is sent to the staff member." />
+            <CardBody>
+              <form onSubmit={startOverAdvance}>
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.5fr_auto] gap-3 items-end">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Amount (LKR)</label>
+                    <input
+                      type="number" min="0.01" step="0.01" value={overAdvanceForm.amount}
+                      onChange={e => { setOverAdvanceForm(f => ({ ...f, amount: e.target.value })); setOverAdvanceError(''); setOverAdvanceSuccess(''); }}
+                      onWheel={e => e.target.blur()}
+                      placeholder="0.00" className={inputCls} required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Reason</label>
+                    <input
+                      type="text" value={overAdvanceForm.reason}
+                      onChange={e => { setOverAdvanceForm(f => ({ ...f, reason: e.target.value })); setOverAdvanceError(''); setOverAdvanceSuccess(''); }}
+                      placeholder="e.g. Medical emergency, approved by management" className={inputCls} required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-500 transition-colors whitespace-nowrap"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Give over advance
+                  </button>
+                </div>
+                {Number(overAdvanceForm.amount) > 0 && (
+                  <div className="mt-3 text-xs text-slate-600">
+                    Current earnings {formatMoney(currentEarnings)}
+                    {Number(overAdvanceForm.amount) > Math.max(0, currentEarnings)
+                      ? <> — exceeds earnings by <span className="font-semibold text-red-600">{formatMoney(Number(overAdvanceForm.amount) - Math.max(0, currentEarnings))}</span>.</>
+                      : <> — within earnings.</>}
+                    {' '}Balance after: <span className={`font-semibold ${currentEarnings - Number(overAdvanceForm.amount) < 0 ? 'text-red-600' : 'text-slate-900'}`}>{formatMoney(currentEarnings - Number(overAdvanceForm.amount))}</span>
+                  </div>
+                )}
+                {overAdvanceError && !overAdvanceConfirmOpen && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">{overAdvanceError}</div>}
+                {overAdvanceSuccess && <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-sm text-emerald-700">{overAdvanceSuccess}</div>}
+              </form>
+            </CardBody>
+          </Card>
+        )}
+
+        {overAdvances.length > 0 && (
+          <Card>
+            <CardHead title="Over advance history" sub="Advances given beyond earnings. Shown as negative amounts." />
+            <CardBody className="p-0">
+              <div className="px-5 pb-5 pt-4">
+                <TableHead cols="1fr 1.6fr 1fr 1fr">
+                  <span>Date</span><span>Reason</span><span>Recorded by</span><span className="text-right">Amount</span>
+                </TableHead>
+                {overAdvances.map((o) => (
+                  <TableRow key={o.advance_id} cols="1fr 1.6fr 1fr 1fr">
+                    <div className="text-xs text-slate-500">{formatDateTime(o.created_at)}</div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      <span className="mr-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">Over advance</span>
+                      {o.reason || '-'}
+                    </div>
+                    <div className="text-sm text-slate-600">{o.recorded_by || 'Admin'}</div>
+                    <div className="text-right text-sm font-bold text-red-600">-{formatMoney(o.amount)}</div>
+                  </TableRow>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+        )}
+
+        <Popup
+          isOpen={overAdvanceConfirmOpen}
+          onClose={closeOverAdvanceConfirm}
+          variant="warning"
+          title="This is an OVER ADVANCE"
+          message={(
+            <div className="text-left">
+              <p className="text-center">
+                You are giving <b>{formatMoney(overAdvanceForm.amount)}</b> to <b>{profile.full_name || 'this staff member'}</b>, who currently has <b>{formatMoney(currentEarnings)}</b> in earnings.
+                This ignores the advance limits and takes their balance to{' '}
+                <b className={currentEarnings - Number(overAdvanceForm.amount) < 0 ? 'text-red-600' : ''}>{formatMoney(currentEarnings - Number(overAdvanceForm.amount))}</b>.
+                Are you sure?
+              </p>
+              <label className="mt-4 block text-xs font-semibold text-slate-500 mb-1">Enter your password to confirm</label>
+              <input
+                type="password" autoFocus autoComplete="current-password" value={overAdvancePassword}
+                onChange={e => { setOverAdvancePassword(e.target.value); setOverAdvanceError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmOverAdvance(); } }}
+                className={inputCls} placeholder="Your password"
+              />
+              {overAdvanceError && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{overAdvanceError}</div>}
+            </div>
+          )}
+          secondaryAction={{ label: 'Cancel', onClick: closeOverAdvanceConfirm }}
+          primaryAction={{ label: overAdvanceSubmitting ? 'Recording…' : 'Yes, give over advance', onClick: confirmOverAdvance }}
+        />
 
         <Card>
           <CardHead title="Deduction history" />

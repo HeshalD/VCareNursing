@@ -28,29 +28,29 @@ test('Zoho statement is reproduced exactly', () => {
   assert.equal(payment.balance, -212638);
 
   // The payment settles 30 old invoices, 6 current ones, and leaves 212,638 as credit.
-  assert.equal(payment.annotations.length, 30 + 6 + 1);
-  assert.equal(payment.annotations[0], 'LKR3,562.00 for payment of INV-155488');
-  assert.equal(payment.annotations[1], 'LKR3,800.00 for payment of INV-155653');
-  assert.equal(payment.annotations[29], 'LKR3,800.00 for payment of INV-161142');
-  assert.equal(payment.annotations[30], 'LKR4,500.00 for payment of INV-161372');
-  assert.equal(payment.annotations[35], 'LKR4,500.00 for payment of INV-162269');
-  assert.equal(payment.annotations[36], 'LKR212,638.00 in excess payments');
+  assert.equal(payment.allocations.length, 30 + 6 + 1);
+  assert.equal(payment.allocations[0], 'LKR3,562.00 for payment of INV-155488');
+  assert.equal(payment.allocations[1], 'LKR3,800.00 for payment of INV-155653');
+  assert.equal(payment.allocations[29], 'LKR3,800.00 for payment of INV-161142');
+  assert.equal(payment.allocations[30], 'LKR4,500.00 for payment of INV-161372');
+  assert.equal(payment.allocations[35], 'LKR4,500.00 for payment of INV-162269');
+  assert.equal(payment.allocations[36], 'LKR212,638.00 in excess payments');
 
   // Invoice 07 Jul is paid from the credit, and the balance runs down as in Zoho.
   const jul7 = L.find((r) => r.doc_number === 'INV-162453');
-  assert.deepEqual(jul7.annotations, ['LKR4,500.00 from payment 16756']);
+  assert.deepEqual(jul7.allocations, ['LKR4,500.00 from payment 16756']);
   assert.equal(jul7.balance, -208138);
-  assert.match(jul7.details, /^INV-162453 - due on 07 Jul 2026\n/);
+  assert.match(jul7.details, /^Care service - 07 Jul 2026\nInvoice INV-162453/);
 
   // 22 Aug leaves 1,138 of credit; 23 Aug uses it up and goes positive.
   const aug22 = L.find((r) => r.date === '2026-08-22');
   assert.equal(aug22.balance, -1138);
   const aug23 = L.find((r) => r.doc_number === 'INV-172137');
-  assert.deepEqual(aug23.annotations, ['LKR1,138.00 from payment 16756']);
+  assert.deepEqual(aug23.allocations, ['LKR1,138.00 from payment 16756']);
   assert.equal(aug23.balance, 3362);
   // From 24 Aug nothing is left to apply.
   const aug24 = L.find((r) => r.date === '2026-08-24');
-  assert.deepEqual(aug24.annotations, []);
+  assert.deepEqual(aug24.allocations, []);
   assert.equal(L[L.length - 1].balance, 39362);
 });
 
@@ -62,7 +62,7 @@ test('an invoice is listed before a payment made the same day, and that payment 
   const s = buildStatement(rows, { start: '2026-07-01', end: '2026-07-31' });
   assert.deepEqual(s.ledger.map((r) => r.row_type), ['INVOICE', 'PAYMENT']);
   assert.equal(s.balance, 0);
-  assert.deepEqual(s.ledger[1].annotations, ['LKR4,500.00 for payment of INV-1']);
+  assert.deepEqual(s.ledger[1].allocations, ['LKR4,500.00 for payment of INV-1']);
 });
 
 test('opening balance counts everything before the period start, nothing after the end', () => {
@@ -115,7 +115,7 @@ test('a prepayment is consumed by later invoices, and a draw does not make it co
   assert.equal(s.paid, 10000);
   assert.equal(s.invoiced, 9000);
   assert.equal(s.balance, -1000); // Rs.1,000 of credit left, not Rs.10,000
-  assert.deepEqual(s.ledger[1].annotations, ['LKR4,500.00 from payment RCP-1']);
+  assert.deepEqual(s.ledger[1].allocations, ['LKR4,500.00 from payment RCP-1']);
 });
 
 test('credit notes name and cancel the invoice they reverse; unpaid reversal nets to zero', () => {
@@ -128,10 +128,10 @@ test('credit notes name and cancel the invoice they reverse; unpaid reversal net
   const s = buildStatement(classify([inv, cn]), { start: '2026-11-01', end: '2026-11-30' });
   assert.equal(s.balance, 0);
   const row = s.ledger[1];
-  assert.equal(row.label, 'Credit Note');
+  assert.equal(row.label, 'Invoice Cancelled');
   assert.equal(row.doc_number, 'CN-0028041');
-  assert.match(row.details, /^Credit note for INV-7 \(service day 05 Nov 2026\)\nNopay/);
-  assert.deepEqual(row.annotations, []);
+  assert.match(row.details, /^Invoice INV-7 cancelled \(care on 05 Nov 2026\)\nNopay/);
+  assert.deepEqual(row.allocations, []);
 });
 
 test('payments sharing one receipt are shown as one payment', () => {
@@ -159,8 +159,8 @@ test('one transfer booked as several ledger entries is ONE payment row (Esther A
   assert.equal(pays[0].amount_paid, 29800);
   assert.equal(pays[0].doc_number, 'RCP-0000024'); // the receipt wins over the TR code
   assert.equal(pays[0].transaction_ids.length, 2);
-  assert.deepEqual(pays[0].annotations, ['LKR29,800.00 in excess payments']);
-  assert.deepEqual(s.ledger[1].annotations, ['LKR1,000.00 from payment RCP-0000024']);
+  assert.deepEqual(pays[0].allocations, ['LKR29,800.00 in excess payments']);
+  assert.deepEqual(s.ledger[1].allocations, ['LKR1,000.00 from payment RCP-0000024']);
   assert.equal(s.paid, 29800);
 });
 
@@ -190,14 +190,14 @@ test('booking codes: always on the row, and on allocation lines only for multi-b
     raw({ eff_date: '2026-11-02', category: 'WALLET_TOPUP', transaction_type: 'CREDIT', amount: 100, payment_method: 'CASH', receipt_code: 'R1' }),
   ]), { start: '2026-11-01', end: '2026-11-30' });
   assert.match(one.ledger[0].details, /Booking BK-00001/);
-  assert.deepEqual(one.ledger[1].annotations, ['LKR100.00 for payment of INV-1']);
+  assert.deepEqual(one.ledger[1].allocations, ['LKR100.00 for payment of INV-1']);
 
   const many = buildStatement(classify([
     invoice('2026-11-01', 100, 'INV-1', { booking_code: 'BK-00001' }),
     invoice('2026-11-01', 100, 'INV-2', { booking_code: 'BK-00002' }),
     raw({ eff_date: '2026-11-02', category: 'WALLET_TOPUP', transaction_type: 'CREDIT', amount: 200, payment_method: 'CASH', receipt_code: 'R1' }),
   ]), { start: '2026-11-01', end: '2026-11-30' });
-  assert.deepEqual(many.ledger[2].annotations, ['LKR100.00 for payment of INV-1 (BK-00001)', 'LKR100.00 for payment of INV-2 (BK-00002)']);
+  assert.deepEqual(many.ledger[2].allocations, ['LKR100.00 for payment of INV-1 (BK-00001)', 'LKR100.00 for payment of INV-2 (BK-00002)']);
 });
 
 test('refund takes credit back out; adjustments keep their direction', () => {
@@ -218,4 +218,24 @@ test('date helpers: Sri Lanka calendar days and money format', () => {
   assert.equal(toColomboDay('2026-07-31T20:00:00Z'), '2026-08-01'); // 01:30 next day in Sri Lanka
   assert.equal(fmtMoney(-212638), '-212,638.00');
   assert.equal(fmtMoney(4500), '4,500.00');
+});
+
+test('plain wording; allocation lines are hidden unless asked for', () => {
+  const rows = () => classify([
+    invoice('2026-07-06', 4500, 'INV-1'),
+    raw({ eff_date: '2026-07-06', category: 'WALLET_TOPUP', transaction_type: 'CREDIT', amount: 6000, payment_method: 'BANK_TRANSFER', receipt_code: 'RCP-0000001' }),
+  ]);
+  const plain = buildStatement(rows(), { start: '2026-07-01', end: '2026-07-31' });
+  const [inv, pay] = plain.ledger;
+  assert.match(inv.details, /^Care service - 06 Jul 2026\nInvoice INV-1(\n|$)/);
+  assert.equal(pay.label, 'Payment Received');
+  assert.match(pay.details, /^Bank transfer - Receipt RCP-0000001(\n|$)/);
+  assert.deepEqual(pay.annotations, []);
+  assert.doesNotMatch(pay.details, /LKR|excess|for payment of/);
+  // the maths is unchanged and the allocation is still available
+  assert.equal(pay.balance, -1500);
+  assert.deepEqual(pay.allocations, ['LKR4,500.00 for payment of INV-1', 'LKR1,500.00 in excess payments']);
+  // the detailed version prints them
+  const detailed = buildStatement(rows(), { start: '2026-07-01', end: '2026-07-31' }, { showAllocations: true });
+  assert.match(detailed.ledger[1].details, /LKR4,500\.00 for payment of INV-1\nLKR1,500\.00 in excess payments$/);
 });

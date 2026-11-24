@@ -98,7 +98,7 @@ const LedgerRow = ({ entry }) => {
         ) : isAdvance ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
             <Wallet className="h-3 w-3" />
-            Advance
+            {entry.is_over_advance ? 'Over Advance' : 'Advance'}
           </span>
         ) : isRevocation ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
@@ -141,7 +141,10 @@ const LedgerRow = ({ entry }) => {
           </div>
         ) : isAdvance ? (
           <div>
-            <p className="text-sm font-medium text-slate-800">Salary Advance</p>
+            <p className="text-sm font-medium text-slate-800">{entry.is_over_advance ? 'Over Advance (beyond earnings)' : 'Salary Advance'}</p>
+            {entry.is_over_advance && entry.over_advance_reason && (
+              <p className="text-xs text-slate-500 italic">{entry.over_advance_reason}</p>
+            )}
             {entry.reviewed_by_name && (
               <p className="text-xs text-slate-400">Approved by: {entry.reviewed_by_name}</p>
             )}
@@ -249,6 +252,8 @@ export default function CurrentEarningsBreakdownPage() {
       transaction_type: 'DEBIT',
       amount: a.amount_requested,
       reviewed_by_name: a.reviewed_by_name,
+      is_over_advance: a.is_over_advance,
+      over_advance_reason: a.over_advance_reason,
       created_at: a.approved_at,
       running_balance: null,
     }));
@@ -597,7 +602,12 @@ export default function CurrentEarningsBreakdownPage() {
                       {data.advances.map((adv) => (
                         <tr key={adv.advance_id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 text-slate-700">{formatDate(adv.approved_at)}</td>
-                          <td className="px-4 py-3 font-semibold text-amber-700">{formatMoney(adv.amount_requested)}</td>
+                          <td className="px-4 py-3 font-semibold text-amber-700">
+                            {formatMoney(adv.amount_requested)}
+                            {adv.is_over_advance && (
+                              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">Over advance</span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-slate-500">{formatDate(adv.requested_at)}</td>
                           <td className="px-4 py-3 text-slate-600">{adv.reviewed_by_name || '-'}</td>
                         </tr>

@@ -504,6 +504,10 @@ class ApiClient {
 
 
 
+  async getServiceRequestWhatsappText(requestId) {
+    return this.request(`/service-requests/${requestId}/whatsapp-text`);
+  }
+
   async getServiceRequestById(requestId) {
 
     return this.request(`/service-requests/${requestId}`);
@@ -2104,6 +2108,14 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     return this.request(`/payment-receipts/${receiptId}/send`, { method: 'POST' });
   }
 
+  async regenerateReceiptPdf(receiptId) {
+    return this.request(`/payment-receipts/${receiptId}/regenerate`, { method: 'POST' });
+  }
+
+  async generateBookingPaymentReceipt(bookingPaymentId) {
+    return this.request(`/payment-receipts/booking-payment/${bookingPaymentId}/generate`, { method: 'POST' });
+  }
+
   // ── Service request coordinator ──
   async getAssignableCoordinators() {
     return this.request('/service-requests/coordinators');
@@ -2559,6 +2571,17 @@ Add the registration fee to the quotation, or settle it from the client page.`);
       method: 'POST',
       body: JSON.stringify({ reason }),
     });
+  }
+
+  async giveOverAdvance(staffProfileId, payload) {
+    return this.request(`/staff-wallet/give-over-advance/${staffProfileId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getStaffOverAdvances(staffProfileId) {
+    return this.request(`/staff-wallet/over-advances/${staffProfileId}`);
   }
 
   async updateAdvanceThreshold(staffProfileId, thresholdData) {

@@ -10,6 +10,8 @@ const {
   getAllAdvances,
   updateAdvanceThreshold,
   getPendingAdvances,
+  giveOverAdvance,
+  getStaffOverAdvances,
   getMyCurrentEarningsBreakdown,
   getMySalarySheets,
   getMyCareHistory,
@@ -29,5 +31,7 @@ router.post('/approve-advance/:advanceId', protect, requirePermission('ADVANCE_A
 router.post('/reject-advance/:advanceId', protect, requirePermission('ADVANCE_REJECT'), rejectAdvance);
 router.patch('/threshold/:staffProfileId', protect, requirePermission('ADVANCE_UPDATE_THRESHOLD'), updateAdvanceThreshold);
 router.get('/advances/pending', protect, requirePermission('VIEW_ADVANCE_REQUESTS'), getPendingAdvances);
+router.post('/give-over-advance/:staffProfileId', protect, requirePermission('ADVANCE_OVER_GIVE'), giveOverAdvance);
+router.get('/over-advances/:staffProfileId', protect, requirePermission('VIEW_USER_MANAGEMENT'), getStaffOverAdvances);
 
 module.exports = router;

@@ -2328,6 +2328,15 @@ async function runMigration() {
     ALTER COLUMN advance_code SET DEFAULT 'AR-' || LPAD(nextval('advance_code_seq')::text, 5, '0')
   `);
 
+  // Over advances: advances given by an authorised internal user that ignore the
+  // threshold / earnings limits and push the staff balance negative.
+  await db.query(`
+    ALTER TABLE staff_advances
+      ADD COLUMN IF NOT EXISTS is_over_advance BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS over_advance_reason TEXT,
+      ADD COLUMN IF NOT EXISTS shortfall_amount DECIMAL(12, 2)
+  `);
+
   await db.query(`CREATE SEQUENCE IF NOT EXISTS service_request_code_seq START 1`);
   await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS service_request_code VARCHAR(15) UNIQUE`);
   await db.query(`
@@ -4292,6 +4301,14 @@ async function runMigration() {
 
   // Care profiles can carry an optional honorific too (existing rows stay NULL).
   await db.query(`ALTER TABLE patient_profiles ADD COLUMN IF NOT EXISTS honorific VARCHAR(10)`);
+  // ...and a service request records the care recipient's honorific (distinct from the client's own
+  // `honorific` column) so it carries onto the care profile created when the request is converted.
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS patient_honorific VARCHAR(10)`);
+  // Which internal staff member keyed in a proxy-mode request ("Received via" shows their name). Separate from
+  // coordinator_staff_id (the salesperson), which can later be reassigned. Existing proxy rows: best available
+  // answer is their current salesperson, which was the creator until now.
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS entered_by_staff_id UUID REFERENCES internal_staff(id) ON DELETE SET NULL`);
+  await db.query(`UPDATE service_requests SET entered_by_staff_id = coordinator_staff_id WHERE entered_via = 'PROXY' AND entered_by_staff_id IS NULL AND coordinator_staff_id IS NOT NULL`);
 
   // Honorifics stay canonical in the database itself (Mr. not Mr, Dr. not Doc): normalises existing
   // rows once and installs a trigger on every table with an honorific column. See utils/honorificSql.js.

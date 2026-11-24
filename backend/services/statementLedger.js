@@ -6,9 +6,12 @@
 //     credit shows as a negative balance);
 //   * only REAL money counts as a payment — a draw from the wallet moves money the client
 //     already paid, so it is hidden (counting it as well as the top-up double-counted it);
-//   * payments are applied to the oldest unpaid invoice first, and the statement says so
-//     ("LKR3,800.00 for payment of INV-…", "LKR4,500.00 from payment RCP-…",
-//     "LKR212,638.00 in excess payments").
+//   * payments are applied to the oldest unpaid invoice first (the Zoho statement printed that as
+//     "LKR3,800.00 for payment of INV-…" lines). We still work it out - `allocations` on every row -
+//     but the lines are NOT printed by default: clients found them confusing. Pass
+//     { showAllocations: true } to buildStatement for the detailed version.
+//   * wording is plain language ("Care service - 05 Nov 2026", "Invoice INV-…", "Invoice Cancelled"),
+//     not accounting jargon.
 //
 // Everything here except loadLedgerRows() is pure (no database), so the Zoho scenario is
 // unit-tested in tests/statementLedger.test.js.
@@ -62,9 +65,9 @@ const KIND = {
 const LABEL = {
   INVOICE: 'Invoice',
   PAYMENT: 'Payment Received',
-  CREDIT_NOTE: 'Credit Note',
+  CREDIT_NOTE: 'Credit',
   REFUND: 'Refund',
-  FORFEIT: 'Forfeited Prepayment',
+  FORFEIT: 'Unused Advance Payment',
   ADJUSTMENT: 'Adjustment',
 };
 
@@ -92,6 +95,15 @@ const reasonFromReversalNotes = (notes) => {
   const i = s.indexOf(' — ');
   return i >= 0 ? s.slice(i + 3).trim() : '';
 };
+
+const METHOD_TEXT = { BANK_TRANSFER: 'Bank transfer', CASH: 'Cash', CHEQUE: 'Cheque', CARD: 'Card', ONLINE: 'Online payment' };
+const methodText = (m) => {
+  const key = String(m || '').toUpperCase();
+  if (!key) return '';
+  return METHOD_TEXT[key] || key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
+};
+// RCP-… is a receipt number; anything else (TR-… / a Zoho payment number) is just a reference.
+const paymentRefText = (n) => (n ? (/^RCP/i.test(n) ? `Receipt ${n}` : `Ref ${n}`) : '');
 
 const creditNoteNumber = (r) => `CN-${String(r.transaction_code || r.transaction_id).replace(/^TR-/, '')}`;
 
@@ -142,17 +154,18 @@ function classifyRow(r) {
 
   const invoiceRow = () => {
     const code = r.invoice_code || invoiceCodeFromNotes(notes);
-    const dueDay = r.due_date || r.eff_date;
-    let details;
+    // Said only when it is not simply the day of the charge (product / registration invoices can be due later).
+    const dueLine = r.due_date && r.due_date !== r.eff_date ? [`Due ${fmtDay(r.due_date)}`] : [];
+    let lines;
     if (cat === 'REGISTRATION_FEE') {
-      details = code ? `${code} - due on ${fmtDay(dueDay)}\nRegistration Fee` : 'Registration Fee';
+      lines = ['Registration Fee', ...dueLine];
     } else if (cat === 'PRODUCT_INVOICE') {
-      const desc = descriptionFromNotes(notes);
-      details = `${code || 'Invoice'} - due on ${fmtDay(dueDay)}${desc ? `\n${desc}` : ''}`;
+      lines = [descriptionFromNotes(notes) || 'Product charge', ...dueLine];
     } else {
-      details = `${code || 'Invoice'} - due on ${fmtDay(dueDay)}`;
+      lines = [`Care service - ${fmtDay(r.eff_date)}`];
     }
-    return one({ kind: KIND.INVOICE, doc_number: code, details });
+    if (code) lines.push(`Invoice ${code}`);
+    return one({ kind: KIND.INVOICE, doc_number: code, details: lines.join('\n') });
   };
 
   // ── debits ──
@@ -193,7 +206,7 @@ function classifyRow(r) {
       return { rows, unclassified: null };
     }
     if (cat === 'SETTLEMENT_FORFEITURE') {
-      return one({ kind: KIND.FORFEIT, doc_number: null, details: 'Unused prepayment forfeited on settlement' });
+      return one({ kind: KIND.FORFEIT, doc_number: null, details: 'Unused advance payment, not refunded' });
     }
     if (cat === 'WALLET_ADJUSTMENT') {
       return one({ kind: KIND.ADJUSTMENT, direction: -1, doc_number: null, details: notes });
@@ -252,8 +265,9 @@ const bookingTag = (code, multi) => (multi && code ? ` (${code})` : '');
 /**
  * @param {Array} classifiedRows  rows from classifyRow(), unsorted
  * @param {{start:string,end:string}} range  Sri Lanka calendar days (inclusive)
+ * @param {{showAllocations?:boolean}} opts  print the "LKR… for payment of INV-…" lines (default: no)
  */
-function buildStatement(classifiedRows, { start, end }) {
+function buildStatement(classifiedRows, { start, end }, { showAllocations = false } = {}) {
   let rows = mergeSharedReceipts(classifiedRows.filter((r) => r.date <= end));
   rows.sort((a, b) =>
     (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
@@ -338,10 +352,14 @@ function buildStatement(classifiedRows, { start, end }) {
     } else if (row.kind === KIND.CREDIT_NOTE) {
       const target = row.reverses_transaction_id ? invoiceById.get(String(row.reverses_transaction_id)) : null;
       const ref = target ? target.doc_number : null;
-      const dayText = row.reverses_day ? ` (service day ${fmtDay(row.reverses_day)})` : '';
-      row.details = ref
-        ? `Credit note for ${ref}${dayText}`
-        : `Credit note${dayText}`;
+      const dayText = row.reverses_day ? ` (care on ${fmtDay(row.reverses_day)})` : '';
+      // A revoked day links to the invoice it cancels; anything else is a plain credit to the account.
+      if (ref || row.reverses_day) {
+        row.label = 'Invoice Cancelled';
+        row.details = ref ? `Invoice ${ref} cancelled${dayText}` : `Invoice cancelled${dayText}`;
+      } else {
+        row.details = 'Credit applied to your account';
+      }
       if (row.reason) row.details += `\n${row.reason}`;
       annotations.push(...applyCredit(row, { targetId: row.reverses_transaction_id }));
     } else if (row.kind === KIND.ADJUSTMENT && row.direction < 0) {
@@ -378,24 +396,26 @@ function buildStatement(classifiedRows, { start, end }) {
     if (debit) invoiced += r.amount; else paid += r.amount;
     const detailLines = [];
     if (r.kind === KIND.PAYMENT) {
-      if (r.doc_number) detailLines.push(r.doc_number);
+      const head = [methodText(r.payment_method), paymentRefText(r.doc_number)].filter(Boolean).join(' - ');
+      if (head) detailLines.push(head);
       if (r.details) detailLines.push(r.details);
     } else if (r.details) {
       detailLines.push(r.details);
     }
     const codes = [r.booking_code, ...(r.extra_bookings || [])].filter(Boolean);
     if (codes.length && r.kind !== KIND.ADJUSTMENT) detailLines.push(`Booking ${[...new Set(codes)].join(', ')}`);
-    detailLines.push(...r._annotations);
+    if (showAllocations) detailLines.push(...r._annotations);
     return {
       transaction_id: r.transaction_id,
       transaction_ids: r.transaction_ids,
       date: r.date,
       row_type: r.kind,
-      label: LABEL[r.kind],
+      label: r.label || LABEL[r.kind],
       doc_number: r.doc_number || null,
       details: detailLines.join('\n'),
       booking_codes: [...new Set(codes)],
-      annotations: r._annotations,
+      annotations: showAllocations ? r._annotations : [], // the lines printed in `details`
+      allocations: r._annotations, // always: how the payment/credit was applied, for the detailed view
       amount_invoiced: debit ? fromCents(r.amount) : 0,
       amount_paid: debit ? 0 : fromCents(r.amount),
       balance: fromCents(r._balance),

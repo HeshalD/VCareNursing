@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Loader2, UserCog, Check } from 'lucide-react';
 import apiClient from '../../../api/api';
 
-// Pick (or clear) the coordinator a service request is assigned to.
+// Select the salesperson for a service request. Once selected it is locked; only the reassign permission can change it.
 const AssignCoordinatorModal = ({ requestId, currentId, onClose, onSaved }) => {
   const [coordinators, setCoordinators] = useState([]);
   const [selected, setSelected] = useState(currentId || '');
@@ -14,7 +14,7 @@ const AssignCoordinatorModal = ({ requestId, currentId, onClose, onSaved }) => {
     let alive = true;
     apiClient.getAssignableCoordinators()
       .then((res) => alive && setCoordinators(res?.data || []))
-      .catch((err) => alive && setError(err?.message || 'Failed to load the coordinators.'))
+      .catch((err) => alive && setError(err?.message || 'Failed to load the salespersons.'))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, []);
@@ -26,7 +26,7 @@ const AssignCoordinatorModal = ({ requestId, currentId, onClose, onSaved }) => {
       const res = await apiClient.assignServiceRequestCoordinator(requestId, selected || null);
       onSaved(res?.data || { coordinator_staff_id: selected || null, coordinator_name: null });
     } catch (err) {
-      setError(err?.message || 'Could not change the coordinator.');
+      setError(err?.message || 'Could not change the salesperson.');
     } finally {
       setSaving(false);
     }
@@ -53,8 +53,8 @@ const AssignCoordinatorModal = ({ requestId, currentId, onClose, onSaved }) => {
               <UserCog className="h-4 w-4 text-blue-600" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">{currentId ? 'Change coordinator' : 'Assign a coordinator'}</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Once assigned, only this coordinator (or an admin) can edit the request.</p>
+              <h2 className="text-base font-bold text-slate-900">{currentId ? 'Reassign salesperson' : 'Select the salesperson'}</h2>
+              <p className="mt-0.5 text-xs text-slate-500">{currentId ? 'Reassigning is limited to super admins.' : 'Once selected, the salesperson cannot be changed except by a super admin.'}</p>
             </div>
           </div>
           <button onClick={onClose} disabled={saving} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
@@ -67,11 +67,11 @@ const AssignCoordinatorModal = ({ requestId, currentId, onClose, onSaved }) => {
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-blue-600" /></div>
           ) : (
             <>
-              {coordinators.length === 0 && <p className="rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-500">No active coordinators found.</p>}
+              {coordinators.length === 0 && <p className="rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-500">No active salespersons found.</p>}
               {coordinators.map((c) => (
                 <Option key={c.id} value={c.id} label={c.full_name} hint={c.id === currentId ? 'current' : ''} />
               ))}
-              {currentId && <Option value="" label="Unassigned" hint="remove the coordinator" />}
+              {currentId && <Option value="" label="Unassigned" hint="remove the salesperson" />}
             </>
           )}
           {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}

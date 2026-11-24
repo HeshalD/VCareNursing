@@ -7,6 +7,7 @@ const { notifyNewServiceRequest } = require('../services/serviceRequestEmail');
 const { sendOtp: sendWhatsAppOtp } = require('../utils/metaWhatsapp');
 const { sendSmsOtp } = require('../utils/sms');
 const identity = require('../services/serviceRequestIdentity');
+const { userHasPermission } = require('../middleware/authMiddleware');
 
 const formatServiceType = (type) => {
     if (!type) return 'our services';
@@ -270,8 +271,10 @@ exports.getAllLeads = async (req, res) => {
                    (SELECT COALESCE(SUM(amount_received), 0) FROM payment_tracking
                     WHERE quote_id = sr.active_quote_id AND status = 'VERIFIED') AS quote_total_paid,
                    coord.full_name AS coordinator_name,
+                   entered_by.full_name AS entered_by_name,
                    cp.honorific AS client_honorific
             FROM service_requests sr
+            LEFT JOIN internal_staff entered_by ON entered_by.id = sr.entered_by_staff_id
             LEFT JOIN client_profiles cp ON cp.client_profile_id = sr.client_id
             LEFT JOIN bookings b ON b.request_id = sr.request_id
             LEFT JOIN quotations q ON q.quote_id = sr.active_quote_id
@@ -304,8 +307,10 @@ exports.getServiceRequestById = async (req, res) => {
         const result = await db.query(
             `SELECT sr.*, cp.client_code, cp.honorific AS client_honorific,
                     coord.full_name AS coordinator_name,
+                    entered_by.full_name AS entered_by_name,
                     city.name AS city_name
              FROM service_requests sr
+             LEFT JOIN internal_staff entered_by ON entered_by.id = sr.entered_by_staff_id
              LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
              LEFT JOIN internal_staff coord ON coord.id = sr.coordinator_staff_id
              LEFT JOIN sl_cities city ON city.city_id = sr.city_id
@@ -324,14 +329,14 @@ exports.getServiceRequestById = async (req, res) => {
     }
 };
 
-// Staff a request can be assigned to: active internal staff holding the COORDINATOR role.
+// Staff selectable as a request's salesperson: active internal staff holding a sales or coordinator role.
 exports.getAssignableCoordinators = async (req, res) => {
     try {
         const result = await db.query(
             `SELECT s.id, s.full_name
              FROM internal_staff s
              WHERE s.status = 'Active'
-               AND EXISTS (SELECT 1 FROM internal_staff_roles r WHERE r.staff_id = s.id AND r.role = 'COORDINATOR')
+               AND EXISTS (SELECT 1 FROM internal_staff_roles r WHERE r.staff_id = s.id AND (r.role = 'COORDINATOR' OR r.role ILIKE '%sales%'))
              ORDER BY s.full_name`
         );
         res.status(200).json({ status: 'success', data: result.rows });
@@ -351,7 +356,7 @@ exports.assignCoordinator = async (req, res) => {
         const raw = req.body?.coordinator_staff_id;
         const newId = raw === undefined || raw === null || raw === '' ? null : String(raw);
         if (newId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(newId)) {
-            return res.status(400).json({ message: 'Invalid coordinator.' });
+            return res.status(400).json({ message: 'Invalid salesperson.' });
         }
 
         const current = await db.query(
@@ -368,19 +373,27 @@ exports.assignCoordinator = async (req, res) => {
         if (newId) {
             const staff = await db.query(
                 `SELECT s.id, s.full_name, s.status,
-                        EXISTS (SELECT 1 FROM internal_staff_roles r WHERE r.staff_id = s.id AND r.role = 'COORDINATOR') AS is_coordinator
+                        EXISTS (SELECT 1 FROM internal_staff_roles r WHERE r.staff_id = s.id AND (r.role = 'COORDINATOR' OR r.role ILIKE '%sales%')) AS is_coordinator
                  FROM internal_staff s WHERE s.id = $1`,
                 [newId]
             );
             const row = staff.rows[0];
-            if (!row) return res.status(404).json({ message: 'Coordinator not found.' });
+            if (!row) return res.status(404).json({ message: 'Salesperson not found.' });
             if (row.status !== 'Active') return res.status(400).json({ message: 'That staff member is not active.' });
-            if (!row.is_coordinator) return res.status(400).json({ message: 'That staff member does not have the Coordinator role.' });
+            if (!row.is_coordinator) return res.status(400).json({ message: 'That staff member does not have a sales or coordinator role.' });
             newName = row.full_name;
         }
 
         if ((before.coordinator_staff_id || null) === newId) {
             return res.status(200).json({ status: 'success', message: 'No change.', data: { coordinator_staff_id: newId, coordinator_name: newName } });
+        }
+
+        // Once a salesperson is selected it is locked: changing or removing it needs the reassign permission.
+        if (before.coordinator_staff_id && !(await userHasPermission(req.user, 'SERVICE_REQUEST_REASSIGN_SALESPERSON'))) {
+            return res.status(403).json({ message: 'The salesperson is already selected and can only be reassigned by a super admin.' });
+        }
+        if (!before.coordinator_staff_id && !newId) {
+            return res.status(400).json({ message: 'Select a salesperson.' });
         }
 
         await db.query('UPDATE service_requests SET coordinator_staff_id = $1 WHERE request_id = $2', [newId, id]);
@@ -406,12 +419,12 @@ exports.assignCoordinator = async (req, res) => {
 
         res.status(200).json({
             status: 'success',
-            message: newName ? `Assigned to ${newName}.` : 'Coordinator removed.',
+            message: newName ? `Salesperson set to ${newName}.` : 'Salesperson removed.',
             data: { coordinator_staff_id: newId, coordinator_name: newName },
         });
     } catch (error) {
-        console.error('Error assigning coordinator:', error);
-        res.status(500).json({ message: 'Error assigning coordinator' });
+        console.error('Error assigning salesperson:', error);
+        res.status(500).json({ message: 'Error assigning salesperson' });
     }
 };
 
@@ -488,6 +501,7 @@ exports.createServiceRequest = async (req, res) => {
         company_name, // New-client mode only: required when client_type is CORPORATE_PROXY
         honorific, // New-client mode only: Mr./Mrs./Dr./etc.
         patient_name,
+        patient_honorific, // Care profile's optional honorific (Mr./Mrs./Dr./etc.)
         patient_age,
         patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
         relationship_to_client,
@@ -576,6 +590,24 @@ exports.createServiceRequest = async (req, res) => {
             });
         }
 
+        // Care profile honorific (optional): normalise, and reject one that contradicts the gender.
+        const { normalizeHonorific, genderForHonorific, HONORIFICS } = require('../utils/honorific');
+        const patientHonorificCheck = normalizeHonorific(patient_honorific);
+        if (!patientHonorificCheck.valid) {
+            return res.status(400).json({
+                status: 'error',
+                message: `Care profile honorific must be one of: ${HONORIFICS.join(', ')}.`
+            });
+        }
+        const finalPatientHonorific = patientHonorificCheck.value;
+        const impliedPatientGender = genderForHonorific(finalPatientHonorific);
+        if (impliedPatientGender && patient_gender && patient_gender !== impliedPatientGender) {
+            return res.status(400).json({
+                status: 'error',
+                message: `${finalPatientHonorific} does not match the selected care profile gender.`
+            });
+        }
+
         // Validate coordinates if provided
         let finalLatitude = null;
         let finalLongitude = null;
@@ -624,7 +656,8 @@ exports.createServiceRequest = async (req, res) => {
                 coordinatorStaffId = callerStaffId;
             } else if (existingCoordinatorId === callerStaffId) {
                 coordinatorStaffId = callerStaffId;
-            } else if (coordinator_action === 'KEEP') {
+            } else if (coordinator_action !== 'REASSIGN' || !(await userHasPermission(req.user, 'SERVICE_REQUEST_REASSIGN_SALESPERSON'))) {
+                // The client's salesperson stays; taking over needs the reassign permission.
                 coordinatorStaffId = existingCoordinatorId;
             } else {
                 // REASSIGN (or unspecified, defaulting to reassign for safety —
@@ -667,6 +700,8 @@ exports.createServiceRequest = async (req, res) => {
                 status,
                 gender,
                 coordinator_staff_id,
+                patient_honorific,
+                entered_by_staff_id,
                 entered_via,
                 created_at
             ) VALUES (
@@ -675,7 +710,7 @@ exports.createServiceRequest = async (req, res) => {
                      THEN point($20::double precision, $19::double precision)
                      ELSE NULL
                 END,
-                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, $27, 'PROXY', NOW()
+                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, $27, $28, $29, 'PROXY', NOW()
             )
             RETURNING
                 request_id,
@@ -705,6 +740,7 @@ exports.createServiceRequest = async (req, res) => {
                 status,
                 gender,
                 coordinator_staff_id,
+                patient_honorific,
                 created_at
         `;
 
@@ -735,11 +771,22 @@ exports.createServiceRequest = async (req, res) => {
             preferred_staff_id || null,
             finalStatus,
             patient_gender || null,
-            coordinatorStaffId
+            coordinatorStaffId,
+            finalPatientHonorific,
+            callerStaffId
         ];
 
         const result = await db.query(insertQuery, insertValues);
         const newRequest = result.rows[0];
+
+        // An existing care profile may have no honorific on file (or a different one): record what
+        // the admin entered on it now. Left untouched when the admin entered none.
+        if (patient_id && finalPatientHonorific) {
+            await db.query(
+                `UPDATE patient_profiles SET honorific = $1, gender = COALESCE($2::gender_enum, gender) WHERE patient_id = $3`,
+                [finalPatientHonorific, impliedPatientGender, patient_id]
+            );
+        }
 
         if (coordinatorStaffId && patient_id) {
             await db.query(`UPDATE patient_profiles SET coordinator_staff_id = COALESCE(coordinator_staff_id, $1) WHERE patient_id = $2`, [coordinatorStaffId, patient_id]);
@@ -829,10 +876,16 @@ exports.getClientServiceRequests = async (req, res) => {
         const result = await db.query(`
             SELECT sr.*, 
                    NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
-                   u.mobile_number as client_mobile
+                   u.mobile_number as client_mobile,
+                   coord.full_name AS coordinator_name,
+                   entered_by.full_name AS entered_by_name,
+                   b.booking_id, b.booking_code
             FROM service_requests sr
             LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
             LEFT JOIN users u ON cp.user_id = u.user_id
+            LEFT JOIN internal_staff coord ON coord.id = sr.coordinator_staff_id
+            LEFT JOIN internal_staff entered_by ON entered_by.id = sr.entered_by_staff_id
+            LEFT JOIN bookings b ON b.request_id = sr.request_id
             WHERE sr.client_id = $1
             ORDER BY sr.created_at DESC
         `, [client_id]);

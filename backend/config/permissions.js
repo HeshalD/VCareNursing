@@ -80,12 +80,17 @@ const PERMISSIONS = {
   SERVICE_REQUEST_EDIT:        { label: 'Edit Service Request',             module: 'Service Requests', entity: 'Service Request', verb: 'Edit',                category: 'action' },
   SERVICE_REQUEST_CONVERT:     { label: 'Convert Request to Booking',       module: 'Service Requests', entity: 'Service Request', verb: 'Convert to Booking',  category: 'action' },
   SERVICE_REQUEST_SEND_CANDIDATE: { label: 'Send Candidate Profile',        module: 'Service Requests', entity: 'Service Request', verb: 'Send Candidate Profile', category: 'action' },
-  SERVICE_REQUEST_ASSIGN_COORDINATOR: { label: 'Assign / Change Coordinator', module: 'Service Requests', entity: 'Service Request', verb: 'Assign Coordinator', category: 'action' },
+  // Key name kept (stored in staff_permissions rows); the coordinator on a request is now called the salesperson.
+  SERVICE_REQUEST_ASSIGN_COORDINATOR: { label: 'Select Salesperson on Request', module: 'Service Requests', entity: 'Service Request', verb: 'Select Salesperson', category: 'action' },
+  // Once a salesperson is selected on a request it is locked; only holders of this (super admin by default) can change it.
+  SERVICE_REQUEST_REASSIGN_SALESPERSON: { label: 'Reassign Request Salesperson', module: 'Service Requests', entity: 'Service Request', verb: 'Reassign Salesperson', category: 'action' },
   SERVICE_REQUEST_NOTIFICATIONS: { label: 'Manage New-Request Email Recipients', module: 'Service Requests', entity: 'Service Request', verb: 'Manage Notification Emails', category: 'action' },
 
   // ── Quotations ────────────────────────────────────────────────────────────
   QUOTATION_CREATE:            { label: 'Create Quotation',                 module: 'Quotations', entity: 'Quotation',        verb: 'Create',                   category: 'action' },
   QUOTATION_EDIT:              { label: 'Edit Quotation',                   module: 'Quotations', entity: 'Quotation',        verb: 'Edit',                     category: 'action' },
+  // Add / remove / change a quotation's line items. Only possible while no payment has been recorded against it.
+  QUOTATION_EDIT_LINE_ITEMS:   { label: 'Edit Quotation Line Items (before payment)', module: 'Quotations', entity: 'Quotation', verb: 'Edit Line Items', category: 'action' },
   QUOTATION_SEND:              { label: 'Send Quote to Client',             module: 'Quotations', entity: 'Quotation',        verb: 'Send',                     category: 'action' },
   QUOTATION_RECORD_PAYMENT:    { label: 'Record Quote Payment',             module: 'Quotations', entity: 'Quotation Payment', verb: 'Record',                 category: 'action' },
   QUOTATION_VERIFY_PAYMENT:    { label: 'Verify Quote Payment',             module: 'Quotations', entity: 'Quotation Payment', verb: 'Verify',                 category: 'action' },
@@ -99,6 +104,9 @@ const PERMISSIONS = {
   ADVANCE_APPROVE:             { label: 'Approve Advance Request',          module: 'Advance Requests', entity: 'Advance Request', verb: 'Approve',            category: 'action' },
   ADVANCE_REJECT:              { label: 'Reject Advance Request',           module: 'Advance Requests', entity: 'Advance Request', verb: 'Reject',             category: 'action' },
   ADVANCE_UPDATE_THRESHOLD:    { label: 'Update Staff Advance Threshold',   module: 'Advance Requests', entity: 'Advance Settings', verb: 'Update Threshold',  category: 'action' },
+  // Gives a staff member an advance that ignores the threshold and earnings limits (balance goes negative).
+  // Requires the actor's password. Super admin only until granted to other internal staff.
+  ADVANCE_OVER_GIVE:           { label: 'Give Over Advance (Beyond Earnings)', module: 'Advance Requests', entity: 'Advance', verb: 'Give Over Advance', category: 'action' },
 
   // ── Client Management ─────────────────────────────────────────────────────
   CLIENT_EDIT:                 { label: 'Edit Client Profile',              module: 'User Management', entity: 'Client Account', verb: 'Edit Profile',        category: 'action' },
@@ -341,7 +349,7 @@ const ROLE_TEMPLATES = {
     'ASSIGNMENT_ASSIGN', 'ASSIGNMENT_UPDATE', 'ASSIGNMENT_COMPLETE',
     'SERVICE_REQUEST_CREATE', 'SERVICE_REQUEST_EDIT', 'SERVICE_REQUEST_CONVERT',
     'SERVICE_REQUEST_SEND_CANDIDATE', 'SERVICE_REQUEST_ASSIGN_COORDINATOR',
-    'QUOTATION_CREATE', 'QUOTATION_EDIT', 'QUOTATION_SEND', 'QUOTATION_ACCEPT',
+    'QUOTATION_CREATE', 'QUOTATION_EDIT', 'QUOTATION_EDIT_LINE_ITEMS', 'QUOTATION_SEND', 'QUOTATION_ACCEPT',
     'QUOTATION_RECORD_PAYMENT', 'QUOTATION_VERIFY_PAYMENT', 'QUOTATION_REJECT_PAYMENT',
     'PRESET_CREATE', 'PRESET_EDIT', 'PRESET_DELETE',
     'ADVANCE_APPROVE', 'ADVANCE_REJECT',
@@ -380,7 +388,7 @@ const ROLE_TEMPLATES = {
     'BOOKING_RECORD_PAYMENT', 'BOOKING_VERIFY_PAYMENT', 'BOOKING_REJECT_PAYMENT',
     'BOOKING_WALLET_PAYOFF', 'INVOICE_PAY_FROM_WALLET', 'BOOKING_ADD_NOTE', 'BOOKING_EDIT_NOTE',
     'BOOKING_UPDATE_HOSPITALIZATION', 'BOOKING_EXTEND', 'BOOKING_UPDATE_RATE',
-    'QUOTATION_EDIT', 'QUOTATION_SEND',
+    'QUOTATION_EDIT', 'QUOTATION_EDIT_LINE_ITEMS', 'QUOTATION_SEND',
     'QUOTATION_RECORD_PAYMENT', 'QUOTATION_VERIFY_PAYMENT', 'QUOTATION_REJECT_PAYMENT',
     'QUOTATION_ACCEPT',
     'ADVANCE_APPROVE', 'ADVANCE_REJECT', 'ADVANCE_UPDATE_THRESHOLD',
@@ -416,7 +424,7 @@ const ROLE_TEMPLATES = {
   ],
   SALES: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_QUOTATIONS', 'VIEW_USER_MANAGEMENT',
-    'QUOTATION_CREATE', 'QUOTATION_EDIT', 'QUOTATION_SEND',
+    'QUOTATION_CREATE', 'QUOTATION_EDIT', 'QUOTATION_EDIT_LINE_ITEMS', 'QUOTATION_SEND',
     'CLIENT_ADD_NOTE',
   ],
 };

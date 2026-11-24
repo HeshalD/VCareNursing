@@ -220,8 +220,14 @@ const BookingStaffAssignmentPage = () => {
     if (bookingId) { fetchData(); fetchNotes(); fetchSalespersons(); }
   }, [bookingId]);
 
-  // Pre-select the salesperson currently assigned to this booking's client, so the
-  // admin doesn't have to look it up manually — still fully changeable via the picker.
+  // Pre-select the salesperson chosen on the service request this booking came from (falling back to
+  // the client's current salesperson below), so the admin doesn't have to look it up — still changeable.
+  useEffect(() => {
+    const reqSpId = formData?.booking?.request_salesperson_id;
+    if (!reqSpId) return;
+    setAssignment((prev) => (prev.salesperson_id ? prev : { ...prev, salesperson_id: reqSpId }));
+  }, [formData?.booking?.request_salesperson_id]);
+
   useEffect(() => {
     const clientId = formData?.booking?.client_id;
     if (!clientId) return;
@@ -831,7 +837,12 @@ const BookingStaffAssignmentPage = () => {
                     Credited Salesperson
                   </label>
                   <SalespersonPicker
-                    salespersons={salespersons}
+                    salespersons={(() => {
+                      const b = formData?.booking;
+                      return b?.request_salesperson_id && !salespersons.some((sp) => sp.id === b.request_salesperson_id)
+                        ? [{ id: b.request_salesperson_id, full_name: b.request_salesperson_name, role: 'Request salesperson' }, ...salespersons]
+                        : salespersons;
+                    })()}
                     value={assignment.salesperson_id}
                     onChange={(id) => setAssignment({ ...assignment, salesperson_id: id })}
                   />

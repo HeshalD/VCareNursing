@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Booking payments — reference</title>
+<style>
+/* Reference only: behaviour + layout. Port to the app's React/Tailwind components. Palette = Tailwind slate/blue; font = app default. */
+body{margin:0;background:#f8fafc;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;font-size:14px}
+*{box-sizing:border-box}button,input,textarea{font-family:inherit}button{cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:14px;font-weight:600;white-space:nowrap}.btn:hover{background:#f1f5f9}
+.btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}.btn.pri:hover{background:#1d4ed8}.btn.ghost{border-color:transparent;background:transparent;color:#2563eb}.btn.ghost:hover{background:#eff6ff}.btn.sm{height:30px;padding:0 10px;font-size:13px}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px}
+.field{height:40px;width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:0 12px;font-size:14px;background:#fff;outline:none;color:#0f172a}.field:focus,.ta:focus{border-color:#2563eb;box-shadow:0 0 0 3px #dbeafe}
+.ta{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:10px 12px;font-size:14px;resize:none;outline:none}
+.chip{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600}.chip:hover{background:#f1f5f9}
+.chip.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}.chip.on.w{background:#fffbeb;border-color:#fcd34d;color:#b45309}
+.seg{display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px}.seg button{border:0;background:none;padding:7px 14px;border-radius:6px;font-size:13px;font-weight:600;color:#475569}.seg button.on{background:#fff;color:#1d4ed8;box-shadow:0 1px 2px rgba(15,23,42,.12)}
+.g{display:grid;grid-template-columns:130px 160px minmax(140px,1fr) 150px 250px;column-gap:16px;align-items:center;padding:0 20px}
+.hd{min-height:38px;background:#f8fafc;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}
+.row{min-height:60px;border-bottom:1px solid #f1f5f9;background:#fff;color:#334155;transition:background .3s;padding:8px 20px}.row:hover{background:#f8fafc}.row.hl{background:#eff6ff}
+.lk{background:none;border:0;padding:0;text-align:left;font-size:14px;font-weight:600;color:#0f172a}.lk:hover{color:#2563eb}
+.ok{background:#ecfdf5;color:#047857}.bad{background:#fef2f2;color:#b91c1c}.warn{background:#fffbeb;color:#b45309}.mute{background:#f1f5f9;color:#475569}.info{background:#eff6ff;color:#1d4ed8}
+.pill{display:inline-flex;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.lbl{font-size:13px;font-weight:600;color:#475569}.cap{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#64748b}.sub{font-size:13px;color:#64748b}.num{font-variant-numeric:tabular-nums}
+.acc{display:block;width:100%;text-align:left;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:10px 14px}.acc:hover{background:#f8fafc}.acc.on{border-color:#2563eb;background:#eff6ff}
+.mb{flex:1;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:9px 6px;font-size:13px;font-weight:600;color:#475569}.mb.on{border-color:#2563eb;background:#eff6ff;color:#1d4ed8}
+.scrim{position:fixed;inset:0;z-index:40;background:rgba(15,23,42,.35);border:0}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);z-index:50;background:#fff;box-shadow:-12px 0 32px rgba(15,23,42,.18);display:flex;flex-direction:column;animation:sl .2s ease-out}
+.dh{padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center}
+.db{padding:20px;display:flex;flex-direction:column;gap:18px;overflow-y:auto}
+.df{margin-top:auto;padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;gap:10px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:#0f172a;color:#f8fafc;border-radius:8px;padding:10px 16px;animation:ti .2s ease-out}
+@keyframes sl{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}@keyframes ti{from{transform:translate(-50%,10px);opacity:0}to{opacity:1}}
+</style></head><body>
+<div id="app"></div>
+<script>
+/* ---------- data (replace with real props) ---------- */
+const INV=340000, TODAY='2026-11-24', WALLET_BAL=30000, RESERVED=10000;
+const ML={BANK:'Bank transfer',DEP:'Cash deposit',CASH:'Cash',CHQ:'Cheque'};
+const BANKS=[{id:'b1',bank:'Sampath Bank',line:'Collections · •••• 2290'},{id:'b2',bank:'Commercial Bank',line:'Operations · •••• 2211'}];
+const P=(id,iso,m,bank,ref,amt,notes,o)=>Object.assign({id,iso,m,bank,ref,amt,notes,w:false,rc:null},o||{});
+const S={view:'recv',q:'',mf:'All',unsent:false,lim:5,sel:null,dr:false,tab:'rec',step:'form',err:'',hl:null,toast:'',
+ pay:[P('p1','2026-11-18','BANK','Sampath Bank','TRF-88650',70000,'Advance for week 3.',{rc:'sent',sentOn:'19 Nov 2026'}),
+ P('p2','2026-11-12','CHQ','','Cheque 004512',45000,'Post-dated cheque, banked on the due date.',{chq:'004512',chqDate:'2026-11-10',rc:'ready',edited:true}),
+ P('p3','2026-11-03','DEP','Commercial Bank','DEP-5521',30000,''),
+ P('p4','2026-10-28','BANK','Sampath Bank','TRF-87102',40500,'Pay for 20–29 Oct.',{rc:'failed'}),
+ P('p5','2026-10-15','CASH','','—',25000,'Handed over at the office.',{rc:'sent',sentOn:'16 Oct 2026',prod:true,partial:[60000,25000],slip:'slip-0417.jpg'}),
+ P('p6','2026-10-02','BANK','Commercial Bank','TRF-86455',50000,'First instalment.',{rc:'sent',sentOn:'03 Oct 2026'}),
+ P('w1','2026-11-05','WALLET','','—',12000,'Applied to INV-1402.',{w:true}),P('w2','2026-10-20','WALLET','','—',8000,'Applied to INV-1381.',{w:true}),P('w3','2026-10-08','WALLET','','—',5000,'Applied to INV-1360.',{w:true})]};
+const blank=o=>({amount:String(o),date:TODAY,m:'BANK',bank:'b1',chqNo:'',chqDate:'',ref:'',notes:'',more:false,slip:''});
+S.f=blank(0);S.wf={amount:'',notes:''};
+
+/* ---------- helpers ---------- */
+const rs=n=>'Rs. '+Math.round(n).toLocaleString('en-US'), n0=n=>Math.round(n).toLocaleString('en-US');
+const dd=i=>new Date(i+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const RC={none:['No receipt','mute','Create receipt',''],ready:['Ready','info','Send','pri'],failed:['PDF failed','bad','Retry PDF',''],sent:['Sent','ok','Resend','']};
+const rcOf=p=>RC[p.rc||'none'];
+function calc(){const rec=S.pay.filter(p=>!p.w),wal=S.pay.filter(p=>p.w);
+ const recv=rec.reduce((n,p)=>n+p.amt,0),applied=wal.reduce((n,p)=>n+p.amt,0),over=Math.max(INV-recv-applied,0);
+ const newW=wal.filter(p=>p.isNew).reduce((n,p)=>n+p.amt,0),bal=WALLET_BAL-newW,avail=Math.max(bal-RESERVED,0);
+ return{rec,wal,recv,applied,over,bal,avail,max:Math.min(avail,over)}}
+function toast(m){S.toast=m;render();clearTimeout(toast.t);toast.t=setTimeout(()=>{S.toast='';render()},2600)}
+
+/* ---------- views ---------- */
+function summary(c){const pct=Math.round((c.recv+c.applied)/INV*100),last=c.rec.slice().sort((a,b)=>b.iso.localeCompare(a.iso))[0];
+ return `<div class="card" style="padding:20px 24px"><div style="display:flex;flex-wrap:wrap;gap:20px 48px;align-items:flex-end">
+ <div><div class="cap">Overdue</div><div style="display:flex;align-items:center;gap:10px;margin-top:4px"><span class="num" style="font-size:28px;font-weight:700;${c.over>0?'color:#b45309':''}">${rs(c.over)}</span>${c.over===0?'<span class="pill ok">Nothing overdue</span>':''}</div></div>
+ ${[['Total invoiced',rs(INV)],['Payments received',rs(c.recv)],['Wallet balance',`<span style="${c.bal>0?'color:#047857':''}">${rs(c.bal)}</span>`],['Last payment',dd(last.iso).slice(0,6)]].map(x=>`<div><div class="cap">${x[0]}</div><div class="num" style="font-size:20px;font-weight:700;margin-top:6px">${x[1]}</div></div>`).join('')}</div>
+ <div style="margin-top:18px"><div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:#e2e8f0"><div style="height:100%;background:#2563eb;width:${Math.min(100,pct)}%"></div></div>
+ <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748b;margin-top:6px"><span>${pct}% of the invoiced amount is paid</span><span>${c.over>0?rs(c.over)+' still to collect':'Fully paid'}</span></div></div></div>`}
+
+function history(c){const isR=S.view==='recv',q=S.q.trim().toLowerCase();
+ const base=(isR?c.rec:c.wal).slice().sort((a,b)=>b.iso.localeCompare(a.iso));
+ const list=base.filter(p=>(!isR||S.mf==='All'||p.m===S.mf)&&(!(isR&&S.unsent)||p.rc!=='sent')&&(!q||(p.ref+' '+p.notes+' '+p.bank).toLowerCase().includes(q)));
+ const cnt=k=>c.rec.filter(p=>k==='All'||p.m===k).length,nUn=c.rec.filter(p=>p.rc!=='sent').length;
+ const chips=isR?[['All','All'],['BANK','Bank transfer'],['DEP','Cash deposit'],['CASH','Cash'],['CHQ','Cheque']].map(x=>`<button class="chip ${S.mf===x[0]?'on':''}" data-a="mf" data-v="${x[0]}">${x[1]} · ${cnt(x[0])}</button>`).join(''):'';
+ const rows=list.slice(0,S.lim).map(p=>{const r=rcOf(p);return `<div class="g row ${S.hl===p.id?'hl':''}">
+  <div><button class="lk" data-a="open" data-v="${p.id}">${dd(p.iso)}</button></div>
+  <div><div>${p.w?'Wallet':ML[p.m]}</div>${p.bank?`<div class="sub">${esc(p.bank)}</div>`:''}</div>
+  <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.chq?'Cheque '+p.chq:p.ref)}</div>
+  <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px">${p.edited?'<span class="pill warn">Edited</span>':''}<b class="num" style="color:#0f172a">${n0(p.amt)}</b></div>
+  <div style="display:flex;align-items:center;gap:8px">${p.w?'<span class="sub">No receipt</span>':`<span class="pill ${r[1]}">${r[0]}</span><button class="btn sm ${r[3]}" data-a="rc" data-v="${p.id}">${r[2]}</button>${p.rc==='ready'||p.rc==='sent'?'<button class="btn ghost sm" data-a="pdf">PDF</button>':''}`}</div></div>`}).join('');
+ const sum=list.reduce((n,p)=>n+p.amt,0),more=list.length-S.lim;
+ return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+ <div class="seg"><button class="${isR?'on':''}" data-a="view" data-v="recv">Payments received · ${c.rec.length}</button><button class="${!isR?'on':''}" data-a="view" data-v="wal">Applied from wallet · ${c.wal.length}</button></div>
+ <input class="field" style="height:36px;flex:1 1 220px;max-width:300px" aria-label="Search payments" placeholder="Search reference, notes…" value="${esc(S.q)}" data-in="q">
+ ${chips}${isR&&nUn>0?`<button class="chip w ${S.unsent?'on':''}" data-a="unsent">Receipt not sent · ${nUn}</button>`:''}
+ <button class="btn" style="margin-left:auto" data-a="export">Export CSV</button></div>
+ ${!isR?'<div class="sub">Money already in the client\'s wallet that was applied to this booking\'s invoices automatically. These are not new payments.</div>':''}
+ <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><div style="min-width:860px">
+ <div class="g hd"><div>Date</div><div>Method</div><div>Reference</div><div style="text-align:right">Amount (LKR)</div><div>Receipt</div></div>
+ ${rows}${list.length?'':'<div style="padding:40px;text-align:center;color:#64748b">Nothing matches. <button class="btn" data-a="clear">Clear filters</button></div>'}
+ ${more>0?`<div style="padding:14px;text-align:center;border-top:1px solid #f1f5f9"><button class="btn" data-a="more">Show ${Math.min(5,more)} more</button></div>`:''}
+ <div class="g" style="min-height:48px;background:#f8fafc;border-top:1px solid #e2e8f0;font-weight:600"><div style="grid-column:1/4;color:#475569">${list.length} ${isR?'payment':'wallet application'}${list.length===1?'':'s'}</div><div class="num" style="text-align:right;color:#0f172a">${rs(sum)}</div><div></div></div>
+ </div></div></div>`}
+
+function detailDrawer(){const p=S.pay.find(x=>x.id===S.sel);if(!p)return'';const r=rcOf(p);
+ return `<button class="scrim" aria-label="Close details" data-a="closeSel"></button><div class="drawer" style="width:min(440px,100%)" role="dialog" aria-label="Payment details">
+ <div class="dh"><div><div style="font-size:16px;font-weight:600">Payment details</div><div class="sub">${p.w?'Applied from wallet':'Payment received'}</div></div><button class="btn" data-a="closeSel">Close</button></div>
+ <div class="db"><div><div class="cap">Amount</div><div class="num" style="font-size:28px;font-weight:700">${rs(p.amt)}</div><div style="display:flex;gap:6px;margin-top:6px">${p.edited?'<span class="pill warn">Edited</span>':''}${p.prod?'<span class="pill info">Product invoice</span>':''}</div></div>
+ <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">${[['Date',dd(p.iso)],['Method',p.w?'Wallet':ML[p.m]],['Bank',p.bank||'—'],['Reference',p.chq?'Cheque '+p.chq:p.ref]].concat(p.m==='CHQ'?[['Cheque no.',p.chq||'—'],['Cheque date',p.chqDate?dd(p.chqDate):'—']]:[]).map(x=>`<div><div class="cap">${x[0]}</div>${esc(x[1])}</div>`).join('')}</div>
+ <div><div class="cap">Notes</div><div style="line-height:1.5;color:#334155">${esc(p.notes||'No notes.')}</div></div>
+ ${p.slip?`<div><div class="cap">Payment slip</div><button class="btn ghost" style="padding:0;height:28px" data-a="slip" data-v="${p.slip}">View slip</button></div>`:''}
+ ${p.w?'<div class="sub" style="line-height:1.5">Applied automatically from the client\'s wallet. This is not a new payment, so there is no receipt.</div>'
+ :`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center"><div class="cap">Receipt</div><span class="pill ${r[1]}">${r[0]}</span></div>
+ ${p.rc==='sent'?`<div class="sub" style="margin-top:6px">Sent on WhatsApp on ${p.sentOn}</div>`:''}
+ ${p.partial?`<div class="sub" style="margin-top:6px">Receipt covers ${rs(p.partial[0])} (this booking: ${rs(p.partial[1])})</div>`:''}
+ <div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm ${r[3]}" data-a="rc" data-v="${p.id}">${r[2]}</button>${p.rc==='ready'||p.rc==='sent'?'<button class="btn sm" data-a="pdf">Download PDF</button>':''}</div></div>`}
+ </div></div>`}
+
+function payDrawer(c){const isRec=S.tab==='rec',conf=S.step==='confirm',f=S.f,wf=S.wf,amt=parseFloat(f.amount)||0,wamt=parseFloat(wf.amount)||0;
+ const needsBank=f.m==='BANK'||f.m==='DEP',isChq=f.m==='CHQ',bk=BANKS.find(b=>b.id===f.bank),walOK=c.over>0&&c.max>0;
+ const reason=c.over<=0?'There is no overdue amount on this booking.':c.bal<=0?"The client's wallet is empty.":"The client's wallet is reserved for their other bookings.";
+ let body='',foot='';
+ if(conf){const after=Math.max(c.over-(isRec?amt:wamt),0);
+  const where=isRec?(isChq?['Cheque','No. '+f.chqNo+' · dated '+(f.chqDate?dd(f.chqDate):'')]:needsBank&&bk?['Deposited to',bk.bank+' · '+bk.line]:null):null;
+  body=`<div class="db"><div class="card" style="padding:16px;background:#f8fafc"><div class="cap">You are recording</div><div class="num" style="font-size:28px;font-weight:700">${rs(isRec?amt:wamt)}</div><div class="sub">${isRec?'on '+dd(f.date):'applied today'}</div></div>
+  <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden"><div style="padding:12px 14px;border-bottom:${where?'1px solid #f1f5f9':'0'}"><div class="cap">Method</div><b>${isRec?ML[f.m]:'Wallet payoff'}</b></div>${where?`<div style="padding:12px 14px"><div class="cap">${where[0]}</div><b>${esc(where[1])}</b></div>`:''}</div>
+  <div class="sub">Overdue after this ${isRec?'payment':'payoff'}: ${rs(after)}. This writes to the booking ledger.</div></div>`;
+  foot=`<div class="df"><button class="btn" data-a="back">Back</button><button class="btn pri" style="flex:1" data-a="confirm">${isRec?'Confirm payment':'Confirm payoff'}</button></div>`;
+ }else if(isRec){const after=Math.max(c.over-amt,0);
+  body=`<div class="db" style="gap:20px"><div><label class="lbl" for="amt">Amount (LKR)</label><input id="amt" class="field" style="margin-top:6px;font-size:18px;font-weight:600" type="number" min="0.01" step="0.01" value="${esc(f.amount)}" data-in="f.amount">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span class="sub">${amt>0?'Overdue after this payment: '+rs(after):'Overdue now: '+rs(c.over)}</span>${c.over>0?'<button class="btn ghost" style="height:26px;padding:0 6px" data-a="full">Pay full overdue</button>':''}</div>
+  ${amt>c.over&&amt>0?`<div class="warn" style="border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px">This is ${rs(amt-c.over)} more than the overdue amount.</div>`:''}</div>
+  <div><label class="lbl" for="dt">Payment date</label><input id="dt" class="field" style="margin-top:6px" type="date" max="${TODAY}" value="${f.date}" data-in="f.date"></div>
+  <div><div class="lbl" style="margin-bottom:6px">Method</div><div style="display:flex;gap:6px">${Object.keys(ML).map(k=>`<button class="mb ${f.m===k?'on':''}" aria-pressed="${f.m===k}" data-a="meth" data-v="${k}">${ML[k]}</button>`).join('')}</div></div>
+  ${needsBank?`<div><div class="lbl" style="margin-bottom:6px">Deposit to (company bank account)</div><div style="display:flex;flex-direction:column;gap:8px">${BANKS.map(b=>`<button class="acc ${f.bank===b.id?'on':''}" data-a="bank" data-v="${b.id}"><b>${b.bank}</b><span class="sub" style="display:block">${b.line}</span></button>`).join('')}</div></div>`:''}
+  ${isChq?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><label class="lbl" for="cn">Cheque no.</label><input id="cn" class="field" style="margin-top:6px" placeholder="000000" value="${esc(f.chqNo)}" data-in="f.chqNo"></div><div><label class="lbl" for="cd">Cheque date</label><input id="cd" class="field" style="margin-top:6px" type="date" value="${f.chqDate}" data-in="f.chqDate"></div></div>`:''}
+  <div><div class="lbl" style="margin-bottom:6px">Payment slip (optional)</div>${f.slip?`<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px"><span style="font-weight:600">${f.slip}</span><button class="btn ghost sm" data-a="rmslip">Remove</button></div>`:`<button data-a="addslip" style="width:100%;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:16px;color:#475569;font-size:14px;font-weight:600">Choose a file or drop it here<span class="sub" style="display:block;font-weight:400">Image or PDF</span></button>`}</div>
+  <div><button class="btn ghost" style="padding:0;height:28px" data-a="more2">${f.more?'Hide reference and notes':'Add reference or notes'}</button>
+  ${f.more?`<div style="display:flex;flex-direction:column;gap:14px;margin-top:8px"><div><label class="lbl" for="rf">Reference</label><input id="rf" class="field" style="margin-top:6px" placeholder="TRF / receipt no." value="${esc(f.ref)}" data-in="f.ref"></div><div><label class="lbl" for="nt">Notes</label><textarea id="nt" class="ta" rows="2" style="margin-top:6px" placeholder="e.g. 10-day advance" data-in="f.notes">${esc(f.notes)}</textarea></div></div>`:''}</div></div>`;
+  foot=`<div class="df"><button class="btn" data-a="reset">Reset</button><button class="btn pri" style="flex:1" data-a="reviewRec">Review payment</button></div>`;
+ }else if(walOK){
+  body=`<div class="db"><div class="card" style="padding:14px;background:#f8fafc"><div class="cap">Available for this booking</div><div class="num" style="font-size:22px;font-weight:700">${rs(c.avail)}</div><div class="sub">of ${rs(c.bal)} in the client's wallet${c.avail<c.bal?', with '+rs(c.bal-c.avail)+' reserved for their other bookings':''}</div></div>
+  <div><label class="lbl" for="wa">Amount to pay off (LKR)</label><div style="display:flex;gap:8px;margin-top:6px"><input id="wa" class="field" style="font-size:18px;font-weight:600" type="number" min="0.01" step="0.01" value="${esc(wf.amount)}" data-in="wf.amount"><button class="btn" style="height:40px" data-a="wmax">Max</button></div>
+  <div class="sub" style="margin-top:6px">${wamt>0?'Overdue after this payoff: '+rs(Math.max(c.over-wamt,0)):'Most you can pay now: '+rs(c.max)}</div></div>
+  <div><label class="lbl" for="wn">Notes (optional)</label><textarea id="wn" class="ta" rows="2" style="margin-top:6px" placeholder="Anything worth remembering" data-in="wf.notes">${esc(wf.notes)}</textarea></div></div>`;
+  foot=`<div class="df"><button class="btn pri" style="flex:1" data-a="reviewWal">Review payoff</button></div>`;
+ }else body=`<div class="db"><div style="border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;padding:28px 18px;text-align:center;color:#475569;line-height:1.5">${reason}</div></div>`;
+ return `<button class="scrim" aria-label="Close" data-a="closeDr"></button><div class="drawer" role="dialog" aria-label="Record payment">
+ <div class="dh"><div><div style="font-size:16px;font-weight:600">${conf?'Review '+(isRec?'payment':'payoff'):isRec?'Record payment':'Pay with wallet'}</div><div class="sub">${conf?'Check the details before it is recorded':'Booking BK-1042 · writes to the booking ledger'}</div></div><button class="btn" data-a="closeDr">Close</button></div>
+ ${conf?'':`<div style="padding:14px 20px 0"><div class="seg"><button class="${isRec?'on':''}" data-a="tab" data-v="rec">Record payment</button><button class="${!isRec?'on':''}" data-a="tab" data-v="wal">Use wallet</button></div></div>`}
+ ${S.err?`<div style="margin:14px 20px 0;border-radius:6px;padding:10px 12px;background:#fef2f2;color:#b91c1c;font-size:13px">${esc(S.err)}</div>`:''}
+ ${body}${foot}</div>`}
+
+function render(){const c=calc(),ae=document.activeElement&&document.activeElement.id;
+ document.getElementById('app').innerHTML=`<div style="max-width:1240px;margin:0 auto;padding:20px 28px 64px;display:flex;flex-direction:column;gap:18px">
+ <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px"><div><h1 style="margin:0;font-size:22px;font-weight:600">Payments</h1><div class="sub" style="margin-top:2px">Booking BK-1042 · Nimali Perera · what has been paid and what is still owed</div></div>
+ <div style="display:flex;gap:10px"><button class="btn" data-a="openWal">Pay with wallet</button><button class="btn pri" data-a="openRec">Record payment</button></div></div>
+ ${summary(c)}${history(c)}</div>${S.sel?detailDrawer():''}${S.dr?payDrawer(c):''}${S.toast?`<div class="toast" role="status">${esc(S.toast)}</div>`:''}`;
+ if(ae){const el=document.getElementById(ae);el&&el.focus&&el.focus()}}
+
+/* ---------- actions ---------- */
+const setF=(o)=>{S.f=Object.assign({},S.f,o);S.err=''};
+function openDr(tab){const c=calc();S.dr=true;S.tab=tab;S.step='form';S.err='';S.f=blank(c.over);S.wf={amount:String(c.max||''),notes:''}}
+function rcAct(id){const p=S.pay.find(x=>x.id===id);
+ const set=(rc,m)=>{p.rc=rc;if(rc==='sent')p.sentOn='24 Nov 2026';toast(m)};
+ !p.rc?set('ready','Receipt created'):p.rc==='failed'?set('ready','Receipt PDF generated'):p.rc==='ready'?set('sent','Receipt sent on WhatsApp'):set('sent','Receipt sent again on WhatsApp')}
+function reviewRec(){const c=calc(),f=S.f,amt=parseFloat(f.amount)||0;
+ if(!(amt>0)){S.err='Enter an amount greater than zero.';return}
+ if((f.m==='BANK'||f.m==='DEP')&&!f.bank){S.err='Choose the bank account.';return}
+ if(f.m==='CHQ'&&(!f.chqNo||!f.chqDate)){S.err='Enter the cheque number and date.';return}
+ S.step='confirm';S.err=''}
+function confirmIt(){const c=calc(),n=S.pay.filter(p=>p.isNew).length;
+ if(S.tab==='rec'){const f=S.f,amt=parseFloat(f.amount),bk=BANKS.find(b=>b.id===f.bank),nb=f.m==='BANK'||f.m==='DEP',id='pn'+n;
+  S.pay.unshift({id,iso:f.date,m:f.m,bank:nb&&bk?bk.bank:'',ref:f.ref||(f.m==='CHQ'?'—':'No reference'),chq:f.m==='CHQ'?f.chqNo:'',chqDate:f.m==='CHQ'?f.chqDate:'',amt,notes:f.notes,w:false,rc:null,slip:f.slip,isNew:true});
+  Object.assign(S,{dr:false,step:'form',view:'recv',mf:'All',unsent:false,q:'',hl:id});toast('Payment of '+rs(amt)+' recorded')
+ }else{const amt=parseFloat(S.wf.amount),id='wn'+n;
+  S.pay.unshift({id,iso:TODAY,m:'WALLET',bank:'',ref:'—',amt,notes:S.wf.notes||'Wallet payoff.',w:true,rc:null,isNew:true});
+  Object.assign(S,{dr:false,step:'form',view:'wal',q:'',hl:id});toast('Paid '+rs(amt)+' from the wallet')}
+ setTimeout(()=>{S.hl=null;render()},3500)}
+function reviewWal(){const c=calc(),a=parseFloat(S.wf.amount)||0;
+ if(!(a>0)){S.err='Enter an amount greater than zero.';return}
+ if(a>c.max){S.err='The most you can pay from the wallet here is '+rs(c.max)+'.';return}
+ S.step='confirm';S.err=''}
+
+const A={view:v=>{S.view=v;S.lim=5;S.q=''},mf:v=>{S.mf=v;S.lim=5},unsent:()=>{S.unsent=!S.unsent;S.lim=5},more:()=>{S.lim+=5},clear:()=>{S.q='';S.mf='All';S.unsent=false},
+ export:()=>toast('Exporting payments as CSV'),pdf:()=>toast('Receipt PDF downloaded'),slip:v=>toast('Opening '+v),open:v=>{S.sel=v},closeSel:()=>{S.sel=null},rc:v=>rcAct(v),
+ openRec:()=>openDr('rec'),openWal:()=>openDr('wal'),closeDr:()=>{S.dr=false;S.step='form';S.err=''},tab:v=>{S.tab=v;S.err=''},
+ full:()=>setF({amount:String(calc().over)}),meth:v=>setF({m:v}),bank:v=>setF({bank:v}),addslip:()=>setF({slip:'slip-'+(1000+Math.floor(Math.random()*8999))+'.jpg'}),rmslip:()=>setF({slip:''}),
+ more2:()=>setF({more:!S.f.more}),reset:()=>{S.f=blank(calc().over);S.err=''},reviewRec,reviewWal,wmax:()=>{S.wf.amount=String(calc().max);S.err=''},back:()=>{S.step='form';S.err=''},confirm:confirmIt};
+document.addEventListener('click',e=>{const t=e.target.closest('[data-a]');if(!t)return;const fn=A[t.dataset.a];if(fn){fn(t.dataset.v);render()}});
+document.addEventListener('change',e=>{const k=e.target.dataset.in;if(!k)return;const v=e.target.value;
+ if(k==='q'){S.q=v;S.lim=5}else{const[o,p]=k.split('.');S[o]=Object.assign({},S[o],{[p]:v});S.err=''}render()});
+S.f=blank(calc().over);render();
+</script></body></html>

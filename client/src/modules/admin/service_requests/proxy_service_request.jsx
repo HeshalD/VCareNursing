@@ -7,6 +7,7 @@ import {
   Heart, Loader2, Check,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 import apiClient from '../../../api/api';
 import { patientDisplayName } from '../../../utils/clientName';
 import DateInput, { todayISO, daysAgoISO, MAX_BACKDATE_DAYS } from '../../../components/common/DateInput';
@@ -60,7 +61,7 @@ const BLANK_FORM = {
   payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
   client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '', payer_city_id: '',
   payer_secondary_phones: [],
-  patient_name: '', patient_age: '',
+  patient_name: '', patient_honorific: '', patient_age: '',
   patient_gender: '', relationship_to_client: '', patient_condition: '', service_type: '',
   service_model: 'LIVE_IN', location_address: '', start_date: '',
   remarks: '', preferred_gender: 'ANY', status: 'NEW_LEAD',
@@ -140,11 +141,13 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const [useClientAddress, setUseClientAddress]       = useState(false);
   const [emergencyContacts, setEmergencyContacts]     = useState([{ name: '', number: '' }]);
 
-  // Coordinator lock (see requireOwnCoordinatorRecord on the backend): if the
+  // Salesperson lock (see requireOwnCoordinatorRecord on the backend): if the
   // selected existing client already belongs to a different internal staff
   // member, the admin must choose whether to take over as coordinator or
   // leave the existing owner in place before this request can be created.
   const [myStaffId, setMyStaffId]                     = useState(null);
+  const { hasPermission } = useAdminAuth();
+  const canReassignSalesperson = hasPermission ? hasPermission('SERVICE_REQUEST_REASSIGN_SALESPERSON') : false;
   const [coordinatorAction, setCoordinatorAction]     = useState(null); // 'REASSIGN' | 'KEEP' | null
 
   useEffect(() => {
@@ -202,7 +205,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
       client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '', payer_city_id: '',
       payer_secondary_phones: [],
-      patient_name: '', patient_age: '', patient_gender: '',
+      patient_name: '', patient_honorific: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
   };
@@ -242,7 +245,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       ...prev,
       payer_name: client.full_name || '',
       payer_mobile: client.mobile_number || '',
-      patient_name: '', patient_age: '', patient_gender: '', relationship_to_client: '',
+      patient_name: '', patient_honorific: '', patient_age: '', patient_gender: '', relationship_to_client: '',
       patient_condition: '', location_address: '',
     }));
     fetchCareProfiles(client.client_profile_id);
@@ -259,7 +262,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
       client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '', payer_city_id: '',
       payer_secondary_phones: [],
-      patient_name: '', patient_age: '', patient_gender: '',
+      patient_name: '', patient_honorific: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
   };
@@ -276,6 +279,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       // A "Self" care profile is locked to the client's own current name/gender
       // rather than whatever was last saved on the profile, so the two never disagree.
       patient_name: isSelfProfile ? prev.payer_name : (profile.full_name || ''),
+      patient_honorific: profile.honorific || '',
       patient_age: profile.age?.toString() || '',
       patient_gender: isSelfProfile ? prev.payer_gender : (profile.gender || ''),
       relationship_to_client: profile.relationship_to_client || '',
@@ -289,7 +293,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setEmergencyContacts([{ name: '', number: '' }]);
     setFormData(prev => ({
       ...prev,
-      patient_name: '', patient_age: '', patient_gender: '', relationship_to_client: '',
+      patient_name: '', patient_honorific: '', patient_age: '', patient_gender: '', relationship_to_client: '',
       patient_condition: '', location_address: '',
     }));
   };
@@ -349,8 +353,8 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSuccess(null);
     try {
       if (clientMode === 'existing' && !selectedClient) { setError('Please select a client before submitting.'); setFormLoading(false); return; }
-      if (coordinatorMismatch && !coordinatorAction) {
-        setError(`This client is already coordinated by ${selectedClient.coordinator_name || 'another staff member'}. Choose how to proceed above.`);
+      if (coordinatorMismatch && canReassignSalesperson && !coordinatorAction) {
+        setError(`This client's salesperson is ${selectedClient.coordinator_name || 'another staff member'}. Choose how to proceed above.`);
         setFormLoading(false);
         return;
       }
@@ -397,13 +401,17 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       await apiClient.createProxyServiceRequest({
         ...formData,
         patient_age: parseInt(formData.patient_age),
+        // A "Self" care profile shares the client's own honorific.
+        patient_honorific: (formData.relationship_to_client === 'Self'
+          ? (clientMode === 'new' ? formData.honorific : selectedClient?.honorific)
+          : formData.patient_honorific) || '',
         client_id: clientId,
         patient_id: selectedCareProfile?.patient_id || null,
         // Only meaningful for a brand-new care profile — an existing one keeps
         // its own emergency contact(s), edited on its own profile page.
         ...(selectedCareProfile ? {} : buildEmergencyContactFields(emergencyContacts)),
         status: 'NEW_LEAD',
-        coordinator_action: coordinatorAction || undefined,
+        coordinator_action: coordinatorMismatch ? (canReassignSalesperson ? coordinatorAction : 'KEEP') : undefined,
       });
       setSuccess('Service request created successfully!');
       setTimeout(() => { onClose(); onSuccess(); }, 1500);
@@ -423,6 +431,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const careProfileStepNum = selectedClient ? ++stepCounter : null;
   const serviceStepNum = ++stepCounter;
   const isSelf = formData.relationship_to_client === 'Self';
+  const selfHonorific = clientMode === 'new' ? formData.honorific : selectedClient?.honorific;
 
   return (
     <>
@@ -672,29 +681,32 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                     <p className="text-sm text-amber-800">
-                      This client is already coordinated by <span className="font-semibold">{selectedClient.coordinator_name || 'another staff member'}</span>. Choose how to proceed:
+                      This client's salesperson is <span className="font-semibold">{selectedClient.coordinator_name || 'another staff member'}</span>.{' '}
+                      {canReassignSalesperson ? 'Choose how to proceed:' : 'They stay as the salesperson for this request; only a super admin can reassign.'}
                     </p>
                   </div>
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      type="button"
-                      onClick={() => setCoordinatorAction('REASSIGN')}
-                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                        coordinatorAction === 'REASSIGN' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      Reassign coordinator to me
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCoordinatorAction('KEEP')}
-                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                        coordinatorAction === 'KEEP' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      Keep existing coordinator
-                    </button>
-                  </div>
+                  {canReassignSalesperson && (
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => setCoordinatorAction('REASSIGN')}
+                        className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                          coordinatorAction === 'REASSIGN' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Reassign salesperson to me
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCoordinatorAction('KEEP')}
+                        className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                          coordinatorAction === 'KEEP' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Keep existing salesperson
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -865,6 +877,27 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
+                      <label className={labelCls}>Honorific</label>
+                      <select
+                        name="patient_honorific"
+                        value={isSelf ? (selfHonorific || '') : formData.patient_honorific}
+                        onChange={(e) => {
+                          const patient_honorific = e.target.value;
+                          const inferredGender = genderForHonorific(patient_honorific);
+                          setFormData(prev => ({
+                            ...prev,
+                            patient_honorific,
+                            ...(inferredGender ? { patient_gender: inferredGender } : {}),
+                          }));
+                        }}
+                        disabled={isSelf}
+                        className={`${inputCls} ${isSelf ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— None —</option>
+                        {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                    <div>
                       <label className={labelCls}>Full Name <span className="text-red-500">*</span></label>
                       <input
                         type="text"
@@ -886,8 +919,8 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         name="patient_gender"
                         value={formData.patient_gender}
                         onChange={handleInputChange}
-                        disabled={isSelf}
-                        className={`${inputCls} ${isSelf ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                        disabled={isSelf || isGenderImplied(formData.patient_honorific)}
+                        className={`${inputCls} ${(isSelf || isGenderImplied(formData.patient_honorific)) ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
                       >
                         <option value="">— Select —</option>
                         {PATIENT_GENDER_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0) + o.slice(1).toLowerCase()}</option>)}

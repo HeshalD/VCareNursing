@@ -67,15 +67,19 @@ const BookingStatusBadge = ({ status }) => {
 const PRIORITY_TYPE = 'PRIORITY_MEMBERSHIP';
 const UNASSIGNED = '__UNASSIGNED__';
 
-const EnteredViaBadge = ({ value }) => {
+// Proxy entries also name the internal staff member who keyed the request in.
+const EnteredViaBadge = ({ value, staffName }) => {
   const isProxy = value === 'PROXY';
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
-      isProxy ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
-    }`}>
-      {isProxy ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
-      {isProxy ? 'Proxy' : 'Client'}
-    </span>
+    <div className="flex flex-col items-start gap-1">
+      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+        isProxy ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+      }`}>
+        {isProxy ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
+        {isProxy ? 'Proxy' : 'Client'}
+      </span>
+      {isProxy && staffName && <span className="text-xs text-slate-600">by {staffName}</span>}
+    </div>
   );
 };
 
@@ -285,7 +289,7 @@ const ServiceRequests = () => {
   ];
 
   const coordinatorOptions = [
-    { key: 'ALL', label: 'All Coordinators', count: requests.length },
+    { key: 'ALL', label: 'All Salespersons', count: requests.length },
     ...[...new Set(requests.map(r => r.coordinator_name).filter(Boolean))].sort().map(n => ({
       key: n,
       label: n,
@@ -427,9 +431,9 @@ const ServiceRequests = () => {
                 <FilterableTh label="Status" className="text-left px-4 py-3 text-xs"
                   value={activeTab} onChange={setActiveTab}
                   options={STATUS_TABS.map(tab => ({ key: tab, label: tab, count: counts[tab] }))} />
-                <FilterableTh label="Coordinator" className="text-left px-4 py-3 text-xs"
+                <FilterableTh label="Salesperson" className="text-left px-4 py-3 text-xs"
                   value={coordinatorFilter} onChange={setCoordinatorFilter} options={coordinatorOptions} />
-                <FilterableTh label="Entered Via" className="text-left px-4 py-3 text-xs"
+                <FilterableTh label="Received Via" className="text-left px-4 py-3 text-xs"
                   value={enteredViaFilter} onChange={setEnteredViaFilter} options={enteredViaOptions} />
                 <th className="px-4 py-3" />
               </tr>
@@ -516,7 +520,7 @@ const ServiceRequests = () => {
                     </div>
                   </td>
 
-                  {/* Coordinator */}
+                  {/* Salesperson */}
                   <td className="px-4 py-3 align-top">
                     {r.coordinator_name ? (
                       <div className="flex items-center gap-1.5 text-xs text-slate-700">
@@ -528,9 +532,9 @@ const ServiceRequests = () => {
                     )}
                   </td>
 
-                  {/* Entered Via */}
+                  {/* Received Via */}
                   <td className="px-4 py-3 align-top">
-                    <EnteredViaBadge value={r.entered_via} />
+                    <EnteredViaBadge value={r.entered_via} staffName={r.entered_by_name} />
                   </td>
 
                   {/* Actions */}

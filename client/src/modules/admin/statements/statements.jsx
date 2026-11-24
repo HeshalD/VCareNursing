@@ -12,7 +12,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { withHonorific } from '../../../utils/clientName';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
-import DateInput from '../../../components/common/DateInput';
+import DateRangePicker from '../../../components/common/DateRangePicker';
 import EditedAmountBadge from '../components/EditedAmountBadge';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 
@@ -23,6 +23,18 @@ const fmt = (n) =>
 
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+// Period quick-picks (same set as the client page's Statement section).
+const pad2 = (n) => String(n).padStart(2, '0');
+const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const PERIOD_PRESETS = [
+  { key: 'month', label: 'This month', range: (t) => [toISO(new Date(t.getFullYear(), t.getMonth(), 1)), toISO(t)] },
+  { key: 'prev', label: 'Previous month', range: (t) => [toISO(new Date(t.getFullYear(), t.getMonth() - 1, 1)), toISO(new Date(t.getFullYear(), t.getMonth(), 0))] },
+  { key: 'year', label: 'This year', range: (t) => [toISO(new Date(t.getFullYear(), 0, 1)), toISO(t)] },
+  { key: 'pyear', label: 'Previous year', range: (t) => [toISO(new Date(t.getFullYear() - 1, 0, 1)), toISO(new Date(t.getFullYear() - 1, 11, 31))] },
+  { key: 'd30', label: 'Last 30 days', range: (t) => [toISO(new Date(t.getFullYear(), t.getMonth(), t.getDate() - 29)), toISO(t)] },
+  { key: 'custom', label: 'Custom' },
+];
 
 const getStatusBadge = (status) => {
   const map = {
@@ -67,7 +79,7 @@ const getServiceIcon = (serviceType) => {
 const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
 // Details cell of a statement ledger row: the invoice / payment number and booking code, with the
-// payment-allocation lines ("LKR3,800.00 for payment of INV-…") summarised — the PDF shows them in full.
+// payment-allocation lines, if a statement carries any (the default one no longer does).
 const StatementDetails = ({ tx }) => {
   const lines = String(tx.details || '').split('\n').filter(Boolean);
   const extra = Array.isArray(tx.annotations) ? tx.annotations.length : 0;
@@ -670,18 +682,17 @@ const Statements = () => {
     setExpandedBookings(new Set());
   };
 
-  const handleMonthSelect = (monthStr) => {
-    if (!monthStr) { applyRange('', '', '', false); return; }
-    const [year, month] = monthStr.split('-').map(Number);
-    const start = new Date(year, month - 1, 1).toISOString().split('T')[0];
-    const end = new Date(year, month, 0).toISOString().split('T')[0];
-    applyRange(start, end, monthStr, false);
+  // `selectedMonth` holds the chosen period chip key ('month', 'prev', …, 'custom').
+  const handlePreset = (key) => {
+    if (selectedMonth === key && !isAllTime && !isFromBookingStart) { applyRange('', '', '', false); return; }
+    if (key === 'custom') { applyRange(globalStartDate, globalEndDate, 'custom', false); return; }
+    const [start, end] = PERIOD_PRESETS.find((p) => p.key === key).range(new Date());
+    applyRange(start, end, key, false);
   };
+  const handleCustomRange = ({ startDate, endDate }) => applyRange(startDate || '', endDate || '', 'custom', false);
 
   const handleAllTime = () => applyRange('', '', '', true);
   const handleClear = () => applyRange('', '', '', false);
-  const handleStartChange = (val) => applyRange(val, globalEndDate, '', false);
-  const handleEndChange = (val) => applyRange(globalStartDate, val, '', false);
 
   const handleFromBookingStartMonth = (monthStr) => {
     if (!monthStr) { applyRange('', '', '', false); return; }
@@ -1013,43 +1024,41 @@ const Statements = () => {
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
-          {/* Month quick-select */}
+          {/* Period quick-picks + custom calendar range */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-600">Quick Select Month</label>
-            <select
-              value={selectedMonth}
-              onChange={(e) => handleMonthSelect(e.target.value)}
-              disabled={isAllTime || isFromBookingStart}
-              className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 min-w-[170px] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <option value="">-- Select Month --</option>
-              {monthOptions.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
+            <span id="stmt-period-label" className="text-xs font-medium text-slate-600">Period</span>
+            <div role="group" aria-labelledby="stmt-period-label" className="flex flex-wrap gap-2">
+              {PERIOD_PRESETS.map((p) => {
+                const on = selectedMonth === p.key && !isAllTime && !isFromBookingStart;
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => handlePreset(p.key)}
+                    className={`rounded-full border px-3 py-1.5 text-[13px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${on ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'}`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <span className="text-slate-300 text-xs self-end pb-2">or</span>
-
-          {/* Manual dates */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-600">From</label>
-            <DateInput
-              value={globalStartDate}
-              onChange={(e) => handleStartChange(e.target.value)}
-              disabled={isAllTime || isFromBookingStart}
-              className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-600">To</label>
-            <DateInput
-              value={globalEndDate}
-              onChange={(e) => handleEndChange(e.target.value)}
-              disabled={isAllTime || isFromBookingStart}
-              className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            />
-          </div>
+          {selectedMonth === 'custom' && !isAllTime && !isFromBookingStart && (
+            <div className="min-w-[260px]">
+              <DateRangePicker
+                startDate={globalStartDate}
+                endDate={globalEndDate}
+                onChange={handleCustomRange}
+                theme="blue"
+                allowPast
+                endRequired
+                quickEnds={false}
+                compact
+              />
+            </div>
+          )}
 
           <span className="text-slate-300 text-xs self-end pb-2">or</span>
 

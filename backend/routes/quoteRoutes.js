@@ -137,7 +137,7 @@ router.get('/:quote_id/details', protect, quoteController.getQuoteWithLineItems)
 router.put(
     '/:quote_id/line-items',
     protect,
-    requirePermission('QUOTATION_EDIT'),
+    requirePermission('QUOTATION_EDIT_LINE_ITEMS'),
     quoteController.updateQuoteLineItems
 );
 

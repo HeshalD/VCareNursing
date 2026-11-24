@@ -579,6 +579,17 @@ exports.getAdminClientDetail = async (req, res) => {
     }
 
     const clientProfile = clientProfileResult.rows[0];
+    // Salesperson shown on the client page: the client's own, else the one on their latest service request.
+    const spRes = await db.query(
+      `SELECT full_name FROM (
+         SELECT s.full_name, 0 AS pri, now() AS at FROM internal_staff s WHERE s.id = $1
+         UNION ALL
+         SELECT s.full_name, 1, sr.created_at FROM service_requests sr
+           JOIN internal_staff s ON s.id = sr.coordinator_staff_id WHERE sr.client_id = $2
+       ) x ORDER BY pri, at DESC LIMIT 1`,
+      [clientProfile.coordinator_staff_id, client_id]
+    );
+    clientProfile.salesperson_name = spRes.rows[0]?.full_name || null;
     const payments = paymentHistoryResult.rows;
     const bookings = bookingHistoryResult.rows;
     const quotations = quotationHistoryResult.rows;

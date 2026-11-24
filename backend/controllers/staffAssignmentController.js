@@ -94,9 +94,12 @@ exports.getAssignmentFormData = async (req, res) => {
         COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), ''), sr.payer_name) AS client_name,
         COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(pp.honorific, ''), pp.full_name), ''), sr.patient_name) AS patient_name,
         sr.payer_mobile,
-        sr.location_address
+        sr.location_address,
+        sr.coordinator_staff_id AS request_salesperson_id,
+        req_sp.full_name AS request_salesperson_name
       FROM bookings b
       LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+      LEFT JOIN internal_staff req_sp ON req_sp.id = sr.coordinator_staff_id
       LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
       LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
       LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
@@ -230,7 +233,9 @@ exports.getAssignmentFormData = async (req, res) => {
           amount_paid: parseFloat(booking.amount_paid),
           total_amount: parseFloat(booking.total_amount),
           is_hospitalized: booking.is_hospitalized,
-          hospital_name: booking.hospital_name
+          hospital_name: booking.hospital_name,
+          request_salesperson_id: booking.request_salesperson_id || null,
+          request_salesperson_name: booking.request_salesperson_name || null
         },
         payment_info: {
           total_verified: parseFloat(paymentInfo.total_verified),

@@ -1,5 +1,6 @@
 // backend/controllers/staffWalletController.js
 
+const bcrypt = require('bcrypt');
 const { pool } = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected } = require('../utils/metaWhatsapp');
@@ -503,7 +504,8 @@ const getMyCurrentEarningsBreakdown = async (req, res) => {
       `, [staff_profile_id, limit, offset]),
 
       pool.query(`
-        SELECT advance_id, advance_code, amount_requested, status, requested_at, approved_at, reviewed_by_name
+        SELECT advance_id, advance_code, amount_requested, status, requested_at, approved_at, reviewed_by_name,
+               is_over_advance, over_advance_reason
         FROM staff_advances
         WHERE staff_profile_id = $1 AND status = 'APPROVED'
         ORDER BY approved_at DESC
@@ -588,7 +590,158 @@ const getMyCareHistory = async (req, res) => {
   }
 };
 
+// POST /api/staff-wallet/give-over-advance/:staffProfileId
+// Gives an advance that ignores the threshold / earnings / pending-request limits.
+// Staff balance and current_earnings are allowed to go negative; future salary credits
+// net against the debt and payouts stay blocked until the balance is positive again.
+// Needs ADVANCE_OVER_GIVE plus the caller's own password. Deliberately silent: no
+// WhatsApp/SMS is sent to the staff member.
+const giveOverAdvance = async (req, res) => {
+  const { staffProfileId } = req.params;
+  const { amount, reason, password } = req.body || {};
+
+  const advanceAmount = Number(amount);
+  if (!Number.isFinite(advanceAmount) || advanceAmount <= 0) {
+    return res.status(400).json({ status: 'error', message: 'Enter a valid advance amount.' });
+  }
+  const trimmedReason = String(reason || '').trim();
+  if (!trimmedReason) {
+    return res.status(400).json({ status: 'error', message: 'A reason is required for an over advance.' });
+  }
+  if (!password) {
+    return res.status(400).json({ status: 'error', message: 'Password is required to confirm an over advance.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const userRes = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+    const hash = userRes.rows[0]?.password_hash;
+    if (!hash || !(await bcrypt.compare(String(password), hash))) {
+      return res.status(401).json({ status: 'error', message: 'Incorrect password.' });
+    }
+
+    const reviewerName = await getReviewerName(req.user.user_id);
+
+    await client.query('BEGIN');
+
+    const profileRes = await client.query(
+      `SELECT staff_profile_id, full_name, COALESCE(current_earnings, 0) AS current_earnings,
+              advance_threshold_amount
+       FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+      [staffProfileId]
+    );
+    if (!profileRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+    }
+    const profile = profileRes.rows[0];
+    const earningsBefore = parseFloat(profile.current_earnings);
+    const shortfall = Math.max(0, advanceAmount - Math.max(0, earningsBefore));
+
+    const advanceRes = await client.query(
+      `INSERT INTO staff_advances
+         (staff_profile_id, amount_requested, status, requested_at, approved_at,
+          reviewed_by_user_id, reviewed_by_name, is_over_advance, over_advance_reason, shortfall_amount)
+       VALUES ($1, $2, 'APPROVED', NOW(), NOW(), $3, $4, true, $5, $6)
+       RETURNING *`,
+      [staffProfileId, advanceAmount, req.user.user_id, reviewerName, trimmedReason, shortfall]
+    );
+    const advance = advanceRes.rows[0];
+
+    // No floors: both figures may go negative.
+    await client.query(
+      `UPDATE staff_profiles SET current_earnings = COALESCE(current_earnings, 0) - $1
+       WHERE staff_profile_id = $2`,
+      [advanceAmount, staffProfileId]
+    );
+    await client.query(
+      `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (staff_profile_id)
+       DO UPDATE SET balance = staff_wallet.balance + EXCLUDED.balance, updated_at = NOW()`,
+      [staffProfileId, -advanceAmount]
+    );
+
+    await client.query(
+      `INSERT INTO staff_wallet_transactions (staff_profile_id, type, amount, reason, reference_id, created_at)
+       VALUES ($1, 'DEBIT', $2, 'OVER_ADVANCE', $3, NOW())`,
+      [staffProfileId, advanceAmount, advance.advance_id]
+    );
+
+    await client.query(
+      `INSERT INTO transactions
+        (staff_profile_id, category, transaction_type, amount, status, notes,
+         reference_number, created_by, verified_by, created_at)
+       VALUES ($1, 'STAFF_ADVANCE', 'DEBIT', $2, 'COMPLETED', $3, $4, $5, $5, NOW())`,
+      [
+        staffProfileId,
+        advanceAmount,
+        `Over advance by ${reviewerName}: ${trimmedReason}`,
+        advance.advance_id,
+        req.user.user_id,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    try {
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName: reviewerName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'OVER_ADVANCE_GIVEN',
+        entityType: 'STAFF_ADVANCE',
+        entityId: advance.advance_id,
+        details: {
+          staff_profile_id: staffProfileId,
+          staff_name: profile.full_name,
+          amount: advanceAmount,
+          reason: trimmedReason,
+          earnings_before: earningsBefore,
+          earnings_after: earningsBefore - advanceAmount,
+          shortfall,
+        },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (giveOverAdvance):', logErr.message);
+    }
+
+    return res.status(201).json({
+      status: 'success',
+      message: 'Over advance recorded',
+      data: { ...advance, earnings_after: earningsBefore - advanceAmount },
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (e) { /* ignore */ }
+    console.error('giveOverAdvance error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error while recording the over advance' });
+  } finally {
+    client.release();
+  }
+};
+
+// GET /api/staff-wallet/over-advances/:staffProfileId
+// Over advances given to one staff member (admin view, newest first).
+const getStaffOverAdvances = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT advance_id, advance_code, amount_requested AS amount, over_advance_reason AS reason,
+              shortfall_amount, approved_at AS created_at, reviewed_by_name AS recorded_by
+       FROM staff_advances
+       WHERE staff_profile_id = $1 AND is_over_advance = true
+       ORDER BY approved_at DESC`,
+      [req.params.staffProfileId]
+    );
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('getStaffOverAdvances error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
 module.exports = {
+  giveOverAdvance,
+  getStaffOverAdvances,
   getMySalarySheets,
   getMyCareHistory,
   getMyWallet,

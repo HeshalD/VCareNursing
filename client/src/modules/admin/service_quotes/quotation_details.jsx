@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ClientLink, PatientLink } from '../components/EntityLinks';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { ArrowLeft, ArrowRight, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -172,6 +173,9 @@ const expandProductLineItems = (items) => {
 
 const QuotationDetailsPage = () => {
   const { quoteId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { hasPermission } = useAdminAuth();
+  const canEditLineItems = hasPermission ? hasPermission('QUOTATION_EDIT_LINE_ITEMS') : false;
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -339,6 +343,13 @@ const QuotationDetailsPage = () => {
     }
   };
 
+  useEffect(() => {
+    if (searchParams.get('edit') !== '1' || loading || !quote) return;
+    if (canEditLineItems && combinedPaid === 0 && !paymentRecorded && !editingLineItems) startEditingLineItems();
+    setSearchParams({}, { replace: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote, loading]);
+
   const startEditingLineItems = () => {
     setEditRows(
       (quote?.line_items || []).map((li) => ({
@@ -368,8 +379,15 @@ const QuotationDetailsPage = () => {
   // Only discounts can be added here. Custom charges are no longer allowed on a
   // quotation — extras such as transport go on as catalogue products from the
   // quotation builder (the server enforces this too).
-  const addEditRow = () => {
-    setEditRows((prev) => [...prev, { item_type: 'DISCOUNT', description: '', quantity: 1, unit_price: 0 }]);
+  // A service quotation can hold discounts and the care-rate lines (the registration fee line is
+  // managed from the client's registration fee, so it can't be added here). The server enforces this.
+  const NEW_LINE_TEMPLATES = {
+    DISCOUNT:   { item_type: 'DISCOUNT', description: '', quantity: 1, unit_price: 0 },
+    RATE_DAILY: { item_type: 'CHARGE', item_subtype: 'RATE_DAILY', description: 'Daily care rate', quantity: 1, unit_price: 0 },
+    RATE_SHIFT: { item_type: 'CHARGE', item_subtype: 'RATE_SHIFT', description: 'Per-shift care rate', quantity: 1, unit_price: 0 },
+  };
+  const addEditRow = (kind = 'DISCOUNT') => {
+    setEditRows((prev) => [...prev, { ...NEW_LINE_TEMPLATES[kind] }]);
   };
 
   const removeEditRow = (index) => {
@@ -572,9 +590,9 @@ const QuotationDetailsPage = () => {
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-900">Line Items</h3>
-                {!editingLineItems && combinedPaid === 0 && (
-                  <button onClick={startEditingLineItems} title="Edit quotation" className={iconBtnCls}>
-                    <Pencil className="h-4 w-4" />
+                {!editingLineItems && canEditLineItems && combinedPaid === 0 && !paymentRecorded && (
+                  <button onClick={startEditingLineItems} title="Add, change or remove line items (only before a payment is recorded)" className={ghostBtnCls}>
+                    <Pencil className="h-4 w-4" /> Edit
                   </button>
                 )}
               </div>
@@ -593,7 +611,7 @@ const QuotationDetailsPage = () => {
                           className="flex-1 min-w-[160px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                         <span className="w-28 text-center rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-500">
-                          {row.item_type === 'DISCOUNT' ? 'Discount' : 'Charge'}
+                          {row.item_type === 'DISCOUNT' ? 'Discount' : row.is_registration_fee ? 'Reg. fee' : row.item_subtype === 'RATE_DAILY' ? 'Daily rate' : row.item_subtype === 'RATE_SHIFT' ? 'Shift rate' : 'Charge'}
                         </span>
                         <input
                           type="number"
@@ -613,8 +631,9 @@ const QuotationDetailsPage = () => {
                         />
                         <button
                           onClick={() => removeEditRow(idx)}
-                          title="Remove line"
-                          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          disabled={row.is_registration_fee}
+                          title={row.is_registration_fee ? 'The registration fee line is managed from the client\'s registration fee' : 'Remove line'}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -622,9 +641,17 @@ const QuotationDetailsPage = () => {
                     ))}
                   </div>
 
-                  <button onClick={addEditRow} className={ghostBtnCls}>
-                    <Plus className="h-4 w-4" /> Add Discount
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => addEditRow('DISCOUNT')} className={ghostBtnCls}>
+                      <Plus className="h-4 w-4" /> Add Discount
+                    </button>
+                    <button onClick={() => addEditRow('RATE_DAILY')} className={ghostBtnCls}>
+                      <Plus className="h-4 w-4" /> Add Daily Rate
+                    </button>
+                    <button onClick={() => addEditRow('RATE_SHIFT')} className={ghostBtnCls}>
+                      <Plus className="h-4 w-4" /> Add Shift Rate
+                    </button>
+                  </div>
 
                   <div>
                     <SectionHeader title="Terms & Conditions" />

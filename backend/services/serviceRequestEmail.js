@@ -46,10 +46,11 @@ function buildSections(r, creator = { type: 'CLIENT' }) {
   const sections = [
     ['Request', [
       ['Request code', r.service_request_code],
-      ['Created by', creator.type === 'STAFF'
+      // creator.type 'NONE' = built on demand from the dashboard, where the original creator isn't stored
+      ['Created by', creator.type === 'NONE' ? null : creator.type === 'STAFF'
         ? `${creator.name || 'An internal team member'} (internal team member)`
         : 'The client (submitted online)'],
-      ['Assignment', creator.type === 'STAFF'
+      ['Assignment', creator.type === 'NONE' ? null : creator.type === 'STAFF'
         ? (creator.name ? `Coordinated by ${creator.name}` : null)
         : 'Unassigned service request - no coordinator yet'],
       ['Submitted', fmtDateTime(r.created_at)],
@@ -150,7 +151,8 @@ function buildEmail(r, creator = { type: 'CLIENT' }) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${sectionHtml}</table>
       ${link ? `<div style="margin-top:24px;"><a href="${esc(link)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:8px;">Open in admin dashboard</a></div>` : ''}
       <div style="margin-top:28px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#16a34a;">Copy for WhatsApp</div>
-      <div style="margin-top:4px;font-size:12px;color:#64748b;">Select the box below, copy, and paste it into WhatsApp as is.</div>
+      ${link ? `<div style="margin-top:8px;"><a href="${esc(link)}?copy=whatsapp" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-weight:600;font-size:13px;padding:9px 16px;border-radius:8px;">Copy for WhatsApp (one click)</a></div>
+      <div style="margin-top:6px;font-size:12px;color:#64748b;">Opens the request in the dashboard and copies the details to your clipboard. Or select the box below, copy, and paste it into WhatsApp as is.</div>` : `<div style="margin-top:4px;font-size:12px;color:#64748b;">Select the box below, copy, and paste it into WhatsApp as is.</div>`}
       <div style="margin-top:8px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.55;color:#0f172a;white-space:pre-wrap;word-break:break-word;">${esc(whatsappText)}</div>
     </td></tr>
   </table>
@@ -184,4 +186,11 @@ async function notifyNewServiceRequest(requestId, creator = { type: 'CLIENT' }) 
   }
 }
 
-module.exports = { notifyNewServiceRequest, buildEmail, loadRequest, getRecipientEmails };
+// WhatsApp-ready text for an existing request, for the dashboard's "Copy for WhatsApp" button.
+async function getWhatsappTextForRequest(requestId) {
+  const request = await loadRequest(requestId);
+  if (!request) return null;
+  return buildWhatsappText(request, buildSections(request, { type: 'NONE' }));
+}
+
+module.exports = { notifyNewServiceRequest, getWhatsappTextForRequest, buildEmail, loadRequest, getRecipientEmails };

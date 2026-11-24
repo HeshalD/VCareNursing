@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Loader2, ChevronDown, AlertCircle } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
@@ -212,8 +213,10 @@ const AdminDirectBookingDrawer = ({
   const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
   const [clientAddressLoading, setClientAddressLoading] = useState(false);
 
-  // Coordinator lock — same pattern as the proxy service request drawer.
+  // Salesperson lock — same pattern as the proxy service request drawer.
   const [myStaffId, setMyStaffId] = useState(null);
+  const { hasPermission } = useAdminAuth();
+  const canReassignSalesperson = hasPermission ? hasPermission('SERVICE_REQUEST_REASSIGN_SALESPERSON') : false;
   const [coordinatorAction, setCoordinatorAction] = useState(null); // 'REASSIGN' | 'KEEP' | null
   useEffect(() => {
     apiClient.getMyInternalStaffId().then((res) => setMyStaffId(res.staff_id)).catch(() => {});
@@ -358,7 +361,7 @@ const AdminDirectBookingDrawer = ({
       errs.dailyRate = 'Enter a valid daily rate.';
     if (serviceModel === 'SHIFT_BASED' && (!shiftRate || isNaN(parseFloat(shiftRate)) || parseFloat(shiftRate) < 0))
       errs.shiftRate = 'Enter a valid per-shift rate.';
-    if (coordinatorMismatch && !coordinatorAction) errs.client = 'This client already has a coordinator — choose how to proceed.';
+    if (coordinatorMismatch && canReassignSalesperson && !coordinatorAction) errs.client = 'This client already has a salesperson — choose how to proceed.';
     if (regNeedsChoice && regAction === 'INVOICE' && !(parseFloat(regAmount) > 0)) errs.submit = 'Enter the registration fee amount to invoice.';
     if (regNeedsChoice && ['WAIVE', 'PAID_BEFORE'].includes(regAction) && regReason.trim().length < 5) errs.submit = 'Add a short reason (at least 5 characters) for the registration fee choice.';
     return errs;
@@ -382,7 +385,7 @@ const AdminDirectBookingDrawer = ({
       // SHIFT_BASED bookings have no booking end date — billing is purely shift-count-derived.
       ...(serviceModel !== 'SHIFT_BASED' && scheduledEndDate ? { scheduled_end_date: scheduledEndDate } : {}),
       ...(adminNotes ? { admin_notes: adminNotes } : {}),
-      ...(coordinatorAction ? { coordinator_action: coordinatorAction } : {}),
+      ...(coordinatorMismatch ? { coordinator_action: canReassignSalesperson ? coordinatorAction : 'KEEP' } : {}),
       ...(regNeedsChoice ? {
         registration_action: regAction,
         ...(regAction === 'INVOICE' ? { registration_fee_amount: parseFloat(regAmount) } : {}),
@@ -485,29 +488,32 @@ const AdminDirectBookingDrawer = ({
                       <div className="flex items-start gap-2">
                         <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                         <p className="text-sm text-amber-800">
-                          This client is already coordinated by <span className="font-semibold">{selectedClient?.coordinator_name || 'another staff member'}</span>. Choose how to proceed:
+                          This client's salesperson is <span className="font-semibold">{selectedClient?.coordinator_name || 'another staff member'}</span>.{' '}
+                          {canReassignSalesperson ? 'Choose how to proceed:' : 'They stay as the salesperson; only a super admin can reassign.'}
                         </p>
                       </div>
-                      <div className="flex gap-2 mt-3">
-                        <button
-                          type="button"
-                          onClick={() => setCoordinatorAction('REASSIGN')}
-                          className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                            coordinatorAction === 'REASSIGN' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          Reassign coordinator to me
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCoordinatorAction('KEEP')}
-                          className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                            coordinatorAction === 'KEEP' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          Keep existing coordinator
-                        </button>
-                      </div>
+                      {canReassignSalesperson && (
+                        <div className="flex gap-2 mt-3">
+                          <button
+                            type="button"
+                            onClick={() => setCoordinatorAction('REASSIGN')}
+                            className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                              coordinatorAction === 'REASSIGN' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            Reassign salesperson to me
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCoordinatorAction('KEEP')}
+                            className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                              coordinatorAction === 'KEEP' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            Keep existing salesperson
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

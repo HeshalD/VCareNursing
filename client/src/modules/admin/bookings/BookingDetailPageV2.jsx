@@ -22,6 +22,7 @@ import { buildServiceCalendar, computeServedDays, computeServedShifts } from './
 import { formatDMY, formatRs, formatTimeWithDayOffset, formatWeekdayDMY, localDateISO } from './dayDisplay';
 import { buildAllocationRows } from './allocationHistoryModel';
 import AllocationHistoryTab from './AllocationHistoryTab';
+import BookingPaymentsTab from './BookingPaymentsTab';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import TimeInput from '../../../components/common/TimeInput';
 import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
@@ -425,6 +426,9 @@ const BookingDetailPageV2 = () => {
   const [walletPayoffNotes, setWalletPayoffNotes]         = useState('');
   const [walletPayoffSubmitting, setWalletPayoffSubmitting] = useState(false);
   const [walletPayoffError, setWalletPayoffError]         = useState('');
+  const [walletPayoffDone, setWalletPayoffDone]           = useState('');
+  const [slipInputKey, setSlipInputKey]                   = useState(0);
+  const [lastRecordedPaymentId, setLastRecordedPaymentId] = useState(null);
 
   // inline rate editing (client billing rate on `bookings`, staff pay rate on
   // `booking_staff_assignments`) — one shared editor since only one field is
@@ -708,7 +712,15 @@ const BookingDetailPageV2 = () => {
     amount: p.amount_received ?? p.amount ?? 0, method: p.payment_method || p.method || '-',
     reference: p.reference_number || p.reference || p.receipt_no || '-',
     notes: p.notes || '-', slipUrl: p.slip_url || null,
+    chequeNumber: p.cheque_number || null, chequeDate: p.cheque_date || null,
+    bankName: p.bank_account_name || p.bank_account_bank || null,
+    wasEdited: !!p.was_edited,
+    productInvoice: /product invoice payment/i.test(p.notes || ''),
+    methodLabel: (() => { const m = String(p.payment_method || p.method || '-').replace(/_/g, ' ').toLowerCase(); return m[0].toUpperCase() + m.slice(1); })(),
   }));
+  // Real money received vs wallet balance auto-applied to invoices (listed apart on the Payments tab).
+  const receivedPayments = normPayments.filter(p => p.method !== 'WALLET');
+  const walletPayments   = normPayments.filter(p => p.method === 'WALLET');
 
   // Map each payment row (booking_payment_id) to its generated receipt, if any.
   const receiptByPayment = useMemo(() => {
@@ -867,8 +879,13 @@ const BookingDetailPageV2 = () => {
   const overdueAmount = ledgerPaid > totalInvoiced ? 0 : totalInvoiced - ledgerPaid;
   const remainingBalance = ledgerPaid - totalInvoiced;
   const walletBalance    = Number(clientDetails.wallet_balance || 0);
-  const maxPayoff        = Math.min(walletBalance, overdueAmount);
-  const canPayoff        = walletBalance > 0 && overdueAmount > 0;
+  // Only this booking's own reserved money plus unreserved wallet money can be drawn here
+  // (services/walletService.takeFromWallet) — not what is reserved for the client's other bookings.
+  const walletAvailableHere = paymentSummary.funded_for_service != null
+    ? Math.max(Math.min(walletBalance, Number(paymentSummary.funded_for_service)), 0)
+    : walletBalance;
+  const maxPayoff        = Math.min(walletAvailableHere, overdueAmount);
+  const canPayoff        = maxPayoff > 0 && overdueAmount > 0;
   const statementClientId = clientDetails.client_profile_id || bookingSummary.client_profile_id || bookingSummary.client_id;
   const lastPaymentDate   = paymentSummary.last_payment_at || paymentSummary.last_payment_date || null;
 
@@ -1268,19 +1285,25 @@ const BookingDetailPageV2 = () => {
     finally { setReceiptBusy(''); }
   };
 
+  // Sends the receipt of the payment that was just recorded — found by its payment id, never
+  // "the newest receipt on the booking", which is the previous payment's until the new PDF exists.
   const handleSendLatestReceipt = async () => {
     setReceiptSendBusy(true);
     try {
       apiClient.setToken(adminToken);
-      const res = await apiClient.getBookingReceipts(bookingId);
-      const fresh = Array.isArray(res?.receipts) ? res.receipts : [];
-      setReceipts(fresh);
-      const latest = fresh[0];
-      if (latest) {
-        await apiClient.sendPaymentReceipt(latest.receipt_id);
-        const res2 = await apiClient.getBookingReceipts(bookingId);
-        setReceipts(Array.isArray(res2?.receipts) ? res2.receipts : []);
+      if (!lastRecordedPaymentId) throw new Error('Could not tell which payment to send — use Send on the payment row instead.');
+      let receipt = null;
+      for (let i = 0; i < 6 && !receipt; i += 1) {
+        const res = await apiClient.getBookingReceipts(bookingId);
+        const list = Array.isArray(res?.receipts) ? res.receipts : [];
+        setReceipts(list);
+        receipt = list.find(r => r.booking_payment_id === lastRecordedPaymentId) || null;
+        if (!receipt) await new Promise(r => setTimeout(r, 1000));
       }
+      if (!receipt) receipt = (await apiClient.generateBookingPaymentReceipt(lastRecordedPaymentId))?.receipt || null;
+      if (!receipt) throw new Error('The receipt is not ready yet — try Send on the payment row in a moment.');
+      await apiClient.sendPaymentReceipt(receipt.receipt_id);
+      await fetchReceipts();
       setShowReceiptSendPopup(false);
     } catch (err) {
       setError(err?.message || 'Failed to send receipt');
@@ -1288,6 +1311,26 @@ const BookingDetailPageV2 = () => {
     } finally {
       setReceiptSendBusy(false);
     }
+  };
+
+  const handleRegenerateReceipt = async (receiptId) => {
+    try {
+      setReceiptBusy(receiptId); setError('');
+      apiClient.setToken(adminToken);
+      await apiClient.regenerateReceiptPdf(receiptId);
+      await fetchReceipts();
+    } catch (err) { setError(err?.message || 'Failed to regenerate the receipt PDF'); }
+    finally { setReceiptBusy(''); }
+  };
+
+  const handleGenerateReceipt = async (paymentId) => {
+    try {
+      setReceiptBusy(`gen-${paymentId}`); setError('');
+      apiClient.setToken(adminToken);
+      await apiClient.generateBookingPaymentReceipt(paymentId);
+      await fetchReceipts();
+    } catch (err) { setError(err?.message || 'Failed to create the receipt'); }
+    finally { setReceiptBusy(''); }
   };
 
   const fetchDailyRecords = async () => {
@@ -2097,13 +2140,14 @@ const BookingDetailPageV2 = () => {
     try {
       setPaymentSubmitting(true); setError('');
       apiClient.setToken(adminToken);
-      await apiClient.recordBookingPayment(bookingId, {
+      const saved = await apiClient.recordBookingPayment(bookingId, {
         amount_received: parseFloat(paymentForm.amount_received), payment_method: paymentForm.payment_method,
         bank_account_id: paymentForm.bank_account_id || null, cheque_number: paymentForm.cheque_number || null,
         cheque_date: paymentForm.cheque_date || null, reference_number: paymentForm.reference_number || null, notes: paymentForm.notes || null,
         payment_date: paymentForm.payment_date || null,
       }, paymentSlipFile);
-      setPaymentForm(makeInitialPaymentForm()); setPaymentSlipFile(null);
+      setPaymentForm(makeInitialPaymentForm()); setPaymentSlipFile(null); setSlipInputKey(k => k + 1);
+      setLastRecordedPaymentId(saved?.data?.booking_payment_id || null);
       setShowReceiptSendPopup(true);
       await fetchDetail();
       // Receipt is generated asynchronously server-side; refetch shortly after.
@@ -2736,10 +2780,11 @@ const BookingDetailPageV2 = () => {
     const amount = parseFloat(walletPayoffAmount);
     if (!amount || amount <= 0) return;
     try {
-      setWalletPayoffSubmitting(true); setWalletPayoffError('');
+      setWalletPayoffSubmitting(true); setWalletPayoffError(''); setWalletPayoffDone('');
       apiClient.setToken(adminToken);
       await apiClient.walletPayoffBooking(bookingId, amount, walletPayoffNotes || null);
       setWalletPayoffAmount(''); setWalletPayoffNotes(''); await fetchDetail();
+      setWalletPayoffDone(`Paid ${formatRs(amount)} from the client wallet.`);
     } catch (err) { setWalletPayoffError(err?.message || 'Failed to process wallet payoff'); }
     finally { setWalletPayoffSubmitting(false); }
   };
@@ -3149,6 +3194,10 @@ const BookingDetailPageV2 = () => {
     ['STAFF_SWAP', 'SHIFT_REASSIGNMENT'].includes(sa.action_type) && !sa.payload?.new_staff_id);
   const requiresBank      = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
   const isCheque          = paymentForm.payment_method === 'CHEQUE';
+  // Same statuses the backend's wallet payoff accepts (paymentTrackingController.walletPayoffBooking).
+  const payoffStatusOk    = ['active', 'overdue', 'pending'].includes(bookingStatus);
+  // Only active accounts can receive a payment, and petty cash is for cash, not bank transfers.
+  const payableBankAccounts = bankAccounts.filter(a => a.is_active !== false && !/petty\s*cash/i.test(`${a.account_nickname || ''} ${a.bank_name || ''}`));
 
   const tabs = [
     { id: 'care-timeline', label: 'Care Timeline', icon: CalendarDays },
@@ -3958,7 +4007,7 @@ const BookingDetailPageV2 = () => {
                       { label: 'Total paid',       value: formatMoney(ledgerPaid),         green: true },
                       { label: 'Total invoiced',   value: formatMoney(totalInvoiced) },
                       { label: 'Overdue amount',   value: formatMoney(overdueAmount),      red: overdueAmount > 0 },
-                      { label: 'Remaining balance',value: formatMoney(remainingBalance) },
+                      { label: 'Prepaid balance',  value: formatMoney(Math.max(remainingBalance, 0)) },
                       { label: 'Quoted amount',    value: formatMoney(bookingSummary.amount_quotated ?? 0) },
                       { label: 'Registration fee', value: formatMoney(bookingSummary.registration_fee ?? 0) },
                     ].map(({ label, value, red, green }) => (
@@ -4031,11 +4080,11 @@ const BookingDetailPageV2 = () => {
                 {/* Recent payments */}
                 <Card>
                   <CardTitle>Recent activity</CardTitle>
-                  {normPayments.length === 0 ? (
+                  {receivedPayments.length === 0 ? (
                     <Empty icon={DollarSign} text="No payments recorded yet." />
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                      {normPayments.slice(0, 4).map((p, i) => (
+                      {receivedPayments.slice(0, 4).map((p, i) => (
                         <div key={p.id || i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 11, padding: '11px 13px' }}>
                           <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: '#2A2722' }}>{formatDate(p.date)}</div>
@@ -4055,191 +4104,43 @@ const BookingDetailPageV2 = () => {
               TAB: PAYMENTS
           ══════════════════════════════════════════════════════ */}
           {activeSection === 'payments' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-              {/* Mini stats */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
-                {[
-                  { label: 'Total invoiced',  value: formatMoney(invoiceSummary.total_invoiced ?? 0) },
-                  { label: 'Outstanding',     value: formatMoney(overdueAmount), red: overdueAmount > 0 },
-                  { label: 'Wallet balance',  value: formatMoney(walletBalance), green: walletBalance > 0 },
-                  { label: 'Last payment',    value: formatDate(lastPaymentDate) },
-                ].map(({ label, value, red, green }) => (
-                  <div key={label} style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 14, padding: '15px 16px' }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 600, color: '#9A9488', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, marginTop: 5, color: red ? '#BC4338' : green ? '#2F8A5B' : '#2A2722' }}>{value}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Payment history + Record payment */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
-                <Card>
-                  <CardTitle>Payment history</CardTitle>
-                  {normPayments.length === 0 ? (
-                    <Empty icon={DollarSign} text="No payment records for this booking." />
-                  ) : (
-                    <>
-                     <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-                      <div style={{ minWidth: 480 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '0.95fr 0.9fr 0.8fr 0.75fr 1.25fr', gap: 10, paddingBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', borderBottom: '1px solid #EFEAE0' }}>
-                        <span>Date</span><span>Amount</span><span>Method</span><span>Reference</span><span>Receipt</span>
-                      </div>
-                      {normPayments.map((p, i) => {
-                        const rcpt = receiptByPayment[p.id];
-                        const rcptBusy = rcpt && receiptBusy === rcpt.receipt_id;
-                        return (
-                        <div key={p.id || i} style={{ display: 'grid', gridTemplateColumns: '0.95fr 0.9fr 0.8fr 0.75fr 1.25fr', gap: 10, padding: '13px 0', borderBottom: '1px solid #F2EEE6', alignItems: 'center' }}>
-                          <div>
-                            <div style={{ fontSize: 13.5, fontWeight: 600, color: '#2A2722' }}>{formatDate(p.date)}</div>
-                            {p.notes !== '-' && <div style={{ fontSize: 11.5, color: '#A39D91', marginTop: 2 }}>{p.notes}</div>}
-                          </div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2F8A5B' }}>{formatMoney(p.amount)}</div>
-                          <div><span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 600, color: '#5A554B', background: '#F4F1EA', borderRadius: 7, padding: '3px 9px' }}>{p.method.replace(/_/g, ' ')}</span></div>
-                          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11.5, color: '#6F6A60' }}>
-                            {p.reference}
-                            {p.slipUrl && <a href={p.slipUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 6, color: '#3F77B5', fontSize: 11 }}>slip</a>}
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                            {!rcpt ? (
-                              <span style={{ fontSize: 11.5, color: '#B8B2A6' }}>—</span>
-                            ) : (
-                              <>
-                                {rcpt.pdf_url ? (
-                                  <a href={rcpt.pdf_url} target="_blank" rel="noreferrer"
-                                     title={rcpt.receipt_code}
-                                     style={{ fontSize: 11.5, fontWeight: 600, color: '#137A6B', textDecoration: 'none', border: '1px solid #CDE5DF', borderRadius: 7, padding: '3px 8px', background: '#F2FAF8' }}>
-                                    Download
-                                  </a>
-                                ) : (
-                                  <span style={{ fontSize: 11, color: '#B8862F' }}>Generating…</span>
-                                )}
-                                <button type="button" disabled={rcptBusy}
-                                  onClick={() => handleSendReceipt(rcpt.receipt_id)}
-                                  style={{ fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', color: '#fff', background: rcptBusy ? '#9CC6BC' : '#137A6B', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: rcptBusy ? 'not-allowed' : 'pointer' }}>
-                                  {rcptBusy ? 'Sending…' : rcpt.whatsapp_sent ? 'Resend' : 'Send'}
-                                </button>
-                                {rcpt.whatsapp_sent && (
-                                  <span title={rcpt.whatsapp_sent_at ? `Sent ${formatDate(rcpt.whatsapp_sent_at)}` : 'Sent'}
-                                        style={{ fontSize: 10.5, fontWeight: 700, color: '#2F8A5B' }}>✓ Sent</span>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        );
-                      })}
-                      </div>
-                     </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, marginTop: 2, borderTop: '1px solid #EFEAE0' }}>
-                        <span style={{ fontSize: 13, color: '#6F6A60' }}>{normPayments.length} payment{normPayments.length !== 1 ? 's' : ''}</span>
-                        <span style={{ fontSize: 13, fontWeight: 800, color: '#2A2722' }}>{formatMoney(ledgerPaid)}</span>
-                      </div>
-                    </>
-                  )}
-                </Card>
-
-                <Card>
-                  <CardTitle>Record a payment</CardTitle>
-                  <p style={{ margin: '-10px 0 15px', fontSize: 12.5, color: '#9A9488' }}>Writes to the booking ledger.</p>
-                  <form onSubmit={handleSubmitPayment} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Amount</label>
-                      <input required type="number" min="0" step="0.01" placeholder="0.00" value={paymentForm.amount_received} onChange={e => setPaymentForm({ ...paymentForm, amount_received: e.target.value })} onWheel={e => e.currentTarget.blur()} style={inp} />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Payment date</label>
-                      <DateInput required max={todayISO()} value={paymentForm.payment_date} onChange={e => setPaymentForm({ ...paymentForm, payment_date: e.target.value })} style={inp} />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Method</label>
-                      <select value={paymentForm.payment_method} onChange={e => setPaymentForm({ ...paymentForm, payment_method: e.target.value })} style={inp}>
-                        <option value="BANK_TRANSFER">Bank transfer</option>
-                        <option value="CASH_DEPOSIT">Cash deposit</option>
-                        <option value="CASH">Cash</option>
-                        <option value="CHEQUE">Cheque</option>
-                      </select>
-                    </div>
-                    {requiresBank && (
-                      <div>
-                        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Bank account</label>
-                        <select required value={paymentForm.bank_account_id} onChange={e => setPaymentForm({ ...paymentForm, bank_account_id: e.target.value })} style={inp}>
-                          <option value="">Select account</option>
-                          {bankAccounts.map(a => <option key={a.account_id} value={a.account_id}>{a.account_nickname} ({a.bank_name})</option>)}
-                        </select>
-                      </div>
-                    )}
-                    {isCheque && (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Cheque no.</label>
-                          <input required placeholder="000000" value={paymentForm.cheque_number} onChange={e => setPaymentForm({ ...paymentForm, cheque_number: e.target.value })} style={inp} />
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Cheque date</label>
-                          <DateInput required value={paymentForm.cheque_date} onChange={e => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })} style={inp} />
-                        </div>
-                      </div>
-                    )}
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Reference (optional)</label>
-                      <input placeholder="TRF / receipt no." value={paymentForm.reference_number} onChange={e => setPaymentForm({ ...paymentForm, reference_number: e.target.value })} style={inp} />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Notes (optional)</label>
-                      <textarea rows={2} placeholder="e.g. 10-day advance" value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} style={{ ...inp, resize: 'none' }} />
-                    </div>
-                    <div style={{ background: '#F6F3EC', border: '1px solid #E7E1D6', borderRadius: 10, padding: 12 }}>
-                      <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 8 }}>Payment slip (optional)</label>
-                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #E7E1D6', borderRadius: 8, padding: '7px 12px', fontSize: 12, fontWeight: 600, color: '#5A554B', cursor: 'pointer' }}>
-                        <Upload style={{ width: 13, height: 13 }} /> Choose file
-                        <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => setPaymentSlipFile(e.target.files?.[0] || null)} />
-                      </label>
-                      {paymentSlipFile && <p style={{ margin: '8px 0 0', fontSize: 12, color: '#6F6A60' }}>{paymentSlipFile.name}</p>}
-                    </div>
-                    <button type="submit" disabled={paymentSubmitting} style={{ marginTop: 3, width: '100%', background: paymentSubmitting ? '#9ca3af' : '#1e293b', border: 'none', borderRadius: 8, padding: '11px 12px', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700, color: '#fff', cursor: paymentSubmitting ? 'not-allowed' : 'pointer' }}>
-                      {paymentSubmitting ? 'Saving…' : 'Record payment'}
-                    </button>
-                  </form>
-                </Card>
-              </div>
-
-              {/* Wallet payoff */}
-              <Card>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 15 }}>
-                  <div style={{ background: '#EDE5F5', borderRadius: '50%', padding: 8 }}><Wallet style={{ width: 16, height: 16, color: '#7A4A94' }} /></div>
-                  <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Wallet payoff</h3>
-                </div>
-                {canPayoff && !isTerminated ? (
-                  <form onSubmit={handleWalletPayoff} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-                      {[{ label: 'Wallet balance', value: formatMoney(walletBalance), color: '#2F8A5B' }, { label: 'Overdue amount', value: formatMoney(overdueAmount), color: '#BC4338' }, { label: 'Max payable', value: formatMoney(maxPayoff), color: '#7A4A94' }].map(({ label, value, color }) => (
-                        <div key={label} style={{ border: '1px solid #ECE7DF', borderRadius: 12, padding: 12 }}>
-                          <div style={{ fontSize: 11.5, color: '#9A9488', marginBottom: 4 }}>{label}</div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <input required type="number" min="0.01" max={maxPayoff.toFixed(2)} step="0.01" placeholder="Amount to pay off" value={walletPayoffAmount} onChange={e => setWalletPayoffAmount(e.target.value)} onWheel={e => e.currentTarget.blur()} style={{ ...inp, flex: 1 }} />
-                      <button type="button" onClick={() => setWalletPayoffAmount(maxPayoff.toFixed(2))} style={{ border: '1px solid #E2DCD0', borderRadius: 10, padding: '10px 14px', fontSize: 12, fontWeight: 600, color: '#5A554B', background: '#FCFBF8', cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>Max</button>
-                    </div>
-                    <textarea rows={2} placeholder="Notes (optional)" value={walletPayoffNotes} onChange={e => setWalletPayoffNotes(e.target.value)} style={{ ...inp, resize: 'none' }} />
-                    {walletPayoffError && <div style={{ background: '#FDF2F1', border: '1px solid #F5C9C5', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#BC4338' }}>{walletPayoffError}</div>}
-                    <button type="submit" disabled={walletPayoffSubmitting || !walletPayoffAmount} style={{ width: '100%', background: walletPayoffSubmitting ? '#9ca3af' : '#1e293b', border: 'none', borderRadius: 8, padding: '11px 12px', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700, color: '#fff', cursor: 'pointer' }}>
-                      {walletPayoffSubmitting ? 'Processing…' : 'Pay with wallet'}
-                    </button>
-                  </form>
-                ) : (
-                  <div style={{ border: '1px dashed #E7E1D6', borderRadius: 12, background: '#FBF9F4', padding: '24px 16px', textAlign: 'center' }}>
-                    <Wallet style={{ width: 22, height: 22, color: '#C4BFB5', margin: '0 auto 10px' }} />
-                    <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>
-                      {isTerminated ? 'Wallet payoff unavailable for terminated bookings.' : overdueAmount <= 0 ? 'No overdue amount.' : 'Client wallet is empty.'}
-                    </p>
-                  </div>
-                )}
-              </Card>
-            </div>
+            <BookingPaymentsTab
+              totalInvoiced={Number(invoiceSummary.total_invoiced ?? 0)}
+              overdueAmount={overdueAmount}
+              paymentsReceivedTotal={paymentSummary.payments_received_total ?? null}
+              walletBalance={walletBalance}
+              walletAvailableHere={walletAvailableHere}
+              maxPayoff={maxPayoff}
+              lastPaymentDate={lastPaymentDate}
+              receivedPayments={receivedPayments}
+              walletPayments={walletPayments}
+              receiptByPayment={receiptByPayment}
+              receiptBusy={receiptBusy}
+              lastRecordedPaymentId={lastRecordedPaymentId}
+              paymentForm={paymentForm}
+              onPaymentFormChange={setPaymentForm}
+              onSubmitPayment={handleSubmitPayment}
+              paymentSubmitting={paymentSubmitting}
+              paymentError={error}
+              payableBankAccounts={payableBankAccounts}
+              paymentSlipFile={paymentSlipFile}
+              slipInputKey={slipInputKey}
+              onSlipChange={setPaymentSlipFile}
+              onClearSlip={() => { setPaymentSlipFile(null); setSlipInputKey(k => k + 1); }}
+              onSendReceipt={handleSendReceipt}
+              onRegenerateReceipt={handleRegenerateReceipt}
+              onGenerateReceipt={handleGenerateReceipt}
+              canPayoff={canPayoff}
+              payoffStatusOk={payoffStatusOk}
+              payoffAmount={walletPayoffAmount}
+              payoffNotes={walletPayoffNotes}
+              payoffError={walletPayoffError}
+              payoffDone={walletPayoffDone}
+              payoffSubmitting={walletPayoffSubmitting}
+              onPayoffAmountChange={(v) => { setWalletPayoffAmount(v); setWalletPayoffDone(''); }}
+              onPayoffNotesChange={setWalletPayoffNotes}
+              onWalletPayoff={handleWalletPayoff}
+            />
           )}
 
           {/* ══════════════════════════════════════════════════════

@@ -124,6 +124,8 @@ const expandProductLineItems = (items) => {
 
 
 
+const titleCaseLabel = (v) => (v ? String(v).toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : '-');
+
 const formatDate = (value) => {
   if (!value) return '-';
   const date = new Date(value);
@@ -729,11 +731,26 @@ const ClientDetailPage = () => {
     }
   };
 
+  const [serviceRequests, setServiceRequests] = useState([]);
+  const [serviceRequestsLoading, setServiceRequestsLoading] = useState(false);
+  const fetchServiceRequests = async () => {
+    try {
+      setServiceRequestsLoading(true);
+      const res = await apiClient.getClientServiceRequests(clientId);
+      setServiceRequests(res?.data || []);
+    } catch (err) {
+      console.error('Client service requests fetch error:', err);
+    } finally {
+      setServiceRequestsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
     if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); fetchOverdueInvoices(); }
     if (activeSection === 'products') { fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
     if (activeSection === 'quotes') { fetchQuoteLineItems(); fetchProductQuotes(); }
+    if (activeSection === 'requests') fetchServiceRequests();
     if (activeSection === 'activities') fetchActivityLog(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
@@ -1283,6 +1300,7 @@ const ClientDetailPage = () => {
     { id: 'payments',  label: 'Payments',       icon: BadgeDollarSign },
     { id: 'bookings',  label: 'Bookings',       icon: CalendarDays },
     { id: 'invoices',  label: 'Invoices',       icon: Receipt },
+    { id: 'requests',  label: 'Service Requests', icon: FileText },
     { id: 'quotes',    label: 'Quotes',         icon: FileText },
     { id: 'products',  label: 'Products',       icon: Package },
     { id: 'staff',     label: 'Staff',          icon: Briefcase },
@@ -2313,6 +2331,63 @@ const ClientDetailPage = () => {
           </SectionList>
         );
 
+      case 'requests':
+        return (
+          <div className="space-y-5">
+            {serviceRequestsLoading ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-blue-600" /></div>
+            ) : serviceRequests.length === 0 ? (
+              <EmptyState title="No service requests" />
+            ) : (
+              <SectionList>
+                {serviceRequests.map((r) => {
+                  const summaryPath = `/admin/service-requests/${r.request_id}/summary`;
+                  const isProxy = r.entered_via === 'PROXY';
+                  return (
+                    <ExpandableRow
+                      key={r.request_id}
+                      summary={
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                          <Link to={summaryPath} onClick={(e) => e.stopPropagation()} className="font-semibold text-sm text-blue-600 hover:underline">
+                            {r.service_request_code || `Request ${String(r.request_id).slice(0, 8)}`}
+                          </Link>
+                          <span className="text-xs font-medium text-gray-600">{(r.status || '').replace(/_/g, ' ')}</span>
+                          <span className="text-xs text-gray-500">{titleCaseLabel(r.service_type)}</span>
+                          <span className="text-xs text-gray-400">{formatDate(r.created_at)}</span>
+                        </div>
+                      }
+                    >
+                      <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
+                        <InfoRow label="Request" value={<Link to={summaryPath} className="text-blue-600 hover:underline">{r.service_request_code || r.request_id}</Link>} />
+                        <InfoRow label="Status" value={(r.status || '-').replace(/_/g, ' ')} />
+                        <InfoRow label="Created" value={formatDateTime(r.created_at)} />
+                        <InfoRow label="Salesperson" value={r.coordinator_name || 'Unassigned'} />
+                        <InfoRow label="Received Via" value={isProxy ? 'Proxy' : 'Client'} />
+                        <InfoRow label="Entered By" value={isProxy ? (r.entered_by_name || '-') : 'Client (self-service)'} />
+                        <InfoRow label="Service" value={titleCaseLabel(r.service_type)} />
+                        <InfoRow label="Service Model" value={(r.service_model || '-').replace(/_/g, ' ')} />
+                        <InfoRow label="Preferred Staff Gender" value={titleCaseLabel(r.preferred_gender)} />
+                        <InfoRow label="Start Date" value={r.start_date ? formatDate(r.start_date) : '-'} />
+                        <InfoRow label="Care Recipient" value={withHonorific(r.patient_honorific, r.patient_name) || '-'} />
+                        <InfoRow label="Age / Relationship" value={[r.patient_age && `Age ${r.patient_age}`, r.relationship_to_client].filter(Boolean).join(' · ') || '-'} />
+                        <InfoRow label="Medical Condition" value={r.patient_condition || '-'} />
+                        <InfoRow label="Emergency Contact" value={[r.emergency_contact_name, r.emergency_contact_number].filter(Boolean).join(' - ') || '-'} />
+                        <InfoRow label="Booking" value={r.booking_id ? <Link to={`/admin/bookings/${r.booking_id}/detail`} className="text-blue-600 hover:underline">{r.booking_code || 'View booking'}</Link> : '-'} />
+                        <div className="@md:col-span-2 @3xl:col-span-3">
+                          <InfoRow label="Service Address" value={r.location_address || '-'} />
+                        </div>
+                        <div className="@md:col-span-2 @3xl:col-span-3">
+                          <InfoRow label="Remarks" value={r.remarks || '-'} />
+                        </div>
+                      </div>
+                    </ExpandableRow>
+                  );
+                })}
+              </SectionList>
+            )}
+          </div>
+        );
+
       case 'reviews':
         return (
           <div className="space-y-5">
@@ -2910,7 +2985,7 @@ const ClientDetailPage = () => {
                     <p className="mt-4 text-sm text-gray-700">{statusSentence}</p>
                   )}
                   <p className="mt-1 text-xs text-gray-400">
-                    Managed by {clientSalesperson?.current?.salesperson_name || 'no one yet'}
+                    Managed by {clientSalesperson?.current?.salesperson_name || clientProfile.salesperson_name || 'no one yet'}
                   </p>
 
                   {editingRegFeeAmount && (
@@ -3378,6 +3453,7 @@ const ClientDetailPage = () => {
                   <div className="grid gap-4 @md:grid-cols-2 @4xl:grid-cols-4">
                     <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
                     <InfoRow label="Full Name"   value={withHonorific(clientProfile.honorific, clientProfile.full_name) || '-'} />
+                    <InfoRow label="Salesperson" value={clientSalesperson?.current?.salesperson_name || clientProfile.salesperson_name || 'Unassigned'} />
                     <InfoRow label="Email"       value={clientProfile.email || '-'} />
                     <InfoRow label="Phone"       value={formatMobileNumber(clientProfile.mobile_number) || '-'} />
                     <InfoRow label="City"        value={clientProfile.city_name ? `${clientProfile.city_name}, ${clientProfile.city_district}` : '-'} />
@@ -3609,7 +3685,7 @@ const ClientDetailPage = () => {
   return (
     <AdminLayout
       title={withHonorific(clientProfile.honorific, clientProfile.full_name) || 'Client Details'}
-      subtitle={`Client Code: ${clientProfile.client_code || clientProfile.client_profile_id || 'â€”'}`}
+      subtitle={`Client Code: ${clientProfile.client_code || clientProfile.client_profile_id || 'â€”'} · Salesperson: ${clientSalesperson?.current?.salesperson_name || clientProfile.salesperson_name || 'Unassigned'}`}
     >
       <div className="flex items-start gap-4">
         {/* Client switcher sidebar (desktop) */}

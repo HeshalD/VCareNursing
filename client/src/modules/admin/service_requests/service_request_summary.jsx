@@ -3,7 +3,7 @@ import { ClientLink, PatientLink } from '../components/EntityLinks';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, FileText, CircleDollarSign, ArrowRight,
-  ExternalLink, Pencil, X, Save, User, Stethoscope,
+  ExternalLink, Copy, Pencil, X, Save, User, Stethoscope,
   BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
   Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
   BadgeDollarSign, Menu, UserCheck, Check, UserCog,
@@ -287,7 +287,9 @@ const ServiceRequestSummaryPage = () => {
   const [error, setError]               = useState('');
   const [request, setRequest]           = useState(null);
   const { hasPermission } = useAdminAuth();
+  const canEditQuoteItems = hasPermission ? hasPermission('QUOTATION_EDIT_LINE_ITEMS') : false;
   const canAssignCoordinator = hasPermission ? hasPermission('SERVICE_REQUEST_ASSIGN_COORDINATOR') : false;
+  const canReassignSalesperson = hasPermission ? hasPermission('SERVICE_REQUEST_REASSIGN_SALESPERSON') : false;
   const [showCoordinatorModal, setShowCoordinatorModal] = useState(false);
   const [quotes, setQuotes]             = useState([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState('');
@@ -402,6 +404,30 @@ const ServiceRequestSummaryPage = () => {
     if (hasAssignedStaff) return 'Staff assigned';
     return sentCandidates.length === 0 ? 'Staff candidates not sent' : 'Staff assignment pending';
   }, [request, isBookingCreated, sentCandidates, hasAssignedStaff]);
+
+  const [waCopied, setWaCopied] = useState(false);
+  const copyWhatsapp = async () => {
+    try {
+      const res = await apiClient.getServiceRequestWhatsappText(requestId);
+      const text = res?.data?.text;
+      if (!text) throw new Error('empty');
+      await navigator.clipboard.writeText(text);
+      setWaCopied(true);
+      setTimeout(() => setWaCopied(false), 2500);
+      return true;
+    } catch {
+      setError('Could not copy to the clipboard. Please try the Copy for WhatsApp button again.');
+      return false;
+    }
+  };
+
+  // Arriving from the email's "Copy for WhatsApp" link (?copy=whatsapp): try to copy straight away.
+  // Browsers may block clipboard writes without a click - the button above is the fallback.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('copy') !== 'whatsapp') return;
+    copyWhatsapp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId]);
 
   const fetchData = async () => {
     try {
@@ -845,6 +871,13 @@ const ServiceRequestSummaryPage = () => {
             <ArrowLeft className="h-3.5 w-3.5" /> Back
           </button>
           <button
+            onClick={copyWhatsapp}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100 transition-colors"
+          >
+            {waCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {waCopied ? 'Copied!' : 'Copy for WhatsApp'}
+          </button>
+          <button
             onClick={fetchData}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
@@ -900,19 +933,19 @@ const ServiceRequestSummaryPage = () => {
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 <UserCog className="h-3.5 w-3.5 text-slate-400" />
-                <span className="text-slate-500">Coordinator:</span>
+                <span className="text-slate-500">Salesperson:</span>
                 {request.coordinator_staff_id ? (
                   <span className="font-medium text-slate-700">{request.coordinator_name || 'Assigned'}</span>
                 ) : (
                   <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">Unassigned</span>
                 )}
-                {canAssignCoordinator && (
+                {(request.coordinator_staff_id ? canReassignSalesperson : canAssignCoordinator) && (
                   <button
                     type="button"
                     onClick={() => setShowCoordinatorModal(true)}
                     className="font-semibold text-blue-600 hover:text-blue-700 hover:underline"
                   >
-                    {request.coordinator_staff_id ? 'Change' : 'Assign'}
+                    {request.coordinator_staff_id ? 'Reassign' : 'Select'}
                   </button>
                 )}
               </div>
@@ -1422,13 +1455,25 @@ const ServiceRequestSummaryPage = () => {
                               </div>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={e => { e.stopPropagation(); navigate(`/admin/quotations/${quote.quote_id}`); }}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 shrink-0"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" /> Open
-                            </button>
+                            <div className="flex items-center gap-3 shrink-0">
+                              {canEditQuoteItems && Number(quote.payment_count) === 0 && (
+                                <button
+                                  type="button"
+                                  onClick={e => { e.stopPropagation(); navigate(`/admin/quotations/${quote.quote_id}?edit=1`); }}
+                                  title="Add, change or remove line items (only before a payment is recorded)"
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" /> Edit
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={e => { e.stopPropagation(); navigate(`/admin/quotations/${quote.quote_id}`); }}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" /> Open
+                              </button>
+                            </div>
                           </div>
 
                           {/* Money stats */}
@@ -1606,12 +1651,23 @@ const ServiceRequestSummaryPage = () => {
                           <FileText className="w-3.5 h-3.5 text-slate-400" />
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Active Quotation</p>
                         </div>
-                        <button
-                          onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
-                          className="text-xs font-medium text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
-                        >
-                          <ExternalLink className="w-3 h-3" /> Open
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {canEditQuoteItems && Number(selectedQuote.payment_count) === 0 && (
+                            <button
+                              onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}?edit=1`)}
+                              title="Add, change or remove line items (only before a payment is recorded)"
+                              className="text-xs font-medium text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
+                            >
+                              <Pencil className="w-3 h-3" /> Edit
+                            </button>
+                          )}
+                          <button
+                            onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                            className="text-xs font-medium text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3" /> Open
+                          </button>
+                        </div>
                       </div>
                       <div className="px-5 py-4">
                         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1972,12 +2028,23 @@ const ServiceRequestSummaryPage = () => {
                     <FileText className="w-3.5 h-3.5 text-slate-400" />
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Selected Quote</p>
                   </div>
-                  <button
-                    onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
-                    className="text-xs text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1"
-                  >
-                    <ExternalLink className="w-3 h-3" /> Open
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {canEditQuoteItems && Number(selectedQuote.payment_count) === 0 && (
+                      <button
+                        onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}?edit=1`)}
+                        title="Add, change or remove line items (only before a payment is recorded)"
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1"
+                      >
+                        <Pencil className="w-3 h-3" /> Edit
+                      </button>
+                    )}
+                    <button
+                      onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                      className="text-xs text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Open
+                    </button>
+                  </div>
                 </div>
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">

@@ -30,6 +30,22 @@ router.get(
   receiptController.getBookingReceipts
 );
 
+// POST /api/payment-receipts/booking-payment/:booking_payment_id/generate — create a missing receipt
+router.post(
+  '/booking-payment/:booking_payment_id/generate',
+  protect,
+  requirePermission('RECEIPT_SEND'),
+  receiptController.generateForBookingPayment
+);
+
+// POST /api/payment-receipts/:receipt_id/regenerate — retry a failed PDF render
+router.post(
+  '/:receipt_id/regenerate',
+  protect,
+  requirePermission('RECEIPT_SEND'),
+  receiptController.regenerateReceiptPdf
+);
+
 // POST /api/payment-receipts/:receipt_id/send — send/resend over WhatsApp
 router.post(
   '/:receipt_id/send',

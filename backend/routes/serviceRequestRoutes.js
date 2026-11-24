@@ -27,11 +27,22 @@ router.get('/new_leads', protect, requirePermission('VIEW_SERVICE_REQUESTS'), se
 
 router.get('/pending_leads', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getPendingLeads);
 
+// WhatsApp-ready plain text of a request (for the "Copy for WhatsApp" button)
+router.get('/:id/whatsapp-text', protect, requirePermission('VIEW_SERVICE_REQUESTS'), async (req, res) => {
+  try {
+    const text = await require('../services/serviceRequestEmail').getWhatsappTextForRequest(req.params.id);
+    if (!text) return res.status(404).json({ success: false, message: 'Service request not found' });
+    res.json({ success: true, data: { text } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Could not build the WhatsApp text' });
+  }
+});
+
 // Protected admin route to get service request by ID
 router.get('/:id', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getServiceRequestById);
 
-// Assign / change / clear the coordinator (locked to the current coordinator once assigned)
-router.put('/:id/coordinator', protect, requirePermission('SERVICE_REQUEST_ASSIGN_COORDINATOR'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.assignCoordinator);
+// Select the salesperson; once selected, changing it needs SERVICE_REQUEST_REASSIGN_SALESPERSON (checked in the handler)
+router.put('/:id/coordinator', protect, requirePermission('SERVICE_REQUEST_ASSIGN_COORDINATOR'), serviceRequestController.assignCoordinator);
 
 // Protected admin route to update service request status
 router.put('/:id/status', protect, requirePermission('SERVICE_REQUEST_EDIT'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.updateServiceRequestStatus);

@@ -1016,6 +1016,20 @@ exports.updateQuoteLineItems = async (req, res) => {
     const { quote_id } = req.params;
     const { line_items, terms_conditions } = req.body;
 
+    if (!Array.isArray(line_items) || line_items.length === 0) {
+        return res.status(400).json({ message: 'A quotation needs at least one line item.' });
+    }
+
+    // Line items can only change before any payment is recorded against the quotation (a pending
+    // payment counts; a rejected one does not).
+    const paid = await db.query(
+        `SELECT COUNT(*)::int AS n FROM payment_tracking WHERE quote_id = $1 AND status <> 'REJECTED'`,
+        [quote_id]
+    );
+    if (paid.rows[0].n > 0) {
+        return res.status(409).json({ message: 'A payment has already been recorded against this quotation, so its line items can no longer be changed.' });
+    }
+
     // No new custom charges (see isDisallowedServiceLine). A custom charge the
     // quotation already had (created before they were removed) may stay, so older
     // quotations can still be edited — matched on its description.

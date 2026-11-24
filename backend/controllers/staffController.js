@@ -2158,14 +2158,19 @@ exports.createStaffDeduction = async (req, res) => {
         const deductionAmount = parseFloat(amount);
         const trimmedReason = String(reason).trim();
 
-        const newEarnings = Math.max(0, parseFloat(current_earnings || 0) - deductionAmount).toFixed(2);
+        // Floor at 0 only when the balance is positive; an existing negative balance
+        // (e.g. from an over advance) must keep growing, not be reset to 0.
+        const earningsNow = parseFloat(current_earnings || 0);
+        const newEarnings = (earningsNow < 0 ? earningsNow - deductionAmount : Math.max(0, earningsNow - deductionAmount)).toFixed(2);
         await client.query(
             `UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`,
             [newEarnings, staff_profile_id]
         );
 
         await client.query(
-            `UPDATE staff_wallet SET balance = GREATEST(balance - $1, 0), updated_at = NOW()
+            `UPDATE staff_wallet
+             SET balance = CASE WHEN balance < 0 THEN balance - $1 ELSE GREATEST(balance - $1, 0) END,
+                 updated_at = NOW()
              WHERE staff_profile_id = $2`,
             [deductionAmount, staff_profile_id]
         );
@@ -4019,7 +4024,9 @@ exports.getCurrentEarningsBreakdown = async (req, res) => {
                 status,
                 requested_at,
                 approved_at,
-                reviewed_by_name
+                reviewed_by_name,
+                is_over_advance,
+                over_advance_reason
             FROM staff_advances
             WHERE staff_profile_id = $1 AND status = 'APPROVED'
             ORDER BY approved_at DESC
