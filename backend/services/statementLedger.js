@@ -485,7 +485,31 @@ async function loadLedgerRows(clientId, endDay) {
      ORDER BY t.created_at, t.transaction_id`,
     [clientId]
   );
-  return res.rows.filter((r) => r.eff_date <= endDay);
+  const rows = res.rows.filter((r) => r.eff_date <= endDay);
+
+  // A registration-fee invoice that was sent but never booked on the ledger (no REGISTRATION_FEE DEBIT)
+  // only exists as an unresolved overdue_invoices row. The client's Overdue figure counts it
+  // (services/clientFinancials.js), so the statement must too or the two disagree (CL-04109: 10,000 short).
+  // Once the debit exists the overdue row is ignored there, and here, so it is never counted twice.
+  const orphanFees = await db.query(
+    `SELECT o.overdue_invoice_id, o.invoice_code, o.amount, o.invoiced_at,
+            to_char(o.invoiced_at AT TIME ZONE '${STATEMENT_TZ}', 'YYYY-MM-DD') AS eff_date
+     FROM overdue_invoices o
+     WHERE o.client_id = $1 AND o.source_type = 'REGISTRATION_FEE' AND o.status = 'OVERDUE'
+       AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.client_id = o.client_id
+                       AND t.category::text = 'REGISTRATION_FEE' AND t.transaction_type = 'DEBIT')`,
+    [clientId]
+  );
+  for (const o of orphanFees.rows) {
+    if (o.eff_date > endDay) continue;
+    rows.push({
+      transaction_id: `overdue:${o.overdue_invoice_id}`, transaction_code: null,
+      category: 'REGISTRATION_FEE', transaction_type: 'DEBIT', amount: o.amount, payment_method: null,
+      notes: '', created_at: o.invoiced_at, status: 'COMPLETED', staff_profile_id: null, created_key: null,
+      booking_code: null, eff_date: o.eff_date, invoice_code: o.invoice_code, due_date: null,
+    });
+  }
+  return rows;
 }
 
 const ALL_TIME_START = '1970-01-01';

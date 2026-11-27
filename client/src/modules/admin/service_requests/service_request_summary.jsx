@@ -18,6 +18,7 @@ import CitySelect from '../../../components/common/CitySelect';
 import { HONORIFICS, genderForHonorific, isGenderImplied } from '../../../constants/honorifics';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO, daysAgoISO, MAX_BACKDATE_DAYS } from '../../../components/common/DateInput';
+import { localDateISO } from '../bookings/dayDisplay';
 import PhoneInput from '../../../components/common/PhoneInput';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
@@ -625,7 +626,9 @@ const ServiceRequestSummaryPage = () => {
       gender:                 request.gender || '',
       emergency_contact_name:   request.emergency_contact_name || '',
       emergency_contact_number: request.emergency_contact_number || '',
-      requested_end_date:     request.requested_end_date ? String(request.requested_end_date).slice(0, 10) : '',
+      // DATE columns arrive as UTC timestamps ("2026-10-25T18:30:00Z" for 26 Oct in Sri Lanka),
+      // so slicing the string gives the previous day — read the local calendar day instead.
+      requested_end_date:     request.requested_end_date ? localDateISO(request.requested_end_date) : '',
       patient_name:           request.patient_name || '',
       patient_age:            request.patient_age || '',
       relationship_to_client: request.relationship_to_client || '',
@@ -634,7 +637,7 @@ const ServiceRequestSummaryPage = () => {
       service_model:          request.service_model || 'SHIFT_BASED',
       location_address:       request.location_address || '',
       hospital_name:          request.hospital_name || '',
-      start_date:             request.start_date ? request.start_date.slice(0, 10) : '',
+      start_date:             request.start_date ? localDateISO(request.start_date) : '',
       remarks:                request.remarks || '',
       preferred_gender:       request.preferred_gender || 'ANY',
       status:                 request.status || 'NEW_LEAD',

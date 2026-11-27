@@ -1067,7 +1067,8 @@ exports.updateServiceRequest = async (req, res) => {
                 payer_name || null,
                 payer_mobile || null,
                 patient_name || null,
-                patient_age != null ? parseInt(patient_age) : null,
+                // An empty age field arrives as '' — parseInt('') is NaN, which Postgres rejects.
+                Number.isFinite(parseInt(patient_age, 10)) ? parseInt(patient_age, 10) : null,
                 relationship_to_client !== undefined ? relationship_to_client : old.relationship_to_client,
                 patient_condition !== undefined ? patient_condition : old.patient_condition,
                 service_type || null,
