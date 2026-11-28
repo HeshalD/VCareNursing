@@ -2120,6 +2120,12 @@ const StaffDetailPageV2 = () => {
     setDetail(d => (d ? { ...d, profile: { ...d.profile, advance_threshold_amount: amount } } : d));
   };
 
+  // Throws on failure so StaffPayoutsTab can show the error inline (e.g. wrong password).
+  const handleVoidPayout = async (staffPaymentId, { reason, password }) => {
+    await runAdminRequest(() => apiClient.voidStaffPayout(staffProfileId, staffPaymentId, { reason, password }));
+    await loadPage();
+  };
+
   const renderPayouts = () => (
     <StaffPayoutsTab
       payoutsSummary={payoutsSummary}
@@ -2142,6 +2148,7 @@ const StaffDetailPageV2 = () => {
       onAddBankAccount={() => setActiveSection('bank-accounts')}
       advanceThreshold={Number(profile.advance_threshold_amount ?? 15000)}
       onSaveAdvanceThreshold={hasPermission('ADVANCE_UPDATE_THRESHOLD') ? handleSaveAdvanceThreshold : null}
+      onVoidPayout={hasPermission('STAFF_PAYOUT_VOID') ? handleVoidPayout : null}
     />
   );
 

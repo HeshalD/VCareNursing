@@ -552,6 +552,7 @@ const getMySalarySheets = async (req, res) => {
        JOIN staff_profiles sp ON sp.staff_profile_id = spt.staff_profile_id
        LEFT JOIN staff_bank_accounts sba ON spt.staff_bank_account_id = sba.staff_bank_account_id
        WHERE sp.user_id = $1 AND spt.salary_sheet_url IS NOT NULL
+         AND spt.status IS DISTINCT FROM 'VOIDED'
        ORDER BY spt.paid_at DESC
        LIMIT 200`,
       [req.user.user_id]

@@ -477,6 +477,14 @@ router.post(
   staffController.createStaffPayout
 );
 
+// Admin: Void a recorded payout (restores earnings, removes the ledger debit)
+router.post(
+  '/:staff_profile_id/payouts/:staff_payment_id/void',
+  protect,
+  requirePermission('STAFF_PAYOUT_VOID'),
+  staffController.voidStaffPayout
+);
+
 // Deductions
 router.get(
   '/:staff_profile_id/deductions',

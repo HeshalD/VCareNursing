@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const bcrypt = require('bcrypt');
 const { userHasPermission } = require('../middleware/authMiddleware');
 const { sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendStaffAccountCreated } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
@@ -112,6 +113,7 @@ async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paym
             WHERE staff_profile_id = $1
               AND EXTRACT(YEAR FROM paid_at) = $2 AND EXTRACT(MONTH FROM paid_at) = $3
               AND staff_payment_id != $4
+              AND status IS DISTINCT FROM 'VOIDED'
             ORDER BY paid_at
         `, [staffProfileId, monthYear.year, monthYear.month, staffPaymentId]);
     }
@@ -137,6 +139,7 @@ async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paym
                 SELECT COALESCE(SUM(amount_paid), 0) AS pre_payouts
                 FROM staff_payments_tracking
                 WHERE staff_profile_id = $1
+                  AND status IS DISTINCT FROM 'VOIDED'
                   AND (
                       EXTRACT(YEAR  FROM paid_at)::int < $2
                    OR (EXTRACT(YEAR  FROM paid_at)::int = $2 AND EXTRACT(MONTH FROM paid_at)::int < $3)
@@ -226,6 +229,7 @@ async function _sendNotificationForPayoutId(staffPaymentId) {
 
     if (!payoutRes.rows.length) throw new Error('Payout record not found');
     const payout = payoutRes.rows[0];
+    if (payout.status === 'VOIDED') throw new Error('This payout was voided — its salary sheet is no longer valid');
     if (!payout.salary_sheet_url) throw new Error('No salary sheet PDF associated with this payout');
     if (!payout.mobile_number) throw new Error('Staff member has no mobile number');
 
@@ -262,6 +266,7 @@ async function _sendNotificationForPayoutId(staffPaymentId) {
         WHERE staff_profile_id = $1
           AND EXTRACT(YEAR FROM paid_at) = $2 AND EXTRACT(MONTH FROM paid_at) = $3
           AND staff_payment_id != $4
+          AND status IS DISTINCT FROM 'VOIDED'
         ORDER BY paid_at
     `, [payout.staff_profile_id, monthYear.year, monthYear.month, staffPaymentId]);
 
@@ -280,6 +285,7 @@ async function _sendNotificationForPayoutId(staffPaymentId) {
             SELECT COALESCE(SUM(amount_paid), 0) AS pre_payouts
             FROM staff_payments_tracking
             WHERE staff_profile_id = $1
+              AND status IS DISTINCT FROM 'VOIDED'
               AND (EXTRACT(YEAR FROM paid_at)::int < $2 OR (EXTRACT(YEAR FROM paid_at)::int = $2 AND EXTRACT(MONTH FROM paid_at)::int < $3))
         `, [payout.staff_profile_id, monthYear.year, monthYear.month]),
     ]);
@@ -1043,7 +1049,8 @@ exports.getPayouts = async (req, res) => {
                          spt.paid_by, u.email as paid_by_email, u.mobile_number as paid_by_mobile,
                          COALESCE(ist.full_name, psp.full_name) as paid_by_name,
                          spt.company_bank_account_id, ba.account_nickname as company_account_name,
-                         spt.staff_bank_account_id, spt.paid_at, spt.status, spt.created_at
+                         spt.staff_bank_account_id, spt.paid_at, spt.status, spt.created_at,
+                         spt.voided_at, spt.voided_by_name, spt.void_reason
             FROM staff_payments_tracking spt
             LEFT JOIN users u ON spt.paid_by = u.user_id
             LEFT JOIN internal_staff ist ON ist.user_id = spt.paid_by
@@ -2120,6 +2127,161 @@ exports.createStaffPayout = async (req, res) => {
         } finally {
             client.release();
         }
+};
+
+// Void a recorded payout (STAFF_PAYOUT_VOID) — for a payout that was recorded wrongly
+// (wrong staff, wrong amount, entered twice, never actually sent).
+//   - current_earnings and staff_wallet get the amount back, so it is payable again.
+//   - The STAFF_SALARY_PAID ledger row is deleted, the same way the client-payment
+//     delete flow removes ledger rows (services/paymentEdits.js). Bank and petty-cash
+//     balances are derived from COMPLETED transactions, so the company account is
+//     restored automatically and every money-out report drops it.
+//   - The staff_payments_tracking row is kept as the audit record (status VOIDED,
+//     who/when/why, original transaction id). Payout totals all exclude VOIDED.
+// The salary-sheet PDF already sent on WhatsApp cannot be recalled; it is not resent
+// and the voided row is refused by the resend endpoints.
+exports.voidStaffPayout = async (req, res) => {
+    const { staff_profile_id, staff_payment_id } = req.params;
+    const { reason, password } = req.body || {};
+    const trimmedReason = String(reason || '').trim();
+
+    if (!trimmedReason) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required to void a payout.' });
+    }
+    if (!password) {
+        return res.status(400).json({ status: 'error', message: 'Password confirmation is required.' });
+    }
+
+    try {
+        const userRes = await db.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+        const hash = userRes.rows[0]?.password_hash;
+        if (!hash || !(await bcrypt.compare(String(password), hash))) {
+            return res.status(401).json({ status: 'error', message: 'Incorrect password.' });
+        }
+    } catch (error) {
+        console.error('voidStaffPayout password check error:', error);
+        return res.status(500).json({ status: 'error', message: 'Failed to verify password' });
+    }
+
+    const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]).catch(() => ({ rows: [] }));
+    let actorName = actorNameRes.rows[0]?.full_name;
+    if (!actorName) {
+        const ist = await db.query('SELECT full_name FROM internal_staff WHERE user_id = $1', [req.user.user_id]).catch(() => ({ rows: [] }));
+        actorName = ist.rows[0]?.full_name || 'Admin';
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Lock the staff profile first (same order as createStaffPayout) so a void
+        // and a new payout for the same staff member serialize.
+        const profileRes = await client.query(
+            `SELECT full_name, COALESCE(current_earnings, 0) AS current_earnings
+             FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+            [staff_profile_id]
+        );
+        if (!profileRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+
+        const payoutRes = await client.query(
+            `SELECT * FROM staff_payments_tracking
+             WHERE staff_payment_id = $1 AND staff_profile_id = $2
+             FOR UPDATE`,
+            [staff_payment_id, staff_profile_id]
+        );
+        if (!payoutRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Payout not found for this staff member' });
+        }
+        const payout = payoutRes.rows[0];
+        if (payout.status === 'VOIDED') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ status: 'error', message: 'This payout has already been voided.' });
+        }
+
+        const amount = parseFloat(payout.amount_paid);
+        const earningsBefore = parseFloat(profileRes.rows[0].current_earnings);
+
+        await client.query(
+            `UPDATE staff_profiles SET current_earnings = COALESCE(current_earnings, 0) + $1 WHERE staff_profile_id = $2`,
+            [amount, staff_profile_id]
+        );
+        await client.query(
+            `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (staff_profile_id)
+             DO UPDATE SET balance = staff_wallet.balance + EXCLUDED.balance, updated_at = NOW()`,
+            [staff_profile_id, amount]
+        );
+        await client.query(
+            `INSERT INTO staff_wallet_transactions (staff_profile_id, type, amount, reason, reference_id, created_at)
+             VALUES ($1, 'CREDIT', $2, 'PAYOUT_VOIDED', $3, NOW())`,
+            [staff_profile_id, amount, payout.staff_payment_id]
+        );
+
+        await client.query(
+            `UPDATE staff_payments_tracking
+             SET status = 'VOIDED',
+                 voided_at = NOW(),
+                 voided_by_user_id = $1,
+                 voided_by_name = $2,
+                 void_reason = $3,
+                 voided_transaction_id = transaction_id,
+                 transaction_id = NULL
+             WHERE staff_payment_id = $4`,
+            [req.user.user_id, actorName, trimmedReason, payout.staff_payment_id]
+        );
+
+        if (payout.transaction_id) {
+            await client.query(
+                `DELETE FROM transactions WHERE transaction_id = $1 AND category = 'STAFF_SALARY_PAID'`,
+                [payout.transaction_id]
+            );
+        }
+
+        await client.query('COMMIT');
+
+        try {
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: _extractActorRole(req.user?.role),
+                actionType: 'STAFF_PAYOUT_VOIDED',
+                entityType: 'STAFF_PAYOUT',
+                entityId: String(payout.staff_payment_id),
+                details: {
+                    staff_profile_id,
+                    staff_name: profileRes.rows[0].full_name,
+                    amount,
+                    payment_method: payout.payment_method,
+                    reference_number: payout.reference_number,
+                    paid_at: payout.paid_at,
+                    company_bank_account_id: payout.company_bank_account_id,
+                    removed_transaction_id: payout.transaction_id,
+                    reason: trimmedReason,
+                    earnings_before: earningsBefore,
+                    earnings_after: earningsBefore + amount,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (voidStaffPayout):', logErr.message);
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Payout voided',
+            data: { staff_payment_id: payout.staff_payment_id, amount, earnings_after: earningsBefore + amount },
+        });
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (e) { /* ignore */ }
+        console.error('voidStaffPayout Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while voiding payout' });
+    } finally {
+        client.release();
+    }
 };
 
 // Apply a manual deduction to a staff member's earnings and wallet
@@ -4246,11 +4408,13 @@ exports.getStaffSalariesOverview = async (req, res) => {
             LEFT JOIN (
                 SELECT staff_profile_id, SUM(amount_paid) AS total_paid
                 FROM staff_payments_tracking
+                WHERE status IS DISTINCT FROM 'VOIDED'
                 GROUP BY staff_profile_id
             ) paid ON paid.staff_profile_id = sp.staff_profile_id
             LEFT JOIN LATERAL (
                 SELECT paid_at FROM staff_payments_tracking
                 WHERE staff_profile_id = sp.staff_profile_id
+                  AND status IS DISTINCT FROM 'VOIDED'
                 ORDER BY paid_at DESC LIMIT 1
             ) last_pay ON true
             LEFT JOIN LATERAL (
@@ -4350,6 +4514,7 @@ exports.getStaffBookingSalaryBreakdown = async (req, res) => {
                 LEFT JOIN bank_accounts ba ON spt.company_bank_account_id = ba.account_id
                 LEFT JOIN staff_bank_accounts sba ON spt.staff_bank_account_id = sba.staff_bank_account_id
                 WHERE spt.staff_profile_id = $1
+                  AND spt.status IS DISTINCT FROM 'VOIDED'
                 ORDER BY spt.paid_at DESC
             `, [staff_profile_id]),
             db.query(`
@@ -4473,6 +4638,7 @@ exports.getStaffMonthlyEarnings = async (req, res) => {
             SELECT amount_paid, paid_at, payment_method, reference_number
             FROM staff_payments_tracking
             WHERE staff_profile_id = $1
+              AND status IS DISTINCT FROM 'VOIDED'
               AND EXTRACT(YEAR FROM paid_at) = $2 AND EXTRACT(MONTH FROM paid_at) = $3
             ORDER BY paid_at
         `, [staff_profile_id, parseInt(year), parseInt(month)]);
@@ -4496,6 +4662,7 @@ exports.getStaffMonthlyEarnings = async (req, res) => {
                 SELECT COALESCE(SUM(amount_paid), 0) AS pre_payouts
                 FROM staff_payments_tracking
                 WHERE staff_profile_id = $1
+                  AND status IS DISTINCT FROM 'VOIDED'
                   AND (
                       EXTRACT(YEAR  FROM paid_at)::int < $2
                    OR (EXTRACT(YEAR  FROM paid_at)::int = $2 AND EXTRACT(MONTH FROM paid_at)::int < $3)
@@ -4555,6 +4722,9 @@ exports.getSalarySheetLedger = async (req, res) => {
                 spt.status,
                 spt.salary_sheet_url,
                 spt.notification_sent_at,
+                spt.voided_at,
+                spt.voided_by_name,
+                spt.void_reason,
                 sp.full_name AS staff_name,
                 sp.designation,
                 ba.account_nickname AS company_account,
@@ -4854,11 +5024,14 @@ exports.getStaffSalariesExportData = async (req, res) => {
                 ) earned ON earned.staff_profile_id = sp.staff_profile_id
                 LEFT JOIN (
                     SELECT staff_profile_id, SUM(amount_paid) AS total_paid
-                    FROM staff_payments_tracking GROUP BY staff_profile_id
+                    FROM staff_payments_tracking
+                    WHERE status IS DISTINCT FROM 'VOIDED'
+                    GROUP BY staff_profile_id
                 ) paid ON paid.staff_profile_id = sp.staff_profile_id
                 LEFT JOIN LATERAL (
                     SELECT paid_at FROM staff_payments_tracking
                     WHERE staff_profile_id = sp.staff_profile_id
+                      AND status IS DISTINCT FROM 'VOIDED'
                     ORDER BY paid_at DESC LIMIT 1
                 ) last_pay ON true
                 LEFT JOIN LATERAL (

@@ -1410,6 +1410,13 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     });
   }
 
+  async voidStaffPayout(staffProfileId, staffPaymentId, { reason, password }) {
+    return this.request(`/staff/${staffProfileId}/payouts/${staffPaymentId}/void`, {
+      method: 'POST',
+      body: JSON.stringify({ reason, password }),
+    });
+  }
+
   async getStaffTotalEarningsBreakdown(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/total-earnings-breakdown`);
   }

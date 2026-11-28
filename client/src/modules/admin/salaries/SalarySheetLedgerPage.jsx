@@ -86,7 +86,9 @@ const SalarySheetLedgerPage = () => {
     return rows;
   }, [sheets, search, monthFilter]);
 
-  const unsentFiltered = useMemo(() => filtered.filter(s => !s.notification_sent_at), [filtered]);
+  // Voided payouts stay listed (audit) but can't be sent and don't count toward totals.
+  const activeFiltered = useMemo(() => filtered.filter(s => s.status !== 'VOIDED'), [filtered]);
+  const unsentFiltered = useMemo(() => activeFiltered.filter(s => !s.notification_sent_at), [activeFiltered]);
 
   const updateSentAt = (ids) => {
     const now = new Date().toISOString();
@@ -130,9 +132,9 @@ const SalarySheetLedgerPage = () => {
     }
   };
 
-  const allFilteredSelected = filtered.length > 0 && filtered.every(s => selectedIds.has(s.staff_payment_id));
+  const allFilteredSelected = activeFiltered.length > 0 && activeFiltered.every(s => selectedIds.has(s.staff_payment_id));
   const toggleSelectAll = () => {
-    setSelectedIds(allFilteredSelected ? new Set() : new Set(filtered.map(s => s.staff_payment_id)));
+    setSelectedIds(allFilteredSelected ? new Set() : new Set(activeFiltered.map(s => s.staff_payment_id)));
   };
   const toggleSelect = (id) => {
     setSelectedIds(prev => {
@@ -143,7 +145,7 @@ const SalarySheetLedgerPage = () => {
   };
 
   const selectedCount = selectedIds.size;
-  const sentCount = filtered.filter(s => s.notification_sent_at).length;
+  const sentCount = activeFiltered.filter(s => s.notification_sent_at).length;
 
   return (
     <AdminLayout title="Salary Sheets" subtitle="Ledger of all generated salary sheet PDFs">
@@ -243,12 +245,13 @@ const SalarySheetLedgerPage = () => {
                 </button>
                 <div className="border-t border-slate-100" />
                 <button
-                  onClick={() => handleBulkSend(filtered.map(s => s.staff_payment_id), 'all')}
-                  className="w-full text-left px-4 py-3 text-sm hover:bg-slate-50 transition-colors"
+                  disabled={activeFiltered.length === 0}
+                  onClick={() => handleBulkSend(activeFiltered.map(s => s.staff_payment_id), 'all')}
+                  className="w-full text-left px-4 py-3 text-sm hover:bg-slate-50 disabled:opacity-40 transition-colors"
                 >
                   <p className="font-semibold text-slate-800">Send All in View</p>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Resend all {filtered.length} visible sheet{filtered.length !== 1 ? 's' : ''}
+                    Resend all {activeFiltered.length} visible sheet{activeFiltered.length !== 1 ? 's' : ''}
                   </p>
                 </button>
               </div>
@@ -295,15 +298,17 @@ const SalarySheetLedgerPage = () => {
                   const isSending = sendingIds.has(s.staff_payment_id);
                   const isSelected = selectedIds.has(s.staff_payment_id);
                   const sentAt = s.notification_sent_at;
+                  const isVoided = s.status === 'VOIDED';
                   return (
                     <tr
                       key={s.staff_payment_id}
-                      className={`hover:bg-slate-50/60 transition-colors ${isSelected ? 'bg-emerald-50/30' : ''}`}
+                      className={`hover:bg-slate-50/60 transition-colors ${isSelected ? 'bg-emerald-50/30' : ''} ${isVoided ? 'opacity-60' : ''}`}
                     >
                       <td className="px-4 py-3">
                         <button
                           onClick={() => toggleSelect(s.staff_payment_id)}
-                          className="text-slate-400 hover:text-[#137A6B] transition-colors"
+                          disabled={isVoided}
+                          className="text-slate-400 hover:text-[#137A6B] transition-colors disabled:invisible"
                         >
                           {isSelected
                             ? <CheckSquare className="w-4 h-4 text-[#137A6B]" />
@@ -320,13 +325,20 @@ const SalarySheetLedgerPage = () => {
                           {monthLabel(s.paid_at)}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-bold text-slate-900">{fmt(s.amount_paid)}</td>
+                      <td className={`px-4 py-3 text-right font-bold ${isVoided ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{fmt(s.amount_paid)}</td>
                       <td className="px-4 py-3 text-slate-600 text-xs">{METHOD_LABELS[s.payment_method] || s.payment_method || '—'}</td>
                       <td className="px-4 py-3 text-slate-500 text-xs font-mono">
                         {s.reference_number || <span className="italic text-slate-300">—</span>}
                       </td>
                       <td className="px-4 py-3">
-                        {sentAt ? (
+                        {isVoided ? (
+                          <div title={s.void_reason || ''}>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700">Voided</span>
+                            <p className="text-[10px] text-slate-400 leading-tight mt-0.5">
+                              {fmtDateTime(s.voided_at)}{s.voided_by_name ? ` · ${s.voided_by_name}` : ''}
+                            </p>
+                          </div>
+                        ) : sentAt ? (
                           <div className="flex items-start gap-1.5">
                             <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                             <div>
@@ -344,9 +356,9 @@ const SalarySheetLedgerPage = () => {
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            disabled={isSending || bulkSending}
+                            disabled={isVoided || isSending || bulkSending}
                             onClick={() => handleSendOne(s.staff_payment_id)}
-                            title={sentAt ? 'Resend WhatsApp + SMS' : 'Send WhatsApp + SMS'}
+                            title={isVoided ? 'Voided payout — cannot be sent' : sentAt ? 'Resend WhatsApp + SMS' : 'Send WhatsApp + SMS'}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-colors"
                           >
                             {isSending
@@ -388,7 +400,7 @@ const SalarySheetLedgerPage = () => {
                     {unsentFiltered.length > 0 && <span className="text-slate-400"> · {unsentFiltered.length} unsent</span>}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-slate-800">
-                    {fmt(filtered.reduce((s, r) => s + parseFloat(r.amount_paid || 0), 0))}
+                    {fmt(activeFiltered.reduce((s, r) => s + parseFloat(r.amount_paid || 0), 0))}
                   </td>
                   <td colSpan={4} />
                 </tr>

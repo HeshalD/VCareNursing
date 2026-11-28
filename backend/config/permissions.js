@@ -133,7 +133,11 @@ const PERMISSIONS = {
   STAFF_REACTIVATE:            { label: 'Reactivate Staff Account',         module: 'User Management', entity: 'Staff (Nursing) Account', verb: 'Reactivate',   category: 'action' },
   STAFF_PORTAL_ACCESS:         { label: 'Enable/Disable Staff Dashboard Access', module: 'User Management', entity: 'Staff (Nursing) Account', verb: 'Portal Access', category: 'action' },
   STAFF_CREATE_PAYOUT:         { label: 'Create Staff Payout',             module: 'User Management', entity: 'Staff Payout',            verb: 'Create Payout', category: 'action' },
-  STAFF_APPLY_DEDUCTION:       { label: 'Apply Staff Deduction',            module: 'User Management', entity: 'Staff Payout',            verb: 'Apply Deduction', category: 'action' },
+  // Voiding a recorded payout puts the money back into the staff member's earnings and
+  // removes it from the company account's ledger. Password-confirmed. Super admin only
+  // until granted on the Permissions page (deliberately in no role template).
+  STAFF_PAYOUT_VOID:           { label: 'Void Recorded Staff Payout (returns amount to earnings)', module: 'User Management', entity: 'Staff Payout', verb: 'Void Payout', category: 'action' },
+  STAFF_APPLY_DEDUCTION:       { label: 'Apply Staff Deduction',           module: 'User Management', entity: 'Staff Payout',            verb: 'Apply Deduction', category: 'action' },
   STAFF_APPLY_BONUS:           { label: 'Apply Staff Bonus',                module: 'User Management', entity: 'Staff Payout',            verb: 'Apply Bonus',   category: 'action' },
   STAFF_ADD_BANK_ACCOUNT:      { label: 'Add Staff Bank Account',           module: 'User Management', entity: 'Staff Bank Account',      verb: 'Add',          category: 'action' },
   STAFF_EDIT_BANK_ACCOUNT:     { label: 'Edit Staff Bank Account',          module: 'User Management', entity: 'Staff Bank Account',      verb: 'Edit',         category: 'action' },

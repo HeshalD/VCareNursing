@@ -21,10 +21,11 @@ const humanize = (v) => { const s = String(v || '').replace(/_/g, ' ').toLowerCa
 const statusKey = (s) => {
   const u = String(s || '').toUpperCase();
   if (['PAID', 'COMPLETED', 'SUCCESS', 'SUCCESSFUL'].includes(u)) return 'Paid';
+  if (u === 'VOIDED') return 'Voided';
   if (['FAILED', 'REJECTED', 'CANCELLED', 'VOID', 'REVERSED'].includes(u)) return 'Failed';
   return 'Pending';
 };
-const STATUS_CLS = { Paid: 'bg-emerald-50 text-emerald-700', Pending: 'bg-amber-50 text-amber-700', Failed: 'bg-red-50 text-red-700' };
+const STATUS_CLS = { Paid: 'bg-emerald-50 text-emerald-700', Pending: 'bg-amber-50 text-amber-700', Failed: 'bg-red-50 text-red-700', Voided: 'bg-slate-100 text-slate-600' };
 const last4 = (n) => { const s = String(n || '').replace(/\s/g, ''); return s ? `•••• ${s.slice(-4)}` : ''; };
 const companyLabel = (a) => ({ main: a.bank_name || a.account_nickname || 'Company account', line: [a.account_nickname || a.account_holder_name, last4(a.account_number)].filter(Boolean).join(' · ') });
 const staffLabel = (a) => ({ main: a.bank_name || 'Bank account', line: [a.account_holder_name, last4(a.account_number)].filter(Boolean).join(' · ') });
@@ -114,6 +115,8 @@ const AccountCards = ({ items, selected, onSelect, idKey, labelFn }) => (
  * Optional extras: loading, staffName, staffCode, onAddBankAccount (() => void),
  * advanceThreshold (number) and onSaveAdvanceThreshold (amount) => Promise — the minimum accrued
  * balance before this staff member may request an advance; editable only when the handler is given.
+ * onVoidPayout (staffPaymentId, { reason, password }) => Promise — shown in the details drawer only
+ * when given (STAFF_PAYOUT_VOID); returns the amount to the staff member's earnings.
  */
 export default function StaffPayoutsTab({
   payoutsSummary = null, overviewPayoutSummary = {}, currentEarnings = 0,
@@ -121,8 +124,10 @@ export default function StaffPayoutsTab({
   onFieldChange = () => () => {}, onSubmit = (e) => e?.preventDefault?.(), onReset = () => {},
   submitting = false, submitError = '', submitSuccess = '',
   loading = false, staffName = '', staffCode = '', onAddBankAccount = null,
-  advanceThreshold = null, onSaveAdvanceThreshold = null,
+  advanceThreshold = null, onSaveAdvanceThreshold = null, onVoidPayout = null,
 }) {
+  const emptyVoid = { open: false, reason: '', password: '', submitting: false, error: '' };
+  const [voidForm, setVoidForm] = useState(emptyVoid);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
   const [showAll, setShowAll] = useState(false);
@@ -166,7 +171,7 @@ export default function StaffPayoutsTab({
 
   // ── list ──
   const q = query.trim().toLowerCase();
-  const counts = { All: sorted.length, Paid: 0, Pending: 0, Failed: 0 };
+  const counts = { All: sorted.length, Paid: 0, Pending: 0, Failed: 0, Voided: 0 };
   sorted.forEach(p => { counts[statusKey(p.status)] += 1; });
   const list = sorted.filter(p => (filter === 'All' || statusKey(p.status) === filter)
     && (!q || `${p.reference_number || ''} ${p.notes || ''} ${p.payment_method || ''} ${p.staff_payment_id || ''}`.toLowerCase().includes(q)));
@@ -201,7 +206,7 @@ export default function StaffPayoutsTab({
 
   const amount = parseFloat(payoutForm.amount) || 0;
   const after = Math.max(outstanding - amount, 0);
-  const dup = amount > 0 && payouts.some(p => statusKey(p.status) !== 'Failed' && isoDay(p.paid_at) === payoutForm.payment_date && num(p.amount_paid) === amount);
+  const dup = amount > 0 && payouts.some(p => !['Failed', 'Voided'].includes(statusKey(p.status)) &&isoDay(p.paid_at) === payoutForm.payment_date && num(p.amount_paid) === amount);
   const comp = companyBankAccounts.find(a => String(a.account_id) === String(payoutForm.company_bank_account_id));
   const stf = bankAccounts.find(a => String(a.staff_bank_account_id) === String(payoutForm.staff_bank_account_id));
 
@@ -233,6 +238,19 @@ export default function StaffPayoutsTab({
   }, [topId]);
 
   const detail = sorted.find(p => p.staff_payment_id === detailId) || null;
+  const closeDetail = () => { if (voidForm.submitting) return; setDetailId(null); setVoidForm(emptyVoid); };
+  const submitVoid = async () => {
+    if (!voidForm.reason.trim()) { setVoidForm(v => ({ ...v, error: 'Enter a reason for voiding this payout.' })); return; }
+    if (!voidForm.password) { setVoidForm(v => ({ ...v, error: 'Enter your password to confirm.' })); return; }
+    setVoidForm(v => ({ ...v, submitting: true, error: '' }));
+    try {
+      await onVoidPayout(detail.staff_payment_id, { reason: voidForm.reason.trim(), password: voidForm.password });
+      setVoidForm(emptyVoid);
+      flash(`Payout of ${rs(detail.amount_paid)} voided`);
+    } catch (e) {
+      setVoidForm(v => ({ ...v, submitting: false, password: '', error: e?.message || 'Failed to void the payout.' }));
+    }
+  };
   const noStaffBank = bankAccounts.length === 0;
 
   // ── render ──
@@ -304,7 +322,7 @@ export default function StaffPayoutsTab({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           <input value={query} onChange={e => setQuery(e.target.value)} aria-label="Search payouts" placeholder="Search reference, notes, method…" className={`${FIELD} pl-9`} />
         </div>
-        {['All', 'Paid', 'Pending', 'Failed'].map(k => <Chip key={k} on={filter === k} onClick={() => { setFilter(k); setShowAll(false); }}>{k} · {counts[k]}</Chip>)}
+        {['All', 'Paid', 'Pending', 'Failed', 'Voided'].filter(k => k !== 'Voided' || counts.Voided > 0).map(k =><Chip key={k} on={filter === k} onClick={() => { setFilter(k); setShowAll(false); }}>{k} · {counts[k]}</Chip>)}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
@@ -336,7 +354,7 @@ export default function StaffPayoutsTab({
                       <div className="truncate text-slate-900">{[p.reference_number, p.notes].filter(Boolean).join(' · ') || '—'}</div>
                       <div>{humanize(p.payment_method)}</div>
                       <div><span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_CLS[st]}`}>{st}</span></div>
-                      <div className="text-right font-semibold tabular-nums text-slate-900">{fmtNum(p.amount_paid)}</div>
+                      <div className={`text-right font-semibold tabular-nums ${st === 'Voided' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{fmtNum(p.amount_paid)}</div>
                     </button>
                   </React.Fragment>
                 );
@@ -355,7 +373,19 @@ export default function StaffPayoutsTab({
       </div>
 
       {/* ── payout details drawer ───────────────────────────────────────── */}
-      <Drawer open={!!detail} onClose={() => setDetailId(null)} label="Payout details" title="Payout details" subtitle={detail?.staff_payment_id}>
+      <Drawer
+        open={!!detail} onClose={closeDetail} label="Payout details" title="Payout details" subtitle={detail?.staff_payment_id}
+        footer={detail && onVoidPayout && statusKey(detail.status) === 'Paid' ? (voidForm.open ? (
+          <>
+            <Btn onClick={() => setVoidForm(emptyVoid)} disabled={voidForm.submitting}>Cancel</Btn>
+            <Btn className="flex-1 border-red-600 bg-red-600 text-white hover:bg-red-700" onClick={submitVoid} disabled={voidForm.submitting}>
+              {voidForm.submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}Void payout
+            </Btn>
+          </>
+        ) : (
+          <Btn className="flex-1 border-red-200 text-red-700 hover:bg-red-50" onClick={() => setVoidForm({ ...emptyVoid, open: true })}>Void this payout</Btn>
+        )) : null}
+      >
         {detail && (() => {
           const st = statusKey(detail.status);
           const cLabel = detail.company_account_name || (companyBankAccounts.find(a => String(a.account_id) === String(detail.company_bank_account_id)) && companyLabel(companyBankAccounts.find(a => String(a.account_id) === String(detail.company_bank_account_id))).main);
@@ -378,6 +408,38 @@ export default function StaffPayoutsTab({
                 <div className="px-3.5 py-3"><Cap>To (staff)</Cap><b className="text-slate-900">{sAcc ? [staffLabel(sAcc).main, staffLabel(sAcc).line].filter(Boolean).join(' · ') : '—'}</b></div>
               </div>
               <div><Cap>Notes</Cap><div className="leading-relaxed">{detail.notes || 'No notes.'}</div></div>
+              {st === 'Voided' && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3">
+                  <Cap>Voided</Cap>
+                  <div>{fmtDate(detail.voided_at)}{fmtTime(detail.voided_at) ? `, ${fmtTime(detail.voided_at)}` : ''}{detail.voided_by_name ? ` · ${detail.voided_by_name}` : ''}</div>
+                  <div className="mt-1 leading-relaxed text-slate-600">{detail.void_reason || '—'}</div>
+                </div>
+              )}
+              {voidForm.open && (
+                <div className="flex flex-col gap-3.5 rounded-lg border border-red-200 bg-red-50/40 p-3.5">
+                  <div className="flex items-start gap-2 text-[13px] text-red-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+                    <span>
+                      {rs(detail.amount_paid)} goes back into this staff member's outstanding earnings and is removed from the company account's ledger.
+                      The salary sheet already sent on WhatsApp is not recalled. Only void a payout that was recorded wrongly or never actually sent.
+                    </span>
+                  </div>
+                  {voidForm.error && <div role="alert" className="text-[13px] text-red-700">{voidForm.error}</div>}
+                  <div>
+                    <label htmlFor="void-reason" className="text-[13px] font-semibold text-slate-600">Reason</label>
+                    <input id="void-reason" type="text" autoFocus value={voidForm.reason} disabled={voidForm.submitting}
+                      onChange={(e) => setVoidForm(v => ({ ...v, reason: e.target.value, error: '' }))}
+                      placeholder="e.g. Entered twice / wrong staff member" className={`${FIELD} mt-1.5`} />
+                  </div>
+                  <div>
+                    <label htmlFor="void-password" className="text-[13px] font-semibold text-slate-600">Your password</label>
+                    <input id="void-password" type="password" autoComplete="current-password" value={voidForm.password} disabled={voidForm.submitting}
+                      onChange={(e) => setVoidForm(v => ({ ...v, password: e.target.value, error: '' }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') submitVoid(); }}
+                      className={`${FIELD} mt-1.5`} />
+                  </div>
+                </div>
+              )}
             </>
           );
         })()}

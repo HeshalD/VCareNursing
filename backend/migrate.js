@@ -770,6 +770,19 @@ async function runMigration() {
       ADD COLUMN IF NOT EXISTS notification_sent_at TIMESTAMP WITH TIME ZONE;
     `);
 
+    // Voided payouts (STAFF_PAYOUT_VOID): the row stays as the audit record with
+    // status = 'VOIDED'; its STAFF_SALARY_PAID ledger row is deleted (so bank /
+    // petty-cash balances and every money-out report self-correct) and its id is
+    // kept here, un-FK'd, for traceability. Every payout total must exclude VOIDED.
+    await db.query(`
+      ALTER TABLE staff_payments_tracking
+      ADD COLUMN IF NOT EXISTS voided_at TIMESTAMP WITH TIME ZONE,
+      ADD COLUMN IF NOT EXISTS voided_by_user_id UUID REFERENCES users(user_id),
+      ADD COLUMN IF NOT EXISTS voided_by_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS void_reason TEXT,
+      ADD COLUMN IF NOT EXISTS voided_transaction_id UUID;
+    `);
+
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_staff_payments_staff_profile_id
       ON staff_payments_tracking(staff_profile_id);
