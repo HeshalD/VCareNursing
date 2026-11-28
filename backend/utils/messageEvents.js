@@ -41,6 +41,7 @@ const EVENTS = [
   // ── Bookings & assignments ──
   { key: 'booking_confirmed', group: 'Bookings & assignments', label: 'Booking confirmed (client)', desc: 'Tells the client which staff member was assigned.', whatsapp: true, sms: true, templates: ['vcare_booking_confirmed'] },
   { key: 'staff_new_assignment', group: 'Bookings & assignments', label: 'New assignment (staff)', desc: 'Sent to staff on assignment, resume-with-staff and swaps.', whatsapp: true, sms: true, templates: ['vcare_staff_new_assignment'] },
+  { key: 'booking_start_date_changed', group: 'Bookings & assignments', label: 'Start date changed (client + staff)', desc: 'Sent when the start date of a booking that has not started yet is changed.', whatsapp: false, sms: true },
   { key: 'staff_swap_outgoing', group: 'Bookings & assignments', label: 'Staff swap – outgoing staff', desc: 'Tells the outgoing staff member who takes over.', whatsapp: false, sms: true },
   { key: 'client_staff_swapped', group: 'Bookings & assignments', label: 'Staff swap – client notice', desc: 'Tells the client their caregiver changed.', whatsapp: true, sms: true, templates: ['vcare_client_staff_swapped'] },
   { key: 'termination_requested', group: 'Bookings & assignments', label: 'Termination requested (client)', desc: 'Acknowledges a client termination request.', whatsapp: true, sms: false, templates: ['vcare_client_termination_requested'] },

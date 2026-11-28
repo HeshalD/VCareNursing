@@ -50,6 +50,7 @@ const { warnIfRegistrationIncomplete, blockIfRegistrationMissing } = require('..
 const { applyRegistrationChoice } = require('../services/regFeeAdminAction');
 const { isServiceDay } = require('../services/repeatDays');
 const { previewStartDateChange, applyStartDateChange } = require('../services/bookingStartDate');
+const { previewScheduledStartChange, applyScheduledStartChange } = require('../services/bookingScheduledStart');
 const { FORCE_MANUAL_FOR_SWAP_SQL, restoreAutoInvoicingIfSwapResolved } = require('../services/invoicingMode');
 
 function extractActorRole(role) {
@@ -6389,6 +6390,152 @@ exports.changeStartDate = async (req, res) => {
     } finally {
         client.release();
     }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/scheduled-start/preview?new_start_date=YYYY-MM-DD&new_end_date=YYYY-MM-DD
+ * @desc    Read-only: what moving the start date of a booking that has not started yet
+ *          (PENDING, staff still SCHEDULED) would change, and anything that blocks it.
+ *          See services/bookingScheduledStart.js.
+ * @access  Private (BOOKING_CHANGE_SCHEDULED_START)
+ */
+exports.previewScheduledStart = async (req, res) => {
+    try {
+        const data = await previewScheduledStartChange(db, {
+            booking_id: req.params.booking_id,
+            new_start_date: req.query.new_start_date,
+            new_end_date: req.query.new_end_date || undefined,
+        });
+        res.status(200).json({ status: 'success', data });
+    } catch (error) {
+        if (error.statusCode) return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        console.error('previewScheduledStart error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to check the start date change' });
+    }
+};
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/scheduled-start
+ * @desc    Moves the start date (and, for LIVE_IN, the planned end) of a booking that has
+ *          not started yet, earlier or later, to today or a future day. Moves no money.
+ *          If the new date is today the staff start straight away.
+ * @access  Private (BOOKING_CHANGE_SCHEDULED_START)
+ * @body    new_start_date, new_end_date? (LIVE_IN), expected_old_start_date, reason, notify? (default true)
+ */
+exports.changeScheduledStart = async (req, res) => {
+    const { booking_id } = req.params;
+    const { new_start_date, new_end_date, expected_old_start_date, reason } = req.body || {};
+    const notify = req.body?.notify !== false;
+
+    if (!reason || reason.trim().length < 3) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required' });
+    }
+    if (!expected_old_start_date) {
+        return res.status(400).json({ status: 'error', message: 'expected_old_start_date is required' });
+    }
+
+    const actorName = await getActorName(req.user?.user_id);
+    const actor = { user_id: req.user?.user_id || null, name: actorName, role: extractActorRole(req.user?.role) };
+
+    const client = await db.pool.connect();
+    let result;
+    try {
+        await client.query('BEGIN');
+        result = await applyScheduledStartChange(client, {
+            booking_id, new_start_date, new_end_date: new_end_date || undefined, expected_old_start_date, actor,
+        });
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        console.error('changeScheduledStart error:', error);
+        return res.status(500).json({ status: 'error', message: 'Failed to change the start date' });
+    } finally {
+        client.release();
+    }
+
+    for (const fn of result.notifies) {
+        fn().catch((e) => console.error('changeScheduledStart notify error:', e.message));
+    }
+
+    const end = result.changes.booking_end_date;
+    logActivity({
+        actorUserId: req.user?.user_id,
+        actorName,
+        actorRole: actor.role,
+        actionType: 'BOOKING_START_DATE_RESCHEDULED',
+        entityType: 'BOOKING',
+        entityId: String(booking_id),
+        details: {
+            booking_id,
+            booking_code: result.booking.booking_code,
+            from: result.booking.current_start_date,
+            to: new_start_date,
+            end_from: end ? end.from : null,
+            end_to: end ? end.to : null,
+            reason: reason.trim(),
+            started_now: result.started_now,
+            patterns_moved: result.changes.patterns.map((p) => p.pattern_id),
+            assignments_moved: result.changes.assignments.map((a) => ({ assignment_id: a.assignment_id, staff_code: a.staff_code })),
+            notified: notify,
+        },
+    }).catch((err) => console.error('Activity log failed (changeScheduledStart):', err.message));
+
+    // Tell the client and the staff the new date (fire-and-forget, after COMMIT).
+    if (notify) {
+        (async () => {
+            try {
+                const label = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+                const newLabel = label(new_start_date);
+                const endText = end ? ` until ${label(end.to)}` : '';
+                const clientRes = await db.query(
+                    `SELECT cp.full_name, u.mobile_number
+                     FROM bookings b
+                     JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+                     JOIN users u ON cp.user_id = u.user_id
+                     WHERE b.booking_id = $1`,
+                    [booking_id]
+                );
+                const c = clientRes.rows[0];
+                const sends = [];
+                if (c?.mobile_number) {
+                    sends.push(sendSms(c.mobile_number,
+                        `Hi ${c.full_name}, the start date of your booking ${result.booking.booking_code} has been changed to ${newLabel}${endText}. If this is not right, please contact us. - VCare Nursing`,
+                        'booking_start_date_changed'));
+                }
+                const movedAssignmentIds = result.changes.assignments.map((a) => a.assignment_id);
+                if (movedAssignmentIds.length) {
+                    const staffRes = await db.query(
+                        `SELECT DISTINCT sp.full_name, u.mobile_number
+                         FROM booking_staff_assignments bsa
+                         JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
+                         JOIN users u ON u.user_id = sp.user_id
+                         WHERE bsa.assignment_id = ANY($1::uuid[])`,
+                        [movedAssignmentIds]
+                    );
+                    for (const s of staffRes.rows) {
+                        if (!s.mobile_number) continue;
+                        sends.push(sendSms(s.mobile_number,
+                            `Hi ${s.full_name}, the start date of your assignment ${result.booking.booking_code} has been changed to ${newLabel}. Log in to the staff portal for details. - VCare Nursing`,
+                            'booking_start_date_changed'));
+                    }
+                }
+                const results = await Promise.allSettled(sends);
+                results.forEach((r) => { if (r.status === 'rejected') console.error('[StartDateChanged] SMS failed:', r.reason?.message); });
+            } catch (e) {
+                console.error('[StartDateChanged] Notification error:', e.message);
+            }
+        })();
+    }
+
+    const message = result.started_now
+        ? `Start date moved to ${new_start_date} (today). The staff have started and the booking is now Active.`
+        : `Start date moved to ${new_start_date}.${end ? ` Planned end is now ${end.to}.` : ''}`;
+    res.status(200).json({
+        status: 'success',
+        message,
+        data: { start_date: new_start_date, end_date: end ? end.to : result.booking.current_end_date, started_now: result.started_now },
+    });
 };
 
 // Internal helpers reused by dailyDraftController.js's day-draft confirm flow —

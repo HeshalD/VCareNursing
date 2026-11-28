@@ -328,6 +328,8 @@ const PERMISSIONS = {
   // Moving a shift-based booking's start date earlier so the missed days can be confirmed.
   // Moves no money itself; super admin only until it is granted to other roles.
   BOOKING_CHANGE_START_DATE:   { label: 'Correct Booking Start Date',       module: 'Bookings', entity: 'Booking', verb: 'Correct Start Date',    category: 'action' },
+  // Re-dating a booking that has not started yet (staff still scheduled). Moves no money.
+  BOOKING_CHANGE_SCHEDULED_START: { label: 'Change Start Date of Not-Started Booking', module: 'Bookings', entity: 'Booking', verb: 'Change Start Date', category: 'action' },
   LEDGER_HEALTH_MANAGE:        { label: 'Run Ledger Health Check & Acknowledge Findings', module: 'Ledger Health', entity: 'Ledger Health', verb: 'Run / Acknowledge', category: 'action' },
 };
 
@@ -349,7 +351,7 @@ const ROLE_TEMPLATES = {
     'BOOKING_SEND_STATEMENT', 'BOOKING_SEND_STAFF_PROFILE', 'BOOKING_EXTEND', 'BOOKING_COMPLETE', 'BOOKING_TERMINATE',
     'BOOKING_CONVERT_FROM_LEAD', 'BOOKING_PAUSE', 'BOOKING_RESUME',
     'BOOKING_FORCE_STOP', 'BOOKING_MANAGE_SHIFT_PATTERN', 'BOOKING_UPDATE_HOSPITALIZATION',
-    'BOOKING_UPDATE_RATE',
+    'BOOKING_UPDATE_RATE', 'BOOKING_CHANGE_SCHEDULED_START',
     'ASSIGNMENT_ASSIGN', 'ASSIGNMENT_UPDATE', 'ASSIGNMENT_COMPLETE',
     'SERVICE_REQUEST_CREATE', 'SERVICE_REQUEST_EDIT', 'SERVICE_REQUEST_CONVERT',
     'SERVICE_REQUEST_SEND_CANDIDATE', 'SERVICE_REQUEST_ASSIGN_COORDINATOR',

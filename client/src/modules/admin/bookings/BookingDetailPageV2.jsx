@@ -2674,6 +2674,66 @@ const BookingDetailPageV2 = () => {
     }
   };
 
+  // ── Change start date of a booking that has not started yet (LIVE_IN / SHIFT_BASED) ──
+  // PENDING bookings whose staff are still scheduled. Moves the start (and the planned end
+  // for live-in) to today or later; moves no money. A date of today starts the staff now.
+  // { newStart, newEnd, endTouched, reason, notify, preview, checking, submitting, error, done }
+  const [schedStartModal, setSchedStartModal] = useState(null);
+  const canChangeScheduledStart = hasPermission('BOOKING_CHANGE_SCHEDULED_START') && (isShiftBased || isLiveIn)
+    && bookingSummary.status === 'PENDING';
+  const openSchedStartModal = () => setSchedStartModal({
+    newStart: '', newEnd: '', endTouched: false, reason: '', notify: true,
+    preview: null, checking: false, submitting: false, error: '', done: '',
+  });
+  const closeSchedStartModal = () => setSchedStartModal(null);
+  const checkSchedStart = async (newStart, newEnd, endTouched) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newStart)) return;
+    if (endTouched && newEnd && !/^\d{4}-\d{2}-\d{2}$/.test(newEnd)) return;
+    setSchedStartModal(m => (m ? { ...m, checking: true } : m));
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.previewScheduledStart(bookingId, newStart, endTouched ? newEnd : undefined);
+      const preview = res?.data || null;
+      // Ignore a slow answer for dates the admin has already changed.
+      setSchedStartModal(m => {
+        if (!m || m.newStart !== newStart || (endTouched && m.newEnd !== newEnd)) return m;
+        const suggestedEnd = preview?.changes?.booking_end_date?.to || '';
+        return { ...m, preview, checking: false, newEnd: m.endTouched ? m.newEnd : suggestedEnd };
+      });
+    } catch (err) {
+      setSchedStartModal(m => (m && m.newStart === newStart ? { ...m, checking: false, error: err?.message || 'Could not check this date' } : m));
+    }
+  };
+  const changeSchedStart = (newStart) => {
+    const m = schedStartModal;
+    setSchedStartModal(s => (s ? { ...s, newStart, preview: null, error: '', newEnd: s.endTouched ? s.newEnd : '' } : s));
+    checkSchedStart(newStart, m?.newEnd, m?.endTouched);
+  };
+  const changeSchedEnd = (newEnd) => {
+    const m = schedStartModal;
+    setSchedStartModal(s => (s ? { ...s, newEnd, endTouched: true, preview: null, error: '' } : s));
+    checkSchedStart(m?.newStart, newEnd, true);
+  };
+  const submitSchedStart = async () => {
+    const m = schedStartModal;
+    if (!m || !m.preview?.ok || m.reason.trim().length < 3) return;
+    setSchedStartModal(s => ({ ...s, submitting: true, error: '' }));
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.changeScheduledStart(bookingId, {
+        new_start_date: m.newStart,
+        ...(isLiveIn && m.newEnd ? { new_end_date: m.newEnd } : {}),
+        expected_old_start_date: m.preview.booking.current_start_date,
+        reason: m.reason.trim(),
+        notify: m.notify,
+      });
+      await Promise.all([fetchDetail(), isShiftBased ? fetchShiftData() : Promise.resolve(), fetchDailyRecords()]);
+      setSchedStartModal(s => ({ ...s, submitting: false, done: res?.message || 'Start date updated.' }));
+    } catch (err) {
+      setSchedStartModal(s => ({ ...s, submitting: false, error: err?.message || 'Failed to change the start date' }));
+    }
+  };
+
   const cascadeStartTimes = (slots, fromIdx = 0) => {
     const result = [...slots];
     for (let i = fromIdx; i < result.length - 1; i++) {
@@ -3847,6 +3907,12 @@ const BookingDetailPageV2 = () => {
                           Correct start date
                         </button>
                       )}
+                      {canChangeScheduledStart && (
+                        <button type="button" onClick={openSchedStartModal}
+                          style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: '#137A6B', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>
+                          Change start date
+                        </button>
+                      )}
                     </div>
                     <Field label="Start time"    value={formatTime(bookingSummary.service_start_time)} />
                     {!isShiftBased && <Field label="Planned end" value={formatDate(bookingSummary.scheduled_end_time)} />}
@@ -3998,6 +4064,114 @@ const BookingDetailPageV2 = () => {
                       </div>
                     </div>
                   )}
+                  {schedStartModal && (() => {
+                    const m = schedStartModal;
+                    const pv = m.preview;
+                    const currentStart = pv?.booking?.current_start_date || toLocalDateStr(bookingSummary.start_date);
+                    const requested = pv?.booking?.requested_start_date;
+                    return (
+                      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col">
+                          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+                            <div>
+                              <h3 className="text-base font-bold text-slate-900">Change start date</h3>
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                Currently {formatDate(currentStart)}{isLiveIn && bookingSummary.scheduled_end_time ? `, planned end ${formatDate(bookingSummary.scheduled_end_time)}` : ''}. This booking hasn't started yet.
+                              </p>
+                            </div>
+                            <button onClick={closeSchedStartModal} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
+                          </div>
+
+                          <div className="p-6 space-y-4 overflow-y-auto">
+                            {m.done ? (
+                              <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">{m.done}</p>
+                            ) : (
+                              <>
+                                <p className="text-xs text-slate-500">
+                                  Moves the start date, earlier or later, to today or a future day. The scheduled staff move with it. No invoice or salary is created or changed. If you pick today, the staff start straight away and the booking becomes Active.
+                                </p>
+                                <div className={isLiveIn ? 'grid grid-cols-2 gap-3' : ''}>
+                                  <div>
+                                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New start date</label>
+                                    <DateInput value={m.newStart} min={todayISO()}
+                                      onChange={e => changeSchedStart(e.target.value)}
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                  </div>
+                                  {isLiveIn && (
+                                    <div>
+                                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Planned end date</label>
+                                      <DateInput value={m.newEnd} min={m.newStart || todayISO()}
+                                        onChange={e => changeSchedEnd(e.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                      {!m.endTouched && m.newEnd && <p className="text-[11px] text-slate-400 mt-1">Keeps the same length. Change it if needed.</p>}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {requested && requested !== m.newStart && (
+                                  <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">The client's service request asked for <b>{formatDate(requested)}</b>.</p>
+                                )}
+
+                                {m.checking && <p className="text-xs text-slate-500">Checking…</p>}
+
+                                {pv && pv.blocks.length > 0 && (
+                                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-1">
+                                    <p className="text-xs font-bold text-red-800">This can't be done</p>
+                                    {pv.blocks.map((b, i) => <p key={i} className="text-xs text-red-700">• {b}</p>)}
+                                  </div>
+                                )}
+
+                                {pv?.ok && (
+                                  <div className="rounded-xl border border-slate-200 p-3 space-y-2 text-xs text-slate-700">
+                                    <p className="font-bold text-slate-900">What will change</p>
+                                    <p>• Booking start date: {formatDate(pv.changes.booking_start_date.from)} → <b>{formatDate(pv.changes.booking_start_date.to)}</b></p>
+                                    {pv.changes.booking_end_date && (
+                                      <p>• Planned end date: {formatDate(pv.changes.booking_end_date.from)} → <b>{formatDate(pv.changes.booking_end_date.to)}</b></p>
+                                    )}
+                                    {pv.changes.patterns.length > 0 && <p>• Shift pattern now starts on the new date</p>}
+                                    {pv.changes.assignments.map(a => (
+                                      <p key={a.assignment_id}>• {a.staff_name}{a.staff_code ? ` (${a.staff_code})` : ''}{a.shift_number ? `, shift ${a.shift_number}` : ''} now starts on the new date</p>
+                                    ))}
+                                    {(pv.notices || []).map((n, i) => (
+                                      <p key={i} className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">{n}</p>
+                                    ))}
+                                  </div>
+                                )}
+
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Reason</label>
+                                  <textarea rows={2} value={m.reason}
+                                    onChange={e => setSchedStartModal(s => ({ ...s, reason: e.target.value }))}
+                                    placeholder="Why is the start date changing?"
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                                </div>
+
+                                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                  <input type="checkbox" checked={m.notify} onChange={e => setSchedStartModal(s => ({ ...s, notify: e.target.checked }))} />
+                                  Send the client and staff an SMS with the new date
+                                </label>
+
+                                {m.error && <p className="text-xs text-red-600">{m.error}</p>}
+                              </>
+                            )}
+                          </div>
+
+                          <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+                            <button onClick={closeSchedStartModal} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">
+                              {m.done ? 'Close' : 'Cancel'}
+                            </button>
+                            {!m.done && (
+                              <button onClick={submitSchedStart}
+                                disabled={m.submitting || m.checking || !pv?.ok || m.reason.trim().length < 3}
+                                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-[#137A6B] disabled:opacity-40 disabled:cursor-not-allowed">
+                                {m.submitting ? 'Saving…' : 'Change start date'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </Card>
                 {/* Financial snapshot */}
                 <Card>

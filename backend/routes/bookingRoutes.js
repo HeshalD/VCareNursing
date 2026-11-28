@@ -255,6 +255,9 @@ router.patch('/:booking_id/rates', protect, requirePermission('BOOKING_UPDATE_RA
 // Move a SHIFT_BASED booking's start date earlier (super admin by default). Moves no money.
 router.get('/:booking_id/start-date/preview', protect, requirePermission('BOOKING_CHANGE_START_DATE'), coordinatorLock, bookingController.previewStartDate);
 router.patch('/:booking_id/start-date', protect, requirePermission('BOOKING_CHANGE_START_DATE'), coordinatorLock, bookingController.changeStartDate);
+// Not-started bookings (PENDING, staff still scheduled): move the start date to today or later.
+router.get('/:booking_id/scheduled-start/preview', protect, requirePermission('BOOKING_CHANGE_SCHEDULED_START'), coordinatorLock, bookingController.previewScheduledStart);
+router.patch('/:booking_id/scheduled-start', protect, requirePermission('BOOKING_CHANGE_SCHEDULED_START'), coordinatorLock, bookingController.changeScheduledStart);
 
 // Hospitalization status (any service model — patient may be admitted mid-booking)
 router.patch('/:booking_id/hospitalization', protect, requirePermission('BOOKING_UPDATE_HOSPITALIZATION'), bookingController.updateHospitalizationStatus);

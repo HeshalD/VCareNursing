@@ -2284,6 +2284,21 @@ Add the registration fee to the quotation, or settle it from the client page.`);
     });
   }
 
+  // Not-started booking (PENDING, staff scheduled): what moving its start date would change.
+  async previewScheduledStart(bookingId, newStartDate, newEndDate) {
+    const end = newEndDate ? `&new_end_date=${encodeURIComponent(newEndDate)}` : '';
+    return this.request(`/bookings/${bookingId}/scheduled-start/preview?new_start_date=${encodeURIComponent(newStartDate)}${end}`);
+  }
+
+  // Moves a not-started booking's start date (and planned end for live-in).
+  // Body: { new_start_date, new_end_date?, expected_old_start_date, reason, notify }.
+  async changeScheduledStart(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/scheduled-start`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // Updates a specific staff assignment's pay rate (and/or dates/notes).
   async updateStaffAssignment(assignmentId, payload) {
     return this.request(`/assignments/assignment/${assignmentId}`, {

@@ -255,10 +255,25 @@ const BookingStaffAssignmentPage = () => {
       .finally(() => setSchedulesLoading(false));
   }, [formData]);
 
+  // Catches a mistyped start date (e.g. 28/12 for 28/11): if it differs from the
+  // booking's planned start (taken from the service request), ask before saving.
+  const confirmStartDate = (isoStartDate) => {
+    const raw = formData?.booking?.start_date;
+    const d = raw ? new Date(raw) : null;
+    if (!d || isNaN(d)) return true;
+    // Local calendar day (the API may send the date as a UTC timestamp).
+    const planned = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (planned === isoStartDate) return true;
+    return window.confirm(
+      `The booking was requested to start on ${formatDateForDisplay(planned)}, but you entered ${formatDateForDisplay(isoStartDate)}.\n\nIs ${formatDateForDisplay(isoStartDate)} correct?`
+    );
+  };
+
   const handleSubmitShiftBased = async () => {
     if (!assignment.service_start_date) { setError('Service start date is required'); return; }
     const isoStartDate = formatDateForBackend(assignment.service_start_date);
     if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
+    if (!confirmStartDate(isoStartDate)) return;
     if (shiftSlots.some((s) => !s.staff_profile_id || !s.start_time || !s.duration_hours)) {
       setError('Every shift needs a start time, duration, and assigned staff member');
       return;
@@ -321,6 +336,7 @@ const BookingStaffAssignmentPage = () => {
     const isoStartDate = formatDateForBackend(assignment.service_start_date);
     if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
     if (!assignment.daily_rate) { setError('Daily Rate (Staff) is required'); return; }
+    if (!confirmStartDate(isoStartDate)) return;
     if (isLiveIn && Array.isArray(assignment.repeat_days)
       && !assignment.repeat_days.includes(new Date(`${isoStartDate}T00:00:00`).getDay())) {
       setError('The Service Start Date falls on a day off — pick a start date on one of the selected repeat days.');
