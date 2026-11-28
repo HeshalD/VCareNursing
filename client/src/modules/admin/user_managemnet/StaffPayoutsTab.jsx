@@ -36,6 +36,8 @@ const BTN_TONE = {
   neutral: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
   primary: 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700',
   ghost: 'border-transparent bg-transparent text-blue-600 hover:bg-blue-50',
+  danger: 'border-red-600 bg-red-600 text-white hover:bg-red-700',
+  dangerOutline: 'border-red-200 bg-white text-red-700 hover:bg-red-50',
 };
 const Btn = ({ tone = 'neutral', className = '', ...p }) => <button type="button" className={`${BTN} ${BTN_TONE[tone]} ${className}`} {...p} />;
 const Chip = ({ on, children, ...p }) => (
@@ -76,7 +78,7 @@ function Drawer({ open, onClose, label, title, subtitle, children, footer }) {
           <div><div className="text-base font-semibold text-slate-900">{title}</div>{subtitle && <div className="text-[13px] text-slate-500">{subtitle}</div>}</div>
           <Btn data-close onClick={onClose}><X className="mr-1 h-4 w-4" aria-hidden="true" />Close</Btn>
         </div>
-        <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5 text-sm text-slate-700">{children}</div>
+        <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5 text-sm text-slate-700 [&>*]:shrink-0">{children}</div>
         {footer && <div className="flex gap-2.5 border-t border-slate-200 px-5 py-3.5">{footer}</div>}
       </div>
     </>
@@ -378,12 +380,12 @@ export default function StaffPayoutsTab({
         footer={detail && onVoidPayout && statusKey(detail.status) === 'Paid' ? (voidForm.open ? (
           <>
             <Btn onClick={() => setVoidForm(emptyVoid)} disabled={voidForm.submitting}>Cancel</Btn>
-            <Btn className="flex-1 border-red-600 bg-red-600 text-white hover:bg-red-700" onClick={submitVoid} disabled={voidForm.submitting}>
+            <Btn tone="danger" className="flex-1" onClick={submitVoid} disabled={voidForm.submitting}>
               {voidForm.submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}Void payout
             </Btn>
           </>
         ) : (
-          <Btn className="flex-1 border-red-200 text-red-700 hover:bg-red-50" onClick={() => setVoidForm({ ...emptyVoid, open: true })}>Void this payout</Btn>
+          <Btn tone="dangerOutline" className="flex-1" onClick={() => setVoidForm({ ...emptyVoid, open: true })}>Void this payout</Btn>
         )) : null}
       >
         {detail && (() => {
